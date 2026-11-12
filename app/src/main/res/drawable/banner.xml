@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original artwork: a soft glass screen shape on a dusk gradient. 320x180 TV banner. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="320dp" android:height="180dp"
+    android:viewportWidth="320" android:viewportHeight="180">
+    <path android:pathData="M0,0h320v180h-320z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="320" android:endY="180"
+                android:startColor="#FF1B2433" android:centerColor="#FF2E3A55" android:endColor="#FF4A3B5C" />
+        </aapt:attr>
+    </path>
+    <path android:fillColor="#33FFFFFF" android:pathData="M110,52h100a12,12 0,0 1,12 12v44a12,12 0,0 1,-12 12h-100a12,12 0,0 1,-12 -12v-44a12,12 0,0 1,12 -12z" />
+    <path android:strokeColor="#E6FFFFFF" android:strokeWidth="4" android:pathData="M110,52h100a12,12 0,0 1,12 12v44a12,12 0,0 1,-12 12h-100a12,12 0,0 1,-12 -12v-44a12,12 0,0 1,12 -12z" />
+    <path android:strokeColor="#E6FFFFFF" android:strokeWidth="4" android:strokeLineCap="round" android:pathData="M140,134h40" />
+</vector>
