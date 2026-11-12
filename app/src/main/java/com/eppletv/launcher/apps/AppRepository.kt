@@ -5,9 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Rect
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
@@ -26,6 +30,7 @@ class AppEntry(
     val launchIntent: Intent,
     val banner: Bitmap,     // tile artwork at final on-screen size
     val backdrop: Bitmap,   // tiny copy, scaled up with filtering into a soft full-screen backdrop
+    val category: Int,      // ApplicationInfo.CATEGORY_*, or CATEGORY_UNDEFINED
 )
 
 /**
@@ -37,6 +42,7 @@ class AppRepository(
     private val tileW: Int,
     private val tileH: Int,
     private val onApps: (List<AppEntry>) -> Unit,
+    private val debugRepeat: Int = 1,   // debug builds only: repeats the list so scrolling can be tested on an emulator
 ) {
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -108,7 +114,7 @@ class AppRepository(
         cache.keys.retainAll(seen)
         val collator = Collator.getInstance()
         out.sortWith { a, b -> collator.compare(a.label, b.label) }
-        return out
+        return if (debugRepeat > 1) List(out.size * debugRepeat) { out[it % out.size] } else out
     }
 
     private fun build(pm: PackageManager, ai: ActivityInfo, cat: String): AppEntry? = try {
@@ -117,9 +123,29 @@ class AppRepository(
         val art = if (banner != null) renderBanner(banner) else renderIcon(ai.loadIcon(pm))
         val intent = Intent(Intent.ACTION_MAIN).addCategory(cat).setClassName(ai.packageName, ai.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-        AppEntry(ai.packageName, label, intent, art, Bitmap.createScaledBitmap(art, 24, 14, true))
+        val info = ai.applicationInfo
+        @Suppress("DEPRECATION")
+        val game = info.category == ApplicationInfo.CATEGORY_GAME || (info.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+        // Two-step resample: a 12x7 average of the artwork, smoothed up to 96x54, becomes a soft colour field at full screen.
+        val soft = backdropOf(art)
+        AppEntry(ai.packageName, label, intent, art, soft, if (game) ApplicationInfo.CATEGORY_GAME else info.category)
     } catch (e: RuntimeException) {
         Log.w(TAG, "skipping ${ai.packageName}", e); null
+    }
+
+    /**
+     * Backdrop source: the artwork averaged down to 8x5 and smoothed back up, so only its colours survive,
+     * then saturated and darkened so white text stays readable over any app (including white banners).
+     */
+    private fun backdropOf(art: Bitmap): Bitmap {
+        val tiny = Bitmap.createScaledBitmap(art, 8, 5, true)
+        val mid = Bitmap.createScaledBitmap(tiny, 32, 18, true)
+        val out = Bitmap.createBitmap(96, 54, Bitmap.Config.ARGB_8888)
+        val cm = ColorMatrix().apply { setSaturation(1.5f); postConcat(ColorMatrix().apply { setScale(0.52f, 0.52f, 0.52f, 1f) }) }
+        val p = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = ColorMatrixColorFilter(cm) }
+        Canvas(out).drawBitmap(mid, null, Rect(0, 0, 96, 54), p)
+        tiny.recycle(); mid.recycle()
+        return out
     }
 
     private fun renderBanner(d: Drawable): Bitmap {

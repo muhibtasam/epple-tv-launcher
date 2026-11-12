@@ -25,6 +25,7 @@ interface TileHost {
     val dirY: Int
     fun onTileFocused(tile: Tile)
     fun onTileClicked(tile: Tile)
+    fun onTileLongPressed(tile: Tile)
 }
 
 /**
@@ -34,7 +35,6 @@ interface TileHost {
 @SuppressLint("ViewConstructor")
 class Tile(
     ctx: Context,
-    val index: Int,
     val entry: AppEntry,
     shadowBmp: Bitmap,
     private val label: TextView,
@@ -48,6 +48,7 @@ class Tile(
     private val tiltX = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS, Motion.REST_DEG)
     private val tiltY = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS, Motion.REST_DEG)
     private var pressed = false
+    private var longPressed = false
 
     private val shadow = ImageView(ctx).apply { setImageBitmap(shadowBmp); alpha = 0f; scaleType = ImageView.ScaleType.FIT_XY }
     private val highlight = View(ctx).apply {
@@ -65,7 +66,7 @@ class Tile(
         cameraDistance = 12000f * l.u
         contentDescription = entry.label
         val p = l.shadowPad
-        addView(shadow, LayoutParams(l.tileW + 2 * p, l.tileH + 2 * p).apply { leftMargin = -p; topMargin = -p + l.px(16) })
+        addView(shadow, LayoutParams(l.tileW + 2 * p, l.tileH + 2 * p).apply { leftMargin = -p; topMargin = -p + l.px(18) })
         addView(BannerView(ctx, entry.banner, l.corner), LayoutParams(l.tileW, l.tileH))
         addView(highlight, LayoutParams(l.tileW, l.tileH))
     }
@@ -86,12 +87,20 @@ class Tile(
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (!isSelect(keyCode)) return super.onKeyDown(keyCode, event)
-        if (event.repeatCount == 0) { pressed = true; press.target = 1f; clock.add(this) }
+        if (event.repeatCount == 0) { pressed = true; longPressed = false; press.target = 1f; clock.add(this); event.startTracking() }
+        return true
+    }
+
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if (!isSelect(keyCode) || !pressed) return super.onKeyLongPress(keyCode, event)
+        pressed = false; longPressed = true; press.target = 0f; clock.add(this)
+        host.onTileLongPressed(this)
         return true
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         if (!isSelect(keyCode)) return super.onKeyUp(keyCode, event)
+        if (longPressed) { longPressed = false; return true }
         if (pressed && !event.isCanceled) {
             pressed = false; press.target = 0f; clock.add(this)
             host.onTileClicked(this)
@@ -105,13 +114,14 @@ class Tile(
         val s = (1f + Motion.FOCUS_SCALE * v) * (1f - Motion.PRESS_SCALE * press.value)
         scaleX = s; scaleY = s
         translationZ = v * l.pxf(10f)
+        shadow.scaleX = 1f + 0.04f * v; shadow.scaleY = 1f + 0.04f * v
         rotationX = tiltX.value; rotationY = tiltY.value
         shadow.alpha = v
         highlight.alpha = 0.6f * v
         highlight.translationX = -tiltY.value * l.pxf(6f)
         highlight.translationY = tiltX.value * l.pxf(6f)
         label.alpha = v
-        label.translationY = l.tileH * (s - 1f) / 2f - (1f - v) * l.pxf(8f)
+        label.translationY = l.tileH * (s - 1f) / 2f - (1f - v) * l.pxf(10f)
         return !(focus.atRest() && press.atRest() && tiltX.atRest() && tiltY.atRest())
     }
 
