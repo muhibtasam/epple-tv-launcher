@@ -229,12 +229,13 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
     }
 
     /** Shows [items] for a top-row app (empty = the app's own colours and name). */
-    fun bind(e: AppEntry, list: List<ContentItem>) {
+    /** [restart]: the user switched to this app, so its carousel starts again at the first item. */
+    fun bind(e: AppEntry, list: List<ContentItem>, restart: Boolean = false) {
         val sameApp = entry?.packageName == e.packageName
-        if (sameApp && list === items && !deep) return
+        if (sameApp && list === items && !deep && !(restart && index != 0)) return
         val wasDeep = deep
         entry = e; deep = false
-        if (!sameApp || list !== items) { items = list; index = 0 }
+        if (!sameApp || list !== items || restart) { items = list; index = 0 }
         textVis.target = 1f
         show(fresh = !sameApp || wasDeep)
     }

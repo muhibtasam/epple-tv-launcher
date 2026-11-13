@@ -15,6 +15,7 @@ import android.graphics.Rect
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
+import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
@@ -110,7 +111,7 @@ class AppRepository(
             seen.add(pkg)
             val pi = try { pm.getPackageInfo(pkg, 0) } catch (_: PackageManager.NameNotFoundException) { continue }
             // Artwork is keyed by package, version and install time: an update (even one keeping the version) re-renders it.
-            val key = "${pi.longVersionCode}_${pi.lastUpdateTime}_${tileW}x$tileH"
+            val key = "r${RENDER}_${pi.longVersionCode}_${pi.lastUpdateTime}_${tileW}x$tileH"
             val cached = cache[pkg]
             if (cached != null && cached.first == key) { out.add(cached.second); continue }
             val entry = build(pm, ai, cat, key) ?: continue
@@ -158,8 +159,13 @@ class AppRepository(
     }
 
     /**
-     * The app's own artwork, loaded from its resources at high density so the tile stays sharp when focused:
-     * its TV banner (activity's, else the app's), else its launcher icon. Nothing is shared between apps.
+     * The app's own artwork, loaded from its resources at high density so the tile stays sharp when focused,
+     * laid out the tvOS way: full-bleed, the brand's own colour edge to edge, the mark centred with padding.
+     *  - opaque 16:9 TV banner: used as is.
+     *  - banner of another shape, or with transparent edges: fitted whole on its own edge colour.
+     *  - adaptive launcher icon: its background layer fills the tile, its foreground sits centred on it.
+     *  - legacy launcher icon: centred on its own edge colour.
+     * Nothing is shared between apps.
      */
     private fun render(pm: PackageManager, ai: ActivityInfo): Bitmap {
         val res = try { pm.getResourcesForApplication(ai.applicationInfo) } catch (_: PackageManager.NameNotFoundException) { null }
@@ -168,56 +174,86 @@ class AppRepository(
         val bannerId = if (ai.banner != 0) ai.banner else ai.applicationInfo.banner
         val banner = hd(bannerId, DisplayMetrics.DENSITY_XXHIGH) ?: ai.loadBanner(pm) ?: ai.applicationInfo.loadBanner(pm)
         if (banner != null) return renderBanner(banner)
-        return renderIcon(hd(ai.iconResource, DisplayMetrics.DENSITY_XXXHIGH) ?: ai.loadIcon(pm))
+        val icon = hd(ai.iconResource, DisplayMetrics.DENSITY_XXXHIGH) ?: ai.loadIcon(pm)
+        return if (icon is AdaptiveIconDrawable && icon.background != null) renderAdaptive(icon) else renderIcon(icon)
     }
+
+    private fun canvasFor(): Pair<Bitmap, Canvas> = Bitmap.createBitmap(tileW, tileH, Bitmap.Config.ARGB_8888).let { it to Canvas(it) }
 
     private fun renderBanner(d: Drawable): Bitmap {
-        val b = Bitmap.createBitmap(tileW, tileH, Bitmap.Config.ARGB_8888)
-        val c = Canvas(b)
         val iw = d.intrinsicWidth; val ih = d.intrinsicHeight
-        if (iw > 0 && ih > 0 && kotlin.math.abs(iw.toFloat() / ih - tileW.toFloat() / tileH) > 0.06f) {
-            // Not 16:9: fit it whole, never stretched, on a field of its own colour.
-            c.drawColor(mix(averageColor(d), BG, 0.15f))
-            val s = minOf(tileW.toFloat() / iw, tileH.toFloat() / ih)
-            val w = (iw * s).toInt(); val h = (ih * s).toInt()
-            d.setBounds((tileW - w) / 2, (tileH - h) / 2, (tileW + w) / 2, (tileH + h) / 2)
-        } else {
-            c.drawColor(BG)
-            d.setBounds(0, 0, tileW, tileH)
+        val shapeOk = iw <= 0 || ih <= 0 || kotlin.math.abs(iw.toFloat() / ih - tileW.toFloat() / tileH) <= 0.06f
+        val probe = probe(d)
+        if (shapeOk && probe.opaqueEdges) {
+            val (b, c) = canvasFor()
+            d.setBounds(0, 0, tileW, tileH); d.draw(c)
+            b.prepareToDraw(); return b
         }
-        d.draw(c)
-        b.prepareToDraw()
-        return b
+        // Fitted whole (never stretched) with a little padding, on the artwork's own edge colour.
+        val (b, c) = canvasFor()
+        c.drawColor(probe.field)
+        val pad = if (probe.opaqueEdges) 0f else 0.08f
+        val aw = if (iw > 0) iw.toFloat() else tileW.toFloat(); val ah = if (ih > 0) ih.toFloat() else tileH.toFloat()
+        val s = minOf(tileW * (1 - 2 * pad) / aw, tileH * (1 - 2 * pad) / ah)
+        val w = (aw * s).toInt(); val h = (ah * s).toInt()
+        d.setBounds((tileW - w) / 2, (tileH - h) / 2, (tileW + w) / 2, (tileH + h) / 2); d.draw(c)
+        b.prepareToDraw(); return b
     }
 
-    /** Phone apps have no banner: centre the icon on a soft gradient tinted from the icon's own colour. */
+    /** Adaptive icon: background layer full-bleed (cover), foreground centred with its safe zone ~70% of the tile height. */
+    private fun renderAdaptive(d: AdaptiveIconDrawable): Bitmap {
+        val (b, c) = canvasFor()
+        // A layer is 108dp with a 72dp visible area; cover the tile with the background's visible area.
+        val bgSide = tileW * 108f / 72f
+        val bl = (tileW - bgSide) / 2f; val bt = (tileH - bgSide) / 2f
+        d.background?.let { it.setBounds(bl.toInt(), bt.toInt(), (bl + bgSide).toInt(), (bt + bgSide).toInt()); it.draw(c) }
+        d.foreground?.let {
+            val fgSide = tileH * 0.70f * 108f / 66f        // the 66dp safe zone spans 70% of the tile height
+            val l = (tileW - fgSide) / 2f; val t = (tileH - fgSide) / 2f
+            it.setBounds(l.toInt(), t.toInt(), (l + fgSide).toInt(), (t + fgSide).toInt()); it.draw(c)
+        }
+        b.prepareToDraw(); return b
+    }
+
+    /** Legacy icon: centred at 62% of the tile height on its own edge colour, so the mark reads as the tile. */
     private fun renderIcon(d: Drawable): Bitmap {
-        val b = Bitmap.createBitmap(tileW, tileH, Bitmap.Config.ARGB_8888)
-        val c = Canvas(b)
-        val tint = averageColor(d)
-        val p = Paint().apply {
-            shader = LinearGradient(0f, 0f, tileW.toFloat(), tileH.toFloat(), mix(tint, BG, 0.55f), mix(tint, BG, 0.85f), Shader.TileMode.CLAMP)
-        }
-        c.drawRect(0f, 0f, tileW.toFloat(), tileH.toFloat(), p)
-        val s = (tileH * 0.56f).toInt()
+        val (b, c) = canvasFor()
+        val probe = probe(d)
+        c.drawColor(probe.field)
+        val s = (tileH * 0.62f).toInt()
         val l = (tileW - s) / 2; val t = (tileH - s) / 2
-        d.setBounds(l, t, l + s, t + s)
-        d.draw(c)
-        b.prepareToDraw()
-        return b
+        d.setBounds(l, t, l + s, t + s); d.draw(c)
+        b.prepareToDraw(); return b
     }
 
-    private fun averageColor(d: Drawable): Int {
-        val tiny = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
-        d.setBounds(0, 0, 4, 4); d.draw(Canvas(tiny))
-        var r = 0; var g = 0; var bl = 0; var n = 0
-        for (x in 0 until 4) for (y in 0 until 4) {
-            val px = tiny.getPixel(x, y)
-            if (px ushr 24 < 64) continue
-            r += (px shr 16) and 0xFF; g += (px shr 8) and 0xFF; bl += px and 0xFF; n++
+    private class Probe(val field: Int, val opaqueEdges: Boolean)
+
+    /**
+     * Samples the artwork's border at 32x18: if the edges are opaque their mean colour continues the artwork outward;
+     * transparent edges take the artwork's mean colour, darkened so a white mark keeps its contrast.
+     */
+    private fun probe(d: Drawable): Probe {
+        val w = 32; val h = 18
+        val tiny = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val old = d.copyBounds(); d.setBounds(0, 0, w, h); d.draw(Canvas(tiny)); d.bounds = old
+        val px = IntArray(w * h); tiny.getPixels(px, 0, w, 0, 0, w, h); tiny.recycle()
+        var r = 0L; var g = 0L; var bl = 0L; var n = 0; var edges = 0; var opaque = 0
+        var ar = 0L; var ag = 0L; var ab = 0L; var an = 0
+        for (y in 0 until h) for (x in 0 until w) {
+            val p = px[y * w + x]; val a = p ushr 24
+            if (a > 160) { ar += (p shr 16) and 0xFF; ag += (p shr 8) and 0xFF; ab += p and 0xFF; an++ }
+            if (x != 0 && y != 0 && x != w - 1 && y != h - 1) continue
+            edges++
+            if (a < 230) continue
+            opaque++; r += (p shr 16) and 0xFF; g += (p shr 8) and 0xFF; bl += p and 0xFF; n++
         }
-        tiny.recycle()
-        return if (n == 0) BG else (0xFF shl 24) or ((r / n) shl 16) or ((g / n) shl 8) or (bl / n)
+        val opaqueEdges = opaque >= edges * 0.9f
+        val field = when {
+            n > edges / 3 -> (0xFF shl 24) or ((r / n).toInt() shl 16) or ((g / n).toInt() shl 8) or (bl / n).toInt()
+            an > 0 -> mix((0xFF shl 24) or ((ar / an).toInt() shl 16) or ((ag / an).toInt() shl 8) or (ab / an).toInt(), BG, 0.45f)
+            else -> BG
+        }
+        return Probe(field, opaqueEdges)
     }
 
     private fun mix(a: Int, b: Int, t: Float): Int {
@@ -227,6 +263,7 @@ class AppRepository(
 
     private companion object {
         const val TAG = "EppleApps"
+        const val RENDER = 2   // bump when the artwork layout changes, so cached art is re-rendered
         const val BG = 0xFF262A33.toInt()
     }
 }

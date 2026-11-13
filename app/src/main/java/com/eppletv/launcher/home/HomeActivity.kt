@@ -82,13 +82,19 @@ class HomeActivity : Activity(), PageHost {
 
     // The artwork follows focus after a short pause, so fast navigation doesn't flicker the whole screen.
     private var pending: Tile? = null
+    // Focus moved to a different app since the hero was last bound: its carousel restarts at the first item.
+    // Tracked at focus time, not apply time, so a fast A -> B -> A inside the debounce still counts as a switch.
+    private var focusedPkg: String? = null
+    private var switched = false
     private val applyPending = Runnable {
         val t = pending ?: return@Runnable
         val e = t.entry
         if (!t.inDock) { hero.field(e); return@Runnable }
+        val restart = switched; switched = false
+        if (restart) restartRotation()                // the new app's first item gets its full time on screen
         var answered = false
-        content.items(e.packageName) { items -> answered = true; if (pending === t) hero.bind(e, items) }
-        if (!answered) hero.bind(e, emptyList())     // the app's own colours while its content loads
+        content.items(e.packageName) { items -> answered = true; if (pending === t) hero.bind(e, items, restart) }
+        if (!answered) hero.bind(e, emptyList(), restart)     // the app's own colours while its content loads
     }
 
     // Slow rotation through the focused app's content, only while the artwork is on screen.
@@ -201,6 +207,7 @@ class HomeActivity : Activity(), PageHost {
     override fun onTileFocused(tile: Tile) {
         val first = pending == null
         pending = tile
+        if (tile.entry.packageName != focusedPkg) { focusedPkg = tile.entry.packageName; switched = true }
         main.removeCallbacks(applyPending)
         if (first) applyPending.run() else main.postDelayed(applyPending, 140)
     }
