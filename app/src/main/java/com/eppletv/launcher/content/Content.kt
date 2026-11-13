@@ -106,6 +106,8 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newFixedThreadPool(2) { r -> Thread(r, "epple-content").apply { priority = Thread.NORM_PRIORITY - 1 } }
     private val imgDir = File(ctx.cacheDir, "img").apply { mkdirs() }
+    private val launchedAt = System.currentTimeMillis()
+    init { io.execute { trimImages() } }   // once per launch, off the main thread
     private val lists = HashMap<String, List<ContentItem>>()                       // source key -> items (main thread)
     private val listWaiters = HashMap<String, ArrayList<(List<ContentItem>) -> Unit>>()
     private val failedAt = HashMap<String, Long>()
@@ -189,6 +191,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
             val bmp = try {
                 val f = File(imgDir, sha1(url))
                 if (!f.exists()) { val tmp = File(imgDir, f.name + ".tmp"); tmp.writeBytes(net.bytes(url)); tmp.renameTo(f) }
+                else f.setLastModified(System.currentTimeMillis())          // recency for trimImages
                 decode(f)
             } catch (e: Exception) { Log.w(TAG, "image failed: $e"); null }
             main.post {
@@ -215,6 +218,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
                 if (url.isEmpty()) null else {
                     val f = File(imgDir, "logo-" + sha1(url))
                     if (!f.exists()) { val tmp = File(imgDir, f.name + ".tmp"); tmp.writeBytes(net.bytes(url)); tmp.renameTo(f) }
+                else f.setLastModified(System.currentTimeMillis())          // recency for trimImages
                     decodeLogo(f)
                 }
             } catch (e: Exception) { Log.w(TAG, "logo failed for ${item.id}: ${e.javaClass.simpleName}"); null }
@@ -258,6 +262,24 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
 
     private fun sha1(s: String) = MessageDigest.getInstance("SHA-1").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
 
+    /**
+     * The image cache grows with every title shown, and the selection changes every launch, so it is bounded:
+     * above [IMG_CAP] the least recently used files are deleted down to [IMG_KEEP].
+     */
+    private fun trimImages() {
+        val files = imgDir.listFiles()?.filter { it.isFile } ?: return
+        var total = files.sumOf { it.length() }
+        if (total <= IMG_CAP) return
+        val before = total
+        for (f in files.sortedBy { it.lastModified() }) {
+            if (total <= IMG_KEEP) break
+            if (f.lastModified() >= launchedAt) continue   // used this launch (re-read, not the stale sort key)
+            val len = f.length()
+            if (f.delete()) total -= len
+        }
+        Log.i(TAG, "image cache trimmed ${before / 1024} KB -> ${total / 1024} KB")
+    }
+
     fun stop() { io.shutdownNow() }
 
     private companion object {
@@ -265,5 +287,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
         const val TTL_MS = 12 * 60 * 60 * 1000L
         const val RETRY_MS = 5 * 60 * 1000L
         const val SHOW = 14          // titles an app shows per launch
+        const val IMG_CAP = 40L * 1024 * 1024
+        const val IMG_KEEP = 30L * 1024 * 1024
     }
 }
