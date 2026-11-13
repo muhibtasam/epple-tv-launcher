@@ -48,7 +48,7 @@ class GlassPlatter(ctx: Context, private val l: Layout, private val backdrop: Ba
     private val loc = IntArray(2)
     private val textures = WeakHashMap<Bitmap, BitmapShader>()
 
-    init { backdrop.onChange = { invalidate() } }
+    init { backdrop.listeners.add { invalidate() } }
 
     /** The page moved vertically: the glass must re-sample what is behind it. */
     fun moved() = invalidate()

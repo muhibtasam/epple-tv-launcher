@@ -43,10 +43,6 @@ class Library(ctx: Context) {
         val v = pinned(apps).map { it.packageName }; return v.indexOf(pkg) + delta in v.indices
     }
 
-    /** Apps hidden from the app library (Apps > hold OK > Hide). */
-    fun hidden(): Set<String> = prefs.getStringSet("hidden", emptySet()) ?: emptySet()
-    fun hide(pkg: String) = prefs.edit().putStringSet("hidden", hidden() + pkg).apply()
-    fun unhideAll() = prefs.edit().remove("hidden").apply()
     /** Back to the default top row. */
     fun reset() = prefs.edit().remove("top_row").apply()
 

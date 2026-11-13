@@ -52,7 +52,7 @@ import java.util.Locale
  * screensaver. All D-pad movement is routed here, so focus is deterministic and restorable everywhere.
  * Nothing animates at rest except a slow artwork change while Home's top row is in view.
  */
-class HomeActivity : Activity(), PageHost, Nav {
+class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override var dirX = 0; private set
     override var dirY = 0; private set
 
@@ -83,6 +83,8 @@ class HomeActivity : Activity(), PageHost, Nav {
     private lateinit var feed: HomeFeed
     private lateinit var saver: Screensaver
     private lateinit var shadowBmp: Bitmap
+    private lateinit var setup: SetupFlow
+    private lateinit var neutral: Bitmap
 
     override var apps: List<AppEntry> = emptyList(); private set
     private var zone = Zone.CONTENT
@@ -137,7 +139,7 @@ class HomeActivity : Activity(), PageHost, Nav {
     }
     private fun restartRotation() { main.removeCallbacks(rotate); if (resumed && prefs.rotateMs > 0) main.postDelayed(rotate, prefs.rotateMs) }
 
-    private val idle = Runnable { if (resumed && !panel.open) saver.start() }
+    private val idle = Runnable { if (resumed && !panel.open && !setup.active) saver.start() }
     private fun restartIdle() { main.removeCallbacks(idle); if (resumed && prefs.saverMs > 0) main.postDelayed(idle, prefs.saverMs) }
 
     private val timeReceiver = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) = updateTime() }
@@ -147,15 +149,18 @@ class HomeActivity : Activity(), PageHost, Nav {
         prefs = Prefs(this)
         Type.init(this); Type.scale = prefs.textScale; Type.boldDelta = if (prefs.boldText) 150 else 0
         Sources.override = prefs.regionCode
+        Sources.indianLangs = prefs.langs
+        com.eppletv.launcher.content.Credentials.init(this)
         val dm = resources.displayMetrics
         l = Layout.forWindow(dm.widthPixels, dm.heightPixels)
         library = Library(this)
         user = UserLibrary(this)
         content = ContentRepository(this, Sources.all(if (BuildConfig.DEBUG) intent.getStringExtra("cinemetaFor") else null), Scrim::paint)
         content.indianMode = prefs.get(Prefs.INDIAN)
-        catalog = Catalog(content.net, BuildConfig.TMDB_KEY) { Sources.region }
-        titles = TitleLauncher(this, content.net, BuildConfig.WATCHMODE_KEY, Sources.region)
+        catalog = Catalog(content.net, com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.TMDB)) { Sources.region }
+        titles = TitleLauncher(this, content.net, com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.WATCHMODE), Sources.region)
         shadowBmp = makeShadow(l)
+        neutral = neutralBackdrop()
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK); clipChildren = false }
         hero = Hero(this, l, clock, content, root)
@@ -171,7 +176,7 @@ class HomeActivity : Activity(), PageHost, Nav {
         root.addView(sectionLayer, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         feed = HomeFeed(this)
 
-        tabs = TabBar(this, l, clock, TAB_NAMES).apply { alpha = 0f; visibility = View.INVISIBLE }
+        tabs = TabBar(this, l, clock, TAB_NAMES, TAB_ICONS, hero.backdrop).apply { alpha = 0f; visibility = View.INVISIBLE }
         root.addView(tabs, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(76), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = l.px(48) })
 
         pill = Pill(this, "", l.pxf(Txt.META.px), l.pxf(30f), l.px(28), clock, Colors.GLASS, Colors.WHITE, 0.06f)
@@ -187,6 +192,12 @@ class HomeActivity : Activity(), PageHost, Nav {
 
         saver = Screensaver(this).apply { clockText = { timeText } }
         root.addView(saver.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+
+        setup = SetupFlow(this, this)
+        root.addView(setup.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        if (!setup.done) setup.start()                     // first launch, or an interrupted setup resumes
+        setup.behind = listOf(anchor, homeLayer, sectionLayer, tabs, pill)
+        setup.view.background = android.graphics.drawable.BitmapDrawable(resources, neutral).apply { isFilterBitmap = true }
 
         setContentView(root)
         val repeat = if (BuildConfig.DEBUG) intent.getIntExtra("repeat", 1) else 1
@@ -252,7 +263,7 @@ class HomeActivity : Activity(), PageHost, Nav {
     // ---- focus and zones ----
 
     private fun restoreFocus() {
-        if (panel.open) return
+        if (panel.open || (::setup.isInitialized && setup.active)) return      // setup owns focus while it is open
         when (zone) {
             Zone.CONTENT -> if (!page.focusCurrent()) enterTabs(section)
             Zone.HERO -> anchor.requestFocus()
@@ -282,12 +293,13 @@ class HomeActivity : Activity(), PageHost, Nav {
         zone = Zone.FEED; homeP.target = 0f; dimP.target = 0.25f; hero.quiet(true)
         if (feed.view.parent == null) sectionLayer.addView(feed.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         feed.view.visibility = View.VISIBLE
-        feed.show(); if (!feed.focus()) { /* rows still loading: focus arrives with the first row */ }
+        feed.show(); tabArt(feed); if (!feed.focus()) { /* rows still loading: focus arrives with the first row */ }
         animateShell()
     }
     private fun leaveFeed() {
         homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE; feed.hide()
-        main.removeCallbacks(applyPending); applyPending.run()          // the top row's artwork comes back
+        artGen++; main.removeCallbacks(artRun)
+        main.removeCallbacks(applyPending); applyPending.run(); hero.reshow()          // the top row's artwork comes back
         animateShell()
     }
 
@@ -296,15 +308,17 @@ class HomeActivity : Activity(), PageHost, Nav {
         if (i == section && (i == 0 || screens[i]?.view?.visibility == View.VISIBLE)) return
         screens[section]?.let { it.hide(); it.view.visibility = View.GONE }
         section = i; tabs.selected = i
+        artGen++; main.removeCallbacks(artRun)              // nothing requested for the previous tab may land now
         if (i == 0) {
             homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE
-            main.removeCallbacks(applyPending); applyPending.run()
+            main.removeCallbacks(applyPending); applyPending.run(); hero.reshow()
         } else {
             homeP.target = 0f; hero.quiet(true); feed.view.visibility = View.GONE
             val s = screens[i] ?: create(i).also { screens[i] = it; sectionLayer.addView(it.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)) }
             s.view.visibility = View.VISIBLE
             dimP.target = if (s.wantsArt) 0.2f else 0.55f
             s.show()
+            tabArt(s)
         }
         animateShell()
     }
@@ -351,9 +365,9 @@ class HomeActivity : Activity(), PageHost, Nav {
         if (prev != null) { prev.view.visibility = View.VISIBLE; prev.show(); prev.focus(); return }
         zone = detailReturn
         when (zone) {
-            Zone.FEED -> { feed.view.visibility = View.VISIBLE; dimP.target = 0.25f; feed.show() }
-            Zone.SECTION, Zone.TABS -> screens[section]?.let { it.view.visibility = View.VISIBLE; dimP.target = if (it.wantsArt) 0.2f else 0.55f; it.show(); if (zone == Zone.TABS) tabsP.target = 1f }
-            else -> { homeP.target = 1f; hero.quiet(false); main.removeCallbacks(applyPending); applyPending.run() }
+            Zone.FEED -> { feed.view.visibility = View.VISIBLE; dimP.target = 0.25f; feed.show(); tabArt(feed) }
+            Zone.SECTION, Zone.TABS -> screens[section]?.let { it.view.visibility = View.VISIBLE; dimP.target = if (it.wantsArt) 0.2f else 0.55f; it.show(); tabArt(it); if (zone == Zone.TABS) tabsP.target = 1f }
+            else -> { homeP.target = 1f; hero.quiet(false); artGen++; main.removeCallbacks(applyPending); applyPending.run(); hero.reshow() }
         }
         if (zone == Zone.SECTION) tabsP.target = 1f
         animateShell(); restoreFocus()
@@ -361,19 +375,45 @@ class HomeActivity : Activity(), PageHost, Nav {
 
     // ---- Nav ----
 
+    /**
+     * Backdrop requests carry a generation number: every new request (and every tab switch) bumps it, and an image
+     * that finishes loading for an older generation is dropped, so a slow load can never replace newer artwork.
+     */
+    private var artGen = 0
     private var artItem: ContentItem? = null
     private var artBmp: Bitmap? = null
     private val artRun = Runnable {
         artBmp?.let { hero.backdrop.show(it); artBmp = null; return@Runnable }
         val it = artItem ?: return@Runnable
-        content.image(it.imageUrl) { b -> if (b != null && artItem === it) hero.backdrop.show(b) }
+        val gen = artGen
+        content.image(it.imageUrl) { b -> if (b != null && gen == artGen) hero.backdrop.show(b) }
     }
     /** The backdrop follows the focused title after a short pause (fast scrolling doesn't churn full-screen images). */
-    override fun art(item: ContentItem?) {
+    override fun art(item: ContentItem?, immediate: Boolean) {
         if (item == null || item.imageUrl.isEmpty()) return
-        artItem = item; artBmp = null; main.removeCallbacks(artRun); main.postDelayed(artRun, 260)
+        artGen++; artItem = item; artBmp = null; main.removeCallbacks(artRun)
+        if (!immediate) { main.postDelayed(artRun, 260); return }
+        // Immediately: the image if it is already in memory, otherwise this section's neutral backdrop until it loads.
+        val cached = content.cachedImage(item.imageUrl)
+        if (cached != null) hero.backdrop.show(cached) else { hero.backdrop.show(neutral); artRun.run() }
     }
-    override fun artBitmap(b: Bitmap) { artItem = null; artBmp = b; main.removeCallbacks(artRun); main.postDelayed(artRun, 140) }
+    override fun artBitmap(b: Bitmap) { artGen++; artItem = null; artBmp = b; main.removeCallbacks(artRun); main.postDelayed(artRun, 140) }
+
+    /** A section's own artwork, applied the moment it opens: its featured title, its bitmap, or the neutral backdrop. */
+    private fun tabArt(s: Screen) {
+        s.featuredBitmap()?.let { artGen++; main.removeCallbacks(artRun); hero.backdrop.show(it); return }
+        val f = s.featured()
+        if (f != null) art(f, immediate = true) else { artGen++; main.removeCallbacks(artRun); hero.backdrop.show(neutral) }
+    }
+
+    /** Deep blue-black field with the scrim baked in: the backdrop of sections without artwork, and while art loads. */
+    private fun neutralBackdrop(): Bitmap {
+        val b = Bitmap.createBitmap(96, 54, Bitmap.Config.ARGB_8888)
+        android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF1C2A40.toInt(), 0xFF0C1220.toInt(), 0xFF05070C.toInt()))
+            .apply { setBounds(0, 0, 96, 54); draw(android.graphics.Canvas(b)) }
+        Scrim.paint(b); b.prepareToDraw()
+        return b
+    }
 
     override fun launch(e: AppEntry) { open(e.launchIntent, e.label) }
 
@@ -392,7 +432,6 @@ class HomeActivity : Activity(), PageHost, Nav {
             if (library.canMove(apps, pkg, 1)) items.add(getString(R.string.menu_right) to { library.move(apps, pkg, 1); appsChanged() })
             items.add(getString(R.string.menu_unpin) to { library.remove(apps, pkg); appsChanged() })
         } else items.add(getString(R.string.menu_pin) to { library.add(apps, pkg); appsChanged() })
-        if (!library.isPinned(apps, pkg)) items.add("Hide from Apps" to { library.hide(pkg); appsChanged(); toast("${e.label} hidden. Settings > Hidden apps shows it again.") })
         items.add(getString(R.string.menu_info) to { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)), e.label); Unit })
         items.add("Uninstall" to { open(Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null)), e.label); Unit })
         menu(e.label, items)
@@ -407,6 +446,50 @@ class HomeActivity : Activity(), PageHost, Nav {
     override fun restartUi() { recreate() }
     override fun startSaver() { main.postDelayed({ saver.start() }, 300) }
     override fun tileShadow(): Bitmap = shadowBmp
+    override fun openSetup(step: Int, one: Boolean) { if (!one) setup.resetForRerun(); setup.start(step, one) }
+
+    // ---- setup host ----
+
+    override fun isDefaultHome(): Boolean {
+        val rm = getSystemService(android.app.role.RoleManager::class.java)
+        if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME)) return rm.isRoleHeld(android.app.role.RoleManager.ROLE_HOME)
+        val ri = packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        return ri?.activityInfo?.packageName == packageName
+    }
+
+    /** Android's own confirmation (RoleManager), else the system Home settings screen; never changed silently. */
+    override fun requestDefaultHome(): Boolean {
+        val rm = getSystemService(android.app.role.RoleManager::class.java)
+        if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME)) {
+            val i = rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_HOME)
+            if (packageManager.resolveActivity(i, 0) != null) { startActivityForResult(i, REQ_HOME); return true }
+        }
+        val s = Intent(Settings.ACTION_HOME_SETTINGS)
+        if (packageManager.resolveActivity(s, 0) != null) { startActivityForResult(s, REQ_HOME); return true }
+        return false
+    }
+
+    override fun setupFinished(changedKeys: Boolean) { recreate() }       // providers, region and languages apply on a fresh start
+    override fun setupClosed(changedKeys: Boolean) { if (changedKeys) recreate() else restoreFocus() }
+
+    @Deprecated("Activity result API is not available without AndroidX")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_HOME) setup.refresh()
+    }
+
+    override fun onResume() { super.onResume(); if (::setup.isInitialized) setup.refresh() }
+
+    /** The Home button while Epple TV is the Home screen: back to Home's top row. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.hasCategory(Intent.CATEGORY_HOME) && !setup.active) {
+            if (panel.open) panel.hide()
+            while (details.isNotEmpty()) sectionLayer.removeView(details.removeAt(details.size - 1).view)
+            if (zone == Zone.FEED) leaveFeed()
+            showSection(0); enterContent()
+        }
+    }
 
     // ---- tiles (top row) ----
 
@@ -488,6 +571,11 @@ class HomeActivity : Activity(), PageHost, Nav {
         // Any button wakes the screensaver and does nothing else.
         if (saver.showing) { if (down) { saver.stop(); swallowUp = true }; return true }
         if (swallowUp) { if (!down) swallowUp = false; return true }
+        // Setup uses the platform's focus handling (and the system keyboard for API keys).
+        if (setup.active) {
+            if (k == KeyEvent.KEYCODE_BACK) { if (down && event.repeatCount == 0) setup.back(); return true }
+            return super.dispatchKeyEvent(event)
+        }
 
         val dx = when (k) { KeyEvent.KEYCODE_DPAD_LEFT -> -1; KeyEvent.KEYCODE_DPAD_RIGHT -> 1; else -> 0 }
         val dy = when (k) { KeyEvent.KEYCODE_DPAD_UP -> -1; KeyEvent.KEYCODE_DPAD_DOWN -> 1; else -> 0 }
@@ -553,5 +641,7 @@ class HomeActivity : Activity(), PageHost, Nav {
 
     private companion object {
         val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Library", "Apps", "Search", "Settings")
+        val TAB_ICONS = listOf(TabIcons.HOME, TabIcons.MOVIES, TabIcons.TV, TabIcons.LIBRARY, TabIcons.APPS, TabIcons.SEARCH, TabIcons.SETTINGS)
+        const val REQ_HOME = 41
     }
 }

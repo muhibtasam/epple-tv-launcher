@@ -292,22 +292,6 @@ class ShelfStack(ctx: Context, private val l: Layout, private val clock: FrameCl
     }
 }
 
-/** The tvOS-style tab bar: a glass capsule of text tabs, centred at the top. */
-@SuppressLint("ViewConstructor")
-class TabBar(ctx: Context, l: Layout, clock: FrameClock, labels: List<String>) : LinearLayout(ctx) {
-    val tabs = labels.map { Pill(ctx, it, l.pxf(27f), l.pxf(30f), l.px(30), clock, 0x00000000, Colors.TEXT_DIM, 0.06f) }
-    var selected = 0
-        set(v) { field = v; tabs.forEachIndexed { i, t -> t.selectedState = i == v } }
-
-    init {
-        orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false
-        background = GradientDrawable().apply { cornerRadius = l.pxf(40f); setColor(Colors.GLASS); setStroke(l.px(1).coerceAtLeast(1), Colors.HAIRLINE) }
-        val p = l.px(8); setPadding(p, p, p, p)
-        tabs.forEachIndexed { i, t -> addView(t, LayoutParams(WRAP_CONTENT, l.px(60)).apply { if (i > 0) leftMargin = l.px(4) }) }
-        selected = 0
-    }
-}
-
 /**
  * Remote-friendly on-screen keyboard: a 13-column grid (a–m, n–z, digits and actions). Moving off its bottom edge
  * returns false so the screen can move focus to the results.

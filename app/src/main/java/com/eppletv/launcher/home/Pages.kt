@@ -157,7 +157,9 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
     private val fade = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS)
     private var topIsFront = false
     private var current: Bitmap? = null
-    var onChange: (() -> Unit)? = null
+    /** Views that sample the backdrop (the glass platter, the tab bar) redraw when it changes. */
+    val listeners = ArrayList<() -> Unit>()
+    val currentBitmap: Bitmap? get() = current
     val bottomBitmap: Bitmap? get() = (bottom.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
     val topBitmap: Bitmap? get() = (top.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
     private var dimLevel = 0
@@ -175,7 +177,7 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
     fun show(b: Bitmap) {
         if (b === current) return
         current = b
-        if (bottom.drawable == null) { bottom.setImageBitmap(b); onChange?.invoke(); return }
+        if (bottom.drawable == null) { bottom.setImageBitmap(b); listeners.forEach { it() }; return }
         if (topIsFront) { bottom.setImageBitmap(b); fade.target = 0f; topIsFront = false }
         else { top.setImageBitmap(b); fade.target = 1f; topIsFront = true }
         bottom.visibility = View.VISIBLE; top.visibility = View.VISIBLE
@@ -183,7 +185,7 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
     }
 
     override fun tick(dt: Float): Boolean {
-        fade.step(dt); top.alpha = fade.value; onChange?.invoke()
+        fade.step(dt); top.alpha = fade.value; listeners.forEach { it() }
         if (!fade.atRest()) return true
         // At rest only one full-screen layer is drawn: the GPU on this TV has little fill rate to spare at 1080p.
         if (fade.value >= 1f) bottom.visibility = View.INVISIBLE else top.visibility = View.INVISIBLE
@@ -255,6 +257,9 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         index = n; show(fresh = false)
         return true
     }
+
+    /** Shows the current title's artwork again (returning to Home from another tab). */
+    fun reshow() { if (entry != null && !deep) show(fresh = true) }
 
     private var quietOn = false
     /** Another section is in front: the title text fades out, the artwork stays as the shared backdrop. */

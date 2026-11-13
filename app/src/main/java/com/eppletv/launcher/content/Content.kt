@@ -263,6 +263,14 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     }
     fun forget(key: String) { results.remove(key) }
 
+    /** Main thread. Runs [job] once on the worker (no memo: e.g. testing a credential) and calls back on the main thread. */
+    fun <T : Any> run(job: () -> T, cb: (T?) -> Unit) {
+        io.execute { val v: T? = try { job() } catch (e: Exception) { null }; main.post { cb(v) } }
+    }
+
+    /** Main thread. The decoded full-screen image for [url] if it is in memory, else null (no loading). */
+    fun cachedImage(url: String): Bitmap? = images.get(url)
+
     /** Every content item loaded for the top-row apps this launch. */
     fun loadedItems(): List<ContentItem> = lists.values.flatten()
 

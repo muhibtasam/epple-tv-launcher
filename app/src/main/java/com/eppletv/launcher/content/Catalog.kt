@@ -34,19 +34,19 @@ class Catalog(private val net: Net, private val key: String, private val region:
     fun movieRows(): List<RowSpec> = listOf(
         RowSpec("Trending Movies", "trending/movie/week", 6),
         RowSpec("Latest in Cinemas", "movie/now_playing?region=IN"),
-        RowSpec("Popular in India", "discover/movie?with_original_language=$INDIAN_Q&sort_by=popularity.desc&vote_count.gte=20"),
+        RowSpec("Popular in India", "discover/movie?with_original_language=${indianQ()}&sort_by=popularity.desc&vote_count.gte=20"),
         RowSpec("Popular Worldwide", "movie/popular"),
         RowSpec("Top Rated", "movie/top_rated", 48),
-    ) + listOf(28 to "Action", 35 to "Comedy", 53 to "Thriller", 18 to "Drama", 16 to "Animation", 10749 to "Romance", 27 to "Horror", 878 to "Science Fiction")
+    ).filter { !it.path.contains("with_original_language=&") } + listOf(28 to "Action", 35 to "Comedy", 53 to "Thriller", 18 to "Drama", 16 to "Animation", 10749 to "Romance", 27 to "Horror", 878 to "Science Fiction")
         .map { (g, n) -> RowSpec(n, "discover/movie?with_genres=$g&sort_by=popularity.desc&vote_count.gte=100", 24) }
 
     fun tvRows(): List<RowSpec> = listOf(
         RowSpec("Trending Series", "trending/tv/week", 6),
         RowSpec("New Episodes", "tv/on_the_air"),
-        RowSpec("Indian Series", "discover/tv?with_original_language=$INDIAN_Q&sort_by=popularity.desc&vote_count.gte=5"),
+        RowSpec("Indian Series", "discover/tv?with_original_language=${indianQ()}&sort_by=popularity.desc&vote_count.gte=5"),
         RowSpec("Popular Worldwide", "tv/popular"),
         RowSpec("Top Rated", "tv/top_rated", 48),
-    ) + listOf(18 to "Drama", 80 to "Crime", 35 to "Comedy", 10765 to "Sci-Fi & Fantasy", 16 to "Animation", 9648 to "Mystery", 10759 to "Action & Adventure", 99 to "Documentary")
+    ).filter { !it.path.contains("with_original_language=&") } + listOf(18 to "Drama", 80 to "Crime", 35 to "Comedy", 10765 to "Sci-Fi & Fantasy", 16 to "Animation", 9648 to "Mystery", 10759 to "Action & Adventure", 99 to "Documentary")
         .map { (g, n) -> RowSpec(n, "discover/tv?with_genres=$g&sort_by=popularity.desc&vote_count.gte=50", 24) }
 
     val trendingAll = RowSpec("Trending Now", "trending/all/week", 6)
@@ -148,7 +148,8 @@ class Catalog(private val net: Net, private val key: String, private val region:
     companion object {
         private const val HOUR = 60 * 60 * 1000L
         val INDIAN = listOf("hi", "ta", "te", "ml", "kn", "bn", "mr", "pa")
-        private val INDIAN_Q = INDIAN.joinToString("|")
+        /** The Indian languages chosen in Settings (empty: Indian rows are left out). */
+        private fun indianQ() = Sources.indianLangs.joinToString("|")
         /** TMDB provider id -> the app on this TV that plays it. */
         val PROVIDER_APPS = mapOf(8 to Apps.NETFLIX, 1796 to Apps.NETFLIX, 119 to Apps.PRIME, 9 to Apps.PRIME, 10 to Apps.PRIME,
             283 to Apps.CRUNCHYROLL, 192 to Apps.YOUTUBE)

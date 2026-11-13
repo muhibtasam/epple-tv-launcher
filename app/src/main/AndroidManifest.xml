@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Runs as a normal TV app. It deliberately does NOT declare the HOME category (HOME takeover is not approved). -->
+<!-- Runs as a normal TV app. It can also be chosen as the Home screen, but only by the user through Android's own
+     confirmation (setup step 4); it never changes the default by itself. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Only used to fetch content lists and artwork for the hero area. -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -45,5 +46,16 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Makes Epple TV selectable as the Home screen. Android asks the user before it becomes the default. -->
+        <activity-alias
+            android:name=".HomeEntry"
+            android:exported="true"
+            android:targetActivity=".home.HomeActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
     </application>
 </manifest>

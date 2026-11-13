@@ -36,7 +36,7 @@ interface Nav {
     val prefs: Prefs
     val library: Library
     val apps: List<AppEntry>
-    fun art(item: ContentItem?)                 // backdrop follows the focused title
+    fun art(item: ContentItem?, immediate: Boolean = false)   // backdrop follows the focused title
     fun artBitmap(b: Bitmap)
     fun details(item: ContentItem)
     fun launch(e: AppEntry)
@@ -48,6 +48,8 @@ interface Nav {
     fun restartUi()
     fun startSaver()
     fun tileShadow(): Bitmap
+    /** Setup at [step]; [one] = only that step (from Settings), otherwise the whole flow again. */
+    fun openSetup(step: Int, one: Boolean)
 }
 
 /** One section of the launcher. Focus inside a section is explicit and survives leaving and returning. */
@@ -64,6 +66,10 @@ abstract class Screen(protected val nav: Nav) {
     open fun back(): Boolean = false
     /** Rows show the hero-style info block for the focused title. */
     open val wantsArt = true
+    /** The title whose artwork this section shows when it opens (null: the section's neutral backdrop). */
+    open fun featured(): ContentItem? = null
+    /** A ready bitmap for this section's backdrop instead of a title (e.g. the focused app's colours). */
+    open fun featuredBitmap(): Bitmap? = null
 }
 
 /** Title block over the artwork: eyebrow, logo (or typeset title), metadata and a two-line summary. */
@@ -125,6 +131,7 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
     private val requested = HashSet<Int>()
     private var built = false
     private var version = -1
+    private var active = false
 
     init {
         view.addView(info, FrameLayout.LayoutParams(l.px(1300), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(Look.INFO_TOP) })
@@ -157,6 +164,8 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             updateEmpty()
             // An empty (hidden) row must not stall lazy loading: fetch the next one now.
             if (shelf.visibility == View.GONE) (i + 1 until sources.size).firstOrNull { it !in requested }?.let { load(it) }
+            // The first row to arrive gives this section its artwork if nothing is focused here yet.
+            if (active && !view.hasFocus() && i == stack.firstNavigable()) items.firstOrNull()?.let { nav.art(it, immediate = true) }
             if (stack.current == null || stack.r == i || !stack.shelves[stack.r].let { it.visibility == View.VISIBLE && it.cards.isNotEmpty() }) {
                 if (view.hasFocus() || focusWanted) { focusWanted = false; stack.focus() }
             }
@@ -189,19 +198,22 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
 
     protected open fun extraMenu(it: ContentItem): List<Pair<String, () -> Unit>> = emptyList()
 
+    override fun featured(): ContentItem? = stack.current?.item ?: stack.shelves.getOrNull(stack.firstNavigable())?.item
+
     override fun show() {
+        active = true
         if (!built) build()
         // Rows built from the user's own lists are rebuilt when those lists changed.
         if (version != nav.user.version) {
             version = nav.user.version
             sources.forEachIndexed { i, s -> if (s.dynamic && i in requested) load(i, force = true) }
         }
-        stack.current?.item?.let { info.show(it, stack.current!!.title); nav.art(it) }
+        stack.current?.item?.let { info.show(it, stack.current!!.title) }
         stack.trim()                                   // artwork for the rows around the focus comes back
     }
 
     override fun focus(): Boolean { val ok = stack.focus(); if (!ok) { focusWanted = true; view.requestFocus() }; return ok }
-    override fun hide() { stack.releaseAll() }      // a hidden section holds no artwork
+    override fun hide() { active = false; stack.releaseAll() }      // a hidden section holds no artwork
     override fun key(dx: Int, dy: Int): Boolean = stack.key(dx, dy)
     override fun back(): Boolean = if (!stack.atFirst()) { stack.r = stack.firstNavigable(); stack.focus(); true } else false
 }

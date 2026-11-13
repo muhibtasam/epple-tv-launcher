@@ -22,6 +22,8 @@ object Sources {
     /** Content region: local.properties content_region, else the device's country. */
     /** Settings > Content region; empty = automatic. Set before the sources are built. */
     var override = ""
+    /** Settings > Languages: Indian languages included in discovery (empty = Hollywood only). */
+    var indianLangs: List<String> = Catalog.INDIAN
     val region: String get() = override.ifEmpty { BuildConfig.CONTENT_REGION }.ifEmpty { Locale.getDefault().country }.ifEmpty { "US" }.uppercase(Locale.US)
 
     /** [debugCinemetaFor]: debug builds only, lets an emulator without Stremio exercise the content pipeline. */
@@ -33,12 +35,12 @@ object Sources {
                 Apps.PRIME to Service("Prime Video", watchmode = "26", tmdb = "119|9"),
                 Apps.CRUNCHYROLL to Service("Crunchyroll", watchmode = "80,79", tmdb = "283", indian = false),
             ),
-            Keys(BuildConfig.TMDB_KEY, BuildConfig.WATCHMODE_KEY, BuildConfig.TRAKT_ID), region,
+            Keys(Credentials.get(Credentials.Key.TMDB), Credentials.get(Credentials.Key.WATCHMODE), Credentials.get(Credentials.Key.TRAKT)), region,
         ),
-        YouTube(BuildConfig.YOUTUBE_KEY, region),
-        YouTubeChannel(Apps.TAPMAD, "tapmad", TAPMAD_UPLOADS, BuildConfig.YOUTUBE_KEY),
+        YouTube(Credentials.get(Credentials.Key.YOUTUBE), region),
+        YouTubeChannel(Apps.TAPMAD, "tapmad", TAPMAD_UPLOADS, Credentials.get(Credentials.Key.YOUTUBE)),
     )
-    val usesTmdb get() = BuildConfig.TMDB_KEY.isNotEmpty()
+    val usesTmdb get() = Credentials.hasAny(Credentials.Key.TMDB)
 
     /** Uploads playlist of tapmad's official YouTube channel (@tapmadofficial, UCPHOf3lVS8bUSwR1h55EO6g). */
     private const val TAPMAD_UPLOADS = "UUPHOf3lVS8bUSwR1h55EO6g"
@@ -126,12 +128,13 @@ class Showcase(private val services: Map<String, Service>, private val keys: Key
 
         // 2. Popular on the service (TMDB watch providers): English-language and Indian-language pools, 12 per type each.
         //    First region that has the service wins.
-        val langs = if (svc.indian) listOf("en", INDIAN.joinToString("|")) else listOf("")
+        val chosen = Sources.indianLangs
+        val langs = if (!svc.indian) listOf("") else if (chosen.isEmpty()) listOf("en") else listOf("en", chosen.joinToString("|"))
         for (r in listOf(region, if (region in SOUTH_ASIA) "IN" else "US", "US").distinct()) {
             var found = 0
             for (lang in langs) for (type in arrayOf("movie", "tv")) try {
                 val lq = if (lang.isEmpty()) "" else "&with_original_language=$lang"
-                val lk = if (lang.isEmpty()) "all" else if (lang == "en") "en" else "in"
+                val lk = if (lang.isEmpty()) "all" else if (lang == "en") "en" else "in" + chosen.joinToString("")   // the language set is part of the cache key
                 val res = tmdb(net, "disc-$tag-$type-$r-$lk", 12 * HOUR, "discover/$type?watch_region=$r&with_watch_providers=${svc.tmdb}" +
                     "&with_watch_monetization_types=flatrate&sort_by=popularity.desc&include_adult=false&vote_count.gte=10$lq").optJSONArray("results") ?: JSONArray()
                 for (i in 0 until minOf(12, res.length())) {

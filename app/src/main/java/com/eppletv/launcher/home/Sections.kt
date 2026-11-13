@@ -1,6 +1,7 @@
 package com.eppletv.launcher.home
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Debug
@@ -149,7 +150,7 @@ class DetailScreen(nav: Nav, private val item: ContentItem) : Screen(nav), Frame
         if (view.isAttachedToWindow && view.visibility == View.VISIBLE && !inRows) pills[b].requestFocus()
     }
 
-    override fun show() { nav.art(item) }
+    override fun show() { nav.art(item, immediate = true) }
 
     override fun focus(): Boolean { if (inRows && stack.focus()) return true; inRows = false; pills.getOrNull(b)?.requestFocus(); setShift(); return true }
 
@@ -193,49 +194,34 @@ class LibraryScreen(nav: Nav) : BrowseScreen(nav, listOf(
 // ------------------------------------------------------------------------------------------------ Apps
 
 /**
- * Every installed app (TV and phone apps), discovered and refreshed automatically by AppRepository, with category
- * filters. Same tiles, artwork and focus behaviour as the top row. Holding OK opens app management.
+ * Every installed app (TV and phone apps), discovered and refreshed automatically by AppRepository, in one grid
+ * under the heading and the app count. Same tiles, artwork and focus behaviour as the top row; holding OK opens
+ * app management. Each package appears exactly once (AppRepository lists one launch entry per package).
  */
 class AppsScreen(nav: Nav) : Screen(nav), TileHost, FrameClock.Tick {
     override val view = FrameLayout(nav.ctx).apply { clipChildren = false }
     override var dirX = 0; private set
     override var dirY = 0; private set
-    private val cats = listOf("All Apps", "Top Row", "Video", "Music", "Other")
-    private val chips = LinearLayout(nav.ctx).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
-    private val chipPills = cats.map { Pill(nav.ctx, it, l.pxf(26f), l.pxf(30f), l.px(30), nav.clock, Colors.FILL, Colors.TEXT_DIM, 0.06f) }
-    private val grid = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
+    private val heading = TextView(nav.ctx).apply { style(Txt.HERO, l.u); text = "Apps" }
     private val count = TextView(nav.ctx).apply { style(Txt.META, l.u, Colors.TEXT_DIM) }
-    private val none = TextView(nav.ctx).apply { style(Txt.ROW, l.u, Colors.TEXT_DIM); text = "No apps in this category"; visibility = View.GONE }
+    private val grid = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
+    private val none = TextView(nav.ctx).apply { style(Txt.ROW, l.u, Colors.TEXT_DIM); text = "No apps installed"; visibility = View.GONE }
     private val tiles = ArrayList<Tile>()
-    private var cat = 0; private var inGrid = true; private var r = 0; private var c = 0
+    private var r = 0; private var c = 0
     private val sy = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
-    private val gridTop = l.px(290)
+    private val gridTop = l.px(330)
     private var built: List<AppEntry>? = null
 
     init {
-        chipPills.forEachIndexed { i, p -> chips.addView(p, LinearLayout.LayoutParams(WRAP_CONTENT, l.px(60)).apply { if (i > 0) leftMargin = l.px(14) }) }
-        view.addView(chips, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(60)).apply { leftMargin = l.left; topMargin = l.px(150) })
-        view.addView(count, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.END).apply { rightMargin = l.left; topMargin = l.px(164) })
+        view.addView(heading, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(150) })
+        view.addView(count, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(244) })
         view.addView(grid, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        view.addView(none, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = gridTop + l.px(40) })
-        chipPills[0].selectedState = true
+        view.addView(none, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = gridTop })
     }
 
-    private fun filtered(): List<AppEntry> {
-        val hidden = nav.library.hidden()
-        val all = nav.apps.filter { it.packageName !in hidden }
-        return when (cat) {
-            1 -> nav.library.pinned(nav.apps)
-            2 -> all.filter { it.category == android.content.pm.ApplicationInfo.CATEGORY_VIDEO }
-            3 -> all.filter { it.category == android.content.pm.ApplicationInfo.CATEGORY_AUDIO }
-            4 -> all.filter { it.category !in setOf(android.content.pm.ApplicationInfo.CATEGORY_VIDEO, android.content.pm.ApplicationInfo.CATEGORY_AUDIO) }
-            else -> all
-        }
-    }
-
-    /** Rebuilds the grid when the app list, the category or the user's choices changed. */
+    /** Rebuilds the grid when the installed apps changed. */
     fun rebuild(force: Boolean = false) {
-        val list = filtered()
+        val list = nav.apps.distinctBy { it.packageName }
         if (!force && built == list) return
         val keep = tiles.getOrNull(r * Layout.COLS + c)?.entry?.packageName
         built = list
@@ -252,40 +238,31 @@ class AppsScreen(nav: Nav) : Screen(nav), TileHost, FrameClock.Tick {
         val k = keep?.let { p -> list.indexOfFirst { it.packageName == p } } ?: -1
         val idx = if (k >= 0) k else (r * Layout.COLS + c).coerceIn(0, maxOf(0, list.size - 1))
         r = idx / Layout.COLS; c = idx % Layout.COLS
-        count.text = "${list.size} app${if (list.size == 1) "" else "s"}"
+        count.text = "${list.size} installed app${if (list.size == 1) "" else "s"}"
         none.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
-        if (list.isEmpty()) inGrid = false
         place()
     }
 
     override fun show() { rebuild() }
+    override fun featuredBitmap(): Bitmap? = tiles.getOrNull(r * Layout.COLS + c)?.entry?.backdrop
 
     override fun focus(): Boolean {
-        if (inGrid && tiles.isNotEmpty()) { tiles[(r * Layout.COLS + c).coerceIn(0, tiles.size - 1)].requestFocus(); place(); return true }
-        inGrid = false; chipPills[cat].requestFocus(); return true
+        if (tiles.isEmpty()) return false
+        tiles[(r * Layout.COLS + c).coerceIn(0, tiles.size - 1)].requestFocus(); place(); return true
     }
 
     override fun key(dx: Int, dy: Int): Boolean {
         dirX = dx; dirY = dy
-        if (!inGrid) {
-            if (dx != 0) {
-                val n = (cat + dx).coerceIn(0, cats.size - 1)
-                if (n != cat) { chipPills[cat].selectedState = false; cat = n; chipPills[cat].selectedState = true; r = 0; c = 0; rebuild(force = true) }
-                chipPills[cat].requestFocus(); return true
-            }
-            if (dy < 0) return false
-            if (dy > 0 && tiles.isNotEmpty()) { inGrid = true; focus() }
-            return true
-        }
+        if (tiles.isEmpty()) return dy >= 0
         val rows = (tiles.size + Layout.COLS - 1) / Layout.COLS
         if (dx != 0) { val n = c + dx; if (n in 0 until Layout.COLS && r * Layout.COLS + n < tiles.size) { c = n; focus() }; return true }
         val nr = r + dy
-        if (nr < 0) { inGrid = false; focus(); return true }
+        if (nr < 0) return false                       // up from the first row: the tab bar
         if (nr >= rows) return true
         r = nr; c = c.coerceAtMost(tiles.size - 1 - r * Layout.COLS); focus(); return true
     }
 
-    override fun back(): Boolean = if (inGrid && r > 0) { r = 0; focus(); true } else if (inGrid) { inGrid = false; focus(); true } else false
+    override fun back(): Boolean = if (r > 0) { r = 0; focus(); true } else false
 
     private fun place() { sy.target = -(maxOf(0, r - 1) * l.rowPitch).toFloat(); nav.clock.add(this) }
     override fun tick(dt: Float): Boolean { sy.step(dt); grid.translationY = sy.value; return !sy.atRest() }
@@ -427,14 +404,13 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         header("Content")
         choice(Prefs.REGION, "Which country's streaming catalogues and availability are shown. Automatic uses this TV's region (${Sources.region}).")
         choice(Prefs.INDIAN, "The mix of Bollywood and regional Indian titles against Hollywood titles in the top row's showcases.")
-        row("Providers", "Catalogue and artwork: TMDB. New releases: Watchmode. Trending: Trakt. Videos: YouTube. Stremio: Cinemeta. Keys stay on this TV.", {
-            listOf("TMDB" to BuildConfig.TMDB_KEY, "Watchmode" to BuildConfig.WATCHMODE_KEY, "Trakt" to BuildConfig.TRAKT_ID, "YouTube" to BuildConfig.YOUTUBE_KEY)
-                .count { it.second.isNotEmpty() }.let { "$it of 4 connected" } }) {}
+        row("Content providers", "API keys for TMDB, Watchmode, Trakt and YouTube: enter, test, replace or remove them. Keys are encrypted on this TV and shown only masked.", {
+            "${com.eppletv.launcher.content.Credentials.connected()} of 4 connected" }) { nav.openSetup(1, one = true) }
+        row("Indian languages", "The Indian languages included in Movies, TV Shows and the top row's showcases. Select to choose.", {
+            nav.prefs.langs.size.let { if (it == 0) "None" else "$it selected" } }) { nav.openSetup(2, one = true) }
         header("Apps")
         row("Reset top row", "Puts Netflix, Prime Video, Crunchyroll, YouTube, Stremio and Tapmad back in the top row.", { "" }) {
             nav.library.reset(); nav.appsChanged(); nav.toast("Top row reset") }
-        row("Hidden apps", "Apps you hid from the app library. Select to show them all again.", { "${nav.library.hidden().size}" }) {
-            nav.library.unhideAll(); nav.appsChanged() }
         row("Android app settings", "Storage, permissions and updates for every installed app.", { "" }) {
             try { nav.ctx.startActivity(Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) { nav.toast("Not available on this TV") } }
         header("Storage")
@@ -451,6 +427,7 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         row("Device", "This TV, its Android version and the screen size Epple TV draws at.", { "${Build.MODEL} · Android ${Build.VERSION.RELEASE} · ${nav.ctx.resources.displayMetrics.widthPixels}×${nav.ctx.resources.displayMetrics.heightPixels}" }) {}
         row("Diagnostics", "Network requests made since Epple TV opened, and memory in use.", {
             "${nav.content.net.calls.get()} requests · ${(Debug.getPss() / 1024)} MB" }) {}
+        row("Run setup again", "Walks through the first-launch setup: providers, what you watch and the Home screen.", { "" }) { nav.openSetup(0, one = false) }
         row("Data attribution", "This product uses the TMDB API but is not endorsed or certified by TMDB.", { "TMDB" }) {}
         refreshValues()
     }

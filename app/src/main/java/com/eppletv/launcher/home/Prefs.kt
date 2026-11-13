@@ -33,4 +33,8 @@ class Prefs(ctx: Context) {
     val rotateMs get() = ROTATE_MS[get(ROTATE)]
     val textScale get() = TEXT_SCALE[get(TEXT)]
     val boldText get() = get(WEIGHT) == 1
+    /** Indian languages included in discovery (empty = Hollywood only). */
+    var langs: List<String>
+        get() = p.getString("langs", null)?.split(',')?.filter { it.isNotEmpty() } ?: com.eppletv.launcher.content.Catalog.INDIAN
+        set(v) = p.edit().putString("langs", v.joinToString(",")).apply()
 }
