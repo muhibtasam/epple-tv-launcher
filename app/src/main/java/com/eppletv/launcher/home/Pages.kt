@@ -45,13 +45,10 @@ internal fun makeShadow(l: Layout): Bitmap {
  * Home: the top row of pinned apps on a glass platter, and every other app in a grid below it.
  * Focus movement is explicit: this class decides where each key press lands, so it is always restorable.
  */
-class HomePage(ctx: Context, private val l: Layout, private val clock: FrameClock, private val host: PageHost, private val shadow: Bitmap) : FrameClock.Tick {
+class HomePage(ctx: Context, private val l: Layout, private val clock: FrameClock, private val host: PageHost, private val shadow: Bitmap,
+               backdrop: Backdrop) : FrameClock.Tick {
     val view = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
-    private val platter = View(ctx).apply {
-        background = GradientDrawable().apply {
-            cornerRadius = l.platterRadius; setColor(0x73141416); setStroke(l.px(2).coerceAtLeast(1), 0x2EFFFFFF)
-        }
-    }
+    private val platter = GlassPlatter(ctx, l, backdrop, clock)
     private val strip = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
     private val dock = ArrayList<Tile>()
     private val grid = ArrayList<Tile>()
@@ -129,6 +126,7 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     fun focusCurrent(): Boolean {
         val t = tile() ?: return false
         place(); t.requestFocus(); host.onPageDepth(r > 0)
+        platter.focusAt(if (r == 0) (l.platterPad + (c - first) * l.pitchX + l.tileW / 2).toFloat() else null)
         return true
     }
 
@@ -144,6 +142,7 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
         val s = shelf.value.coerceIn(0f, 1f)
         view.translationY = sy.value + s * l.pxf(300f)
         view.alpha = 1f - s
+        platter.moved()
         return !(sx.atRest() && sy.atRest() && shelf.atRest())
     }
 }
@@ -157,17 +156,21 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
     private val fade = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS)
     private var topIsFront = false
     private var current: Bitmap? = null
+    var onChange: (() -> Unit)? = null
+    val bottomBitmap: Bitmap? get() = (bottom.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+    val topBitmap: Bitmap? get() = (top.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+    val topAlpha: Float get() = top.alpha
 
     fun show(b: Bitmap) {
         if (b === current) return
         current = b
-        if (bottom.drawable == null) { bottom.setImageBitmap(b); return }
+        if (bottom.drawable == null) { bottom.setImageBitmap(b); onChange?.invoke(); return }
         if (topIsFront) { bottom.setImageBitmap(b); fade.target = 0f; topIsFront = false }
         else { top.setImageBitmap(b); fade.target = 1f; topIsFront = true }
         clock.add(this)
     }
 
-    override fun tick(dt: Float): Boolean { fade.step(dt); top.alpha = fade.value; return !fade.atRest() }
+    override fun tick(dt: Float): Boolean { fade.step(dt); top.alpha = fade.value; onChange?.invoke(); return !fade.atRest() }
 }
 
 /**

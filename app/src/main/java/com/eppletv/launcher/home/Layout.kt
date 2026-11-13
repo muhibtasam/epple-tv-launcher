@@ -14,12 +14,12 @@ class Layout(val u: Float) {
     val tileW = px(250); val tileH = px(141)      // 16:9, the native shape of Android TV banners
     val pitchX = px(294)
     val left = px(100)
-    val corner = pxf(26f)
+    val corner = pxf(24f)
     val shadowPad = px(44)
     val labelTop = px(26); val labelH = px(40)
 
     val dockY = px(832)                            // top row of tiles
-    val platterPad = px(36); val platterRadius = pxf(58f)
+    val platterPad = px(38); val platterRadius = pxf(66f)
     val rowPitch = px(225)
     fun rowY(r: Int) = dockY + r * rowPitch
 

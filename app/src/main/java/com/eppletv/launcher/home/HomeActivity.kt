@@ -29,6 +29,7 @@ import com.eppletv.launcher.apps.AppRepository
 import com.eppletv.launcher.apps.Library
 import com.eppletv.launcher.content.ContentRepository
 import com.eppletv.launcher.content.Sources
+import com.eppletv.launcher.content.TitleLauncher
 import com.eppletv.launcher.motion.FrameClock
 import com.eppletv.launcher.motion.Motion
 import com.eppletv.launcher.motion.Spring
@@ -59,6 +60,7 @@ class HomeActivity : Activity(), PageHost {
     private lateinit var library: Library
     private lateinit var repo: AppRepository
     private lateinit var content: ContentRepository
+    private lateinit var titles: TitleLauncher
     private lateinit var hero: Hero
     private lateinit var dim: View
     private lateinit var page: HomePage
@@ -109,6 +111,7 @@ class HomeActivity : Activity(), PageHost {
         l = Layout.forWindow(dm.widthPixels, dm.heightPixels)
         library = Library(this)
         content = ContentRepository(this, Sources.all(if (BuildConfig.DEBUG) intent.getStringExtra("cinemetaFor") else null))
+        titles = TitleLauncher(this, content.net, BuildConfig.WATCHMODE_KEY, Sources.region)
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK); clipChildren = false }
         hero = Hero(this, l, clock, content, root)
@@ -117,7 +120,7 @@ class HomeActivity : Activity(), PageHost {
         anchor = View(this).apply { isFocusable = true }          // holds focus in full-screen artwork mode
         root.addView(anchor, FrameLayout.LayoutParams(1, 1))
 
-        page = HomePage(this, l, clock, this, makeShadow(l))
+        page = HomePage(this, l, clock, this, makeShadow(l), hero.backdrop)
         root.addView(page.view, FrameLayout.LayoutParams(MATCH_PARENT, l.height(1)))
 
         pill = Pill(this, "", l.pxf(Txt.META.px), l.pxf(30f), l.px(28), clock, Colors.GLASS, Colors.WHITE, 0.06f)
@@ -168,7 +171,7 @@ class HomeActivity : Activity(), PageHost {
         super.onStop()
     }
 
-    override fun onDestroy() { main.removeCallbacks(applyPending); repo.stop(); content.stop(); super.onDestroy() }
+    override fun onDestroy() { main.removeCallbacks(applyPending); repo.stop(); content.stop(); titles.stop(); super.onDestroy() }
 
     private fun updateTime() {
         timeText = DateFormat.getTimeFormat(this).format(Date())
@@ -230,11 +233,7 @@ class HomeActivity : Activity(), PageHost {
     /** OK on full-screen artwork: open that title in its app when the app supports it, otherwise open the app. */
     private fun openHeroItem() {
         val e = pending?.entry ?: return
-        val link = hero.item?.intent()
-        if (link != null) {
-            try { startActivity(link); return } catch (_: ActivityNotFoundException) {} catch (_: SecurityException) {}
-        }
-        launch(e, null)
+        titles.open(hero.item, e.packageName) { launch(e, null) }
     }
 
     private fun open(intent: Intent, name: String, opts: Bundle? = null): Boolean = try {

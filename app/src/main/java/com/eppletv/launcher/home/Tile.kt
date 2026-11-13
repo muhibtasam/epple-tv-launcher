@@ -3,12 +3,9 @@ package com.eppletv.launcher.home
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
-import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
 import android.view.KeyEvent
 import android.view.View
@@ -51,13 +48,30 @@ class Tile(
     var inDock = false
     private var longPressed = false
 
-    private val shadow = ImageView(ctx).apply { setImageBitmap(shadowBmp); alpha = 0f; scaleType = ImageView.ScaleType.FIT_XY }
+    private val shadow = ImageView(ctx).apply { setImageBitmap(shadowBmp); alpha = 0.35f; scaleType = ImageView.ScaleType.FIT_XY }
+
+    // Layered artwork, clipped to the rounded tile: banner (parallax layer), static gloss, moving specular light, light rim.
+    private val art = FrameLayout(ctx).apply {
+        clipToOutline = true
+        outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, l.corner) }
+        }
+    }
+    private val banner = BannerView(ctx, entry.banner)
+    private val gloss = View(ctx).apply {
+        // Top light and a faint darker base: the tile reads as a lit, slightly convex surface rather than a flat image.
+        background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x24FFFFFF, 0x05FFFFFF, 0x00000000, 0x14000000))
+    }
     private val highlight = View(ctx).apply {
         background = GradientDrawable().apply {
-            gradientType = GradientDrawable.RADIAL_GRADIENT; gradientRadius = l.pxf(320f)
-            colors = intArrayOf(0x55FFFFFF, 0x00FFFFFF); setGradientCenter(0.3f, 0f); cornerRadius = l.corner
+            gradientType = GradientDrawable.RADIAL_GRADIENT; gradientRadius = l.pxf(300f)
+            colors = intArrayOf(0x66FFFFFF, 0x14FFFFFF, 0x00FFFFFF); setGradientCenter(0.25f, -0.1f)
         }
         alpha = 0f
+    }
+    private val rim = View(ctx).apply {
+        background = GradientDrawable().apply { cornerRadius = l.corner; setStroke(l.px(2).coerceAtLeast(1), 0x40FFFFFF) }
+        alpha = 0.45f
     }
 
     init {
@@ -67,9 +81,12 @@ class Tile(
         cameraDistance = 12000f * l.u
         contentDescription = entry.label
         val p = l.shadowPad
-        addView(shadow, LayoutParams(l.tileW + 2 * p, l.tileH + 2 * p).apply { leftMargin = -p; topMargin = -p + l.px(18) })
-        addView(BannerView(ctx, entry.banner, l.corner), LayoutParams(l.tileW, l.tileH))
-        addView(highlight, LayoutParams(l.tileW, l.tileH))
+        addView(shadow, LayoutParams(l.tileW + 2 * p, l.tileH + 2 * p).apply { leftMargin = -p; topMargin = -p + l.px(14) })
+        art.addView(banner, LayoutParams(l.tileW, l.tileH))
+        art.addView(gloss, LayoutParams(l.tileW, l.tileH))
+        art.addView(highlight, LayoutParams(l.tileW, l.tileH))
+        addView(art, LayoutParams(l.tileW, l.tileH))
+        addView(rim, LayoutParams(l.tileW, l.tileH))
     }
 
     override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
@@ -115,12 +132,16 @@ class Tile(
         val s = (1f + Motion.FOCUS_SCALE * v) * (1f - Motion.PRESS_SCALE * press.value)
         scaleX = s; scaleY = s
         translationZ = v * l.pxf(10f)
-        shadow.scaleX = 1f + 0.04f * v; shadow.scaleY = 1f + 0.04f * v
         rotationX = tiltX.value; rotationY = tiltY.value
-        shadow.alpha = v
-        highlight.alpha = 0.6f * v
-        highlight.translationX = -tiltY.value * l.pxf(6f)
-        highlight.translationY = tiltX.value * l.pxf(6f)
+        // Depth: the shadow grows, softens and drops as the tile lifts.
+        shadow.alpha = 0.35f + 0.65f * v
+        val ss = 1f + 0.06f * v; shadow.scaleX = ss; shadow.scaleY = ss; shadow.translationY = v * l.pxf(14f)
+        // Parallax: the artwork layer sits slightly behind the glass and shifts against the tilt.
+        val bs = 1f + 0.04f * v; banner.scaleX = bs; banner.scaleY = bs
+        banner.translationX = tiltY.value * l.pxf(2.2f); banner.translationY = -tiltX.value * l.pxf(2.2f)
+        highlight.alpha = 0.75f * v
+        highlight.translationX = -tiltY.value * l.pxf(9f); highlight.translationY = tiltX.value * l.pxf(9f)
+        rim.alpha = 0.45f + 0.55f * v
         label?.alpha = v
         label?.translationY = l.tileH * (s - 1f) / 2f - (1f - v) * l.pxf(10f)
         return !(focus.atRest() && press.atRest() && tiltX.atRest() && tiltY.atRest())
@@ -130,17 +151,11 @@ class Tile(
         k == KeyEvent.KEYCODE_NUMPAD_ENTER || k == KeyEvent.KEYCODE_BUTTON_A
 }
 
-/** Banner drawn once with a bitmap shader and rounded corners; never redrawn during motion. */
+/** Banner drawn once (the rounded clip comes from its parent's outline); never redrawn during motion. */
 @SuppressLint("ViewConstructor")
-private class BannerView(ctx: Context, private val bmp: Bitmap, private val corner: Float) : View(ctx) {
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-        shader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-    }
-    private val rect = RectF()
-    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
-        rect.set(0f, 0f, w.toFloat(), h.toFloat())
-        // The artwork is rendered larger than the tile so it stays sharp when the focused tile scales up.
-        paint.shader.setLocalMatrix(android.graphics.Matrix().apply { setScale(w.toFloat() / bmp.width, h.toFloat() / bmp.height) })
-    }
-    override fun onDraw(canvas: Canvas) { canvas.drawRoundRect(rect, corner, corner, paint) }
+private class BannerView(ctx: Context, private val bmp: Bitmap) : View(ctx) {
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val dst = Rect()
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { dst.set(0, 0, w, h) }
+    override fun onDraw(canvas: Canvas) { canvas.drawBitmap(bmp, null, dst, paint) }
 }
