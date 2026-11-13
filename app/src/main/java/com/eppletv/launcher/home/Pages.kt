@@ -197,7 +197,8 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
  */
 class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, private val repo: ContentRepository, root: FrameLayout) : FrameClock.Tick {
     val backdrop = Backdrop(ctx, clock)
-    private class Layer(val box: LinearLayout, val eyebrow: TextView, val title: TextView, val meta: TextView, val summary: TextView, val a: Spring)
+    private class Layer(val box: LinearLayout, val eyebrow: TextView, val title: TextView, val logo: ImageView, val meta: TextView, val summary: TextView, val a: Spring)
+    private var wantLogo: String? = null
     private val textBox = FrameLayout(ctx)
     private val layers: Array<Layer>
     private val dots = Dots(ctx, l)
@@ -262,26 +263,36 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         val it = item
         dots.set(items.size, index)
         if (it == null) {
-            want = null; backdrop.show(e.backdrop); text("", e.label, "", "")
+            want = null; wantLogo = null; backdrop.show(e.backdrop); text("", e.label, "", "", null)
         } else {
-            text(it.kind.ifEmpty { e.label }, it.title, it.meta, it.summary)
+            // Title logo when there is one: shown at once if it's already decoded; if it arrives later the text crossfades to it.
+            val itemId = it.id; wantLogo = itemId
+            var logo: Bitmap? = null; var sync = true
+            repo.logo(it) { b -> if (sync) logo = b else if (b != null && wantLogo == itemId) text(it.kind.ifEmpty { e.label }, it.title, it.meta, it.summary, b) }
+            sync = false
+            text(it.kind.ifEmpty { e.label }, it.title, it.meta, it.summary, logo)
             val url = it.imageUrl; want = url
             var ready = false
             repo.image(url) { bmp -> ready = true; if (want == url && bmp != null) backdrop.show(bmp) }
             if (!ready && fresh) backdrop.show(e.backdrop)       // new app: its colours until the artwork arrives
-            items.getOrNull((index + 1) % items.size)?.let { n -> repo.prefetch(n.imageUrl) }
+            items.getOrNull((index + 1) % items.size)?.let { n -> repo.prefetch(n.imageUrl); repo.logo(n) {} }
         }
         clock.add(this)
     }
 
-    private fun text(eyebrow: String, title: String, meta: String, summary: String) {
-        val key = "$eyebrow\n$title\n$meta\n$summary"
+    private fun text(eyebrow: String, title: String, meta: String, summary: String, logo: Bitmap?) {
+        val key = "$eyebrow\n$title\n$meta\n$summary\n${logo?.generationId ?: 0}@${System.identityHashCode(logo)}"
         if (key == shown) return
         shown = key
         layers[front].a.target = 0f
         front = 1 - front
         val y = layers[front]
         y.eyebrow.text = eyebrow; y.title.text = title; y.meta.text = meta
+        // The logo replaces the typeset title; it keeps its own proportions inside a 760x200 box (never stretched).
+        y.logo.setImageBitmap(logo)
+        y.logo.visibility = if (logo != null) View.VISIBLE else View.GONE
+        y.title.visibility = if (logo != null) View.GONE else View.VISIBLE
+        y.logo.contentDescription = title
         y.eyebrow.visibility = if (eyebrow.isEmpty()) View.GONE else View.VISIBLE
         y.meta.visibility = if (meta.isEmpty()) View.GONE else View.VISIBLE
         y.summary.text = summary; y.summary.visibility = if (summary.isEmpty()) View.GONE else View.VISIBLE
@@ -308,15 +319,20 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         val title = shadowed(TextView(ctx).apply { style(Txt.HERO, l.u) }, 20f)
         val meta = shadowed(TextView(ctx).apply { style(Txt.META, l.u, 0xE6FFFFFF.toInt()) }, 10f)
         val summary = shadowed(TextView(ctx).apply { style(Txt.BODY, l.u, 0xD9FFFFFF.toInt()) }, 10f)
+        val logo = ImageView(ctx).apply {
+            adjustViewBounds = true; maxWidth = l.px(760); maxHeight = l.px(200)
+            scaleType = ImageView.ScaleType.FIT_START; visibility = View.GONE
+        }
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; alpha = 0f
             addView(eyebrow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(title, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(12) })
+            addView(logo, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(18); bottomMargin = l.px(6) })
             addView(meta, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(16) })
             addView(summary, LinearLayout.LayoutParams(l.px(820), WRAP_CONTENT).apply { topMargin = l.px(14) })
         }
         textBox.addView(box, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
-        return Layer(box, eyebrow, title, meta, summary, Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f))
+        return Layer(box, eyebrow, title, logo, meta, summary, Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f))
     }
 }
 

@@ -24,16 +24,20 @@ class ContentItem(
     val linkUri: String?, val linkPkg: String?,
     val kind: String = "",       // section label shown above the title, e.g. "New on Netflix"
     val summary: String = "",    // short description, may be empty
+    val weight: Double = 0.0,    // 0..1 selection weight (popularity, recency, trending); 0 = rank by position
+    val origin: String = "",     // "in" (Indian) or "intl"; used to balance the selection
+    val logoUrl: String = "",    // transparent title logo when the source supplies one directly
 ) {
     fun intent(): Intent? = linkUri?.let {
         Intent(Intent.ACTION_VIEW, Uri.parse(it)).setPackage(linkPkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     fun json(): JSONObject = JSONObject().put("id", id).put("title", title).put("meta", meta).put("image", imageUrl)
         .put("uri", linkUri ?: JSONObject.NULL).put("pkg", linkPkg ?: JSONObject.NULL).put("kind", kind).put("summary", summary)
+        .put("w", weight).put("o", origin).put("logo", logoUrl)
     companion object {
         fun of(o: JSONObject) = ContentItem(o.getString("id"), o.getString("title"), o.getString("meta"), o.getString("image"),
             if (o.isNull("uri")) null else o.getString("uri"), if (o.isNull("pkg")) null else o.getString("pkg"),
-            o.optString("kind"), o.optString("summary"))
+            o.optString("kind"), o.optString("summary"), o.optDouble("w", 0.0), o.optString("o"), o.optString("logo"))
     }
 }
 
@@ -42,7 +46,9 @@ interface ContentSource {
     val key: String                       // cache key, unique per source
     val ready: Boolean                    // false when the source lacks what it needs (e.g. an API key)
     fun handles(pkg: String): Boolean
-    fun load(net: Net, pkg: String): List<ContentItem>   // worker thread; throws on failure
+    fun load(net: Net, pkg: String): List<ContentItem>   // worker thread; throws on failure; may return a larger pool to pick from
+    /** Worker thread. URL of a transparent title logo for [item], or null. */
+    fun logo(net: Net, item: ContentItem): String? = item.logoUrl.ifEmpty { null }
 }
 
 /**
@@ -107,6 +113,14 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
     private val imageWaiters = HashMap<String, ArrayList<(Bitmap?) -> Unit>>()
+    private val logos = object : LruCache<String, Bitmap>(6 * 1024 * 1024) {    // decoded title logos by URL
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
+    private val logoUrls = HashMap<String, String>()                             // item id -> logo URL ("" = none), this launch
+    private val logoWaiters = HashMap<String, ArrayList<(Bitmap?) -> Unit>>()
+    private val shownPrefs = ctx.getSharedPreferences("shown", Context.MODE_PRIVATE)
+    private val usedThisLaunch = HashSet<String>()                                // titles already picked for another app
+    private val rnd = java.util.Random()
 
     fun sourceFor(pkg: String): ContentSource? = sources.firstOrNull { it.ready && it.handles(pkg) }
 
@@ -130,10 +144,35 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
             }
             val result = out ?: emptyList()
             main.post {
-                if (result.isEmpty()) failedAt[key] = System.currentTimeMillis() else lists[key] = result
-                listWaiters.remove(key)?.forEach { it(result) }
+                val picked = if (result.isEmpty()) result else curate(key, result)
+                if (picked.isEmpty()) failedAt[key] = System.currentTimeMillis() else lists[key] = picked
+                listWaiters.remove(key)?.forEach { it(picked) }
             }
         }
+    }
+
+    /**
+     * Picks what an app shows this launch from its source's pool: weighted random sampling (Efraimidis-Spirakis) on the
+     * source's popularity/recency/trending weight, so popular titles lead more often but the selection and order change
+     * every launch. Titles picked in the last launches, or already picked for another app this launch, are weighted down.
+     * When the pool has both Indian and international titles they alternate, starting with either, for a balanced mix.
+     */
+    private fun curate(key: String, pool: List<ContentItem>): List<ContentItem> {
+        val recent = shownPrefs.getString(key, "")!!.split('\n').toHashSet()
+        val keyed = pool.mapIndexed { i, it ->
+            var w = if (it.weight > 0) it.weight else 1.0 / (1 + i * 0.15)
+            if (it.id in recent) w *= 0.2
+            if (it.id in usedThisLaunch) w *= 0.05
+            it to Math.pow(rnd.nextDouble(), 1.0 / w.coerceAtLeast(1e-3))
+        }.sortedByDescending { it.second }.map { it.first }
+        val n = minOf(SHOW, keyed.size)
+        val groups = keyed.groupBy { it.origin }.values.map { ArrayDeque(it) }.shuffled(rnd)
+        val out = ArrayList<ContentItem>(n)
+        while (out.size < n) for (g in groups) { if (out.size < n) g.removeFirstOrNull()?.let { out.add(it) } }
+        usedThisLaunch += out.map { it.id }
+        Log.i(TAG, "picked $key (pool ${pool.size}): " + out.joinToString(" | ") { "${it.origin}:${it.title}" })
+        shownPrefs.edit().putString(key, (out.map { it.id } + recent.filter { it.isNotEmpty() }).distinct().take(40).joinToString("\n")).apply()
+        return out
     }
 
     private fun readList(f: File, fresh: Boolean): List<ContentItem>? = try {
@@ -160,6 +199,42 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     }
 
     fun prefetch(url: String) = image(url) {}
+
+    /**
+     * Main thread. The item's transparent title logo, or null (then the title is set in type). Resolved and downloaded
+     * at most once per launch per title (URL lookups are cached on disk for 30 days, files forever), decoded once.
+     */
+    fun logo(item: ContentItem, cb: (Bitmap?) -> Unit) {
+        logoUrls[item.id]?.let { u -> if (u.isEmpty()) return cb(null); logos.get(u)?.let { return cb(it) } }
+        logoWaiters[item.id]?.let { it.add(cb); return }
+        logoWaiters[item.id] = arrayListOf(cb)
+        io.execute {
+            var url = ""
+            val bmp = try {
+                url = item.logoUrl.ifEmpty { sources.firstNotNullOfOrNull { s -> if (s.ready) try { s.logo(net, item) } catch (e: Exception) { null } else null } ?: "" }
+                if (url.isEmpty()) null else {
+                    val f = File(imgDir, "logo-" + sha1(url))
+                    if (!f.exists()) { val tmp = File(imgDir, f.name + ".tmp"); tmp.writeBytes(net.bytes(url)); tmp.renameTo(f) }
+                    decodeLogo(f)
+                }
+            } catch (e: Exception) { Log.w(TAG, "logo failed for ${item.id}: ${e.javaClass.simpleName}"); null }
+            main.post {
+                logoUrls[item.id] = if (bmp == null) "" else url
+                if (bmp != null) logos.put(url, bmp)
+                logoWaiters.remove(item.id)?.forEach { it(bmp) }
+            }
+        }
+    }
+
+    /** Logos keep their transparency (ARGB_8888), at most ~1000 px wide; the hero shows them up to 760 px. */
+    private fun decodeLogo(f: File): Bitmap? {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(f.path, o)
+        if (o.outWidth <= 0) return null
+        var s = 1
+        while (o.outWidth / (s * 2) >= 1000) s *= 2
+        return BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = s })?.also { it.prepareToDraw() }
+    }
 
     /** Warms the lists (and each first image) for [pkgs] one after another, so switching apps is instant. */
     fun warm(pkgs: List<String>) {
@@ -189,5 +264,6 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
         const val TAG = "EppleContent"
         const val TTL_MS = 12 * 60 * 60 * 1000L
         const val RETRY_MS = 5 * 60 * 1000L
+        const val SHOW = 14          // titles an app shows per launch
     }
 }
