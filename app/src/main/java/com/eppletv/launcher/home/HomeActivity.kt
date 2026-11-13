@@ -146,7 +146,9 @@ class HomeActivity : Activity(), PageHost {
 
     /** Rebuilds the page from the library; optionally moves focus to [focusPkg]. */
     private fun refresh(focusPkg: String?) {
-        page.setApps(library.pinned(apps), library.rest(apps))
+        val pinned = library.pinned(apps)
+        page.setApps(pinned, library.rest(apps))
+        content.warm(pinned.map { it.packageName })
         if (focusPkg != null && page.locate(focusPkg)) zone = Zone.CONTENT
         restoreFocus()
     }

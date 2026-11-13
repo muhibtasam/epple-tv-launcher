@@ -22,15 +22,18 @@ import java.util.concurrent.atomic.AtomicInteger
 class ContentItem(
     val id: String, val title: String, val meta: String, val imageUrl: String,
     val linkUri: String?, val linkPkg: String?,
+    val kind: String = "",       // section label shown above the title, e.g. "New on Netflix"
+    val summary: String = "",    // short description, may be empty
 ) {
     fun intent(): Intent? = linkUri?.let {
         Intent(Intent.ACTION_VIEW, Uri.parse(it)).setPackage(linkPkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     fun json(): JSONObject = JSONObject().put("id", id).put("title", title).put("meta", meta).put("image", imageUrl)
-        .put("uri", linkUri ?: JSONObject.NULL).put("pkg", linkPkg ?: JSONObject.NULL)
+        .put("uri", linkUri ?: JSONObject.NULL).put("pkg", linkPkg ?: JSONObject.NULL).put("kind", kind).put("summary", summary)
     companion object {
         fun of(o: JSONObject) = ContentItem(o.getString("id"), o.getString("title"), o.getString("meta"), o.getString("image"),
-            if (o.isNull("uri")) null else o.getString("uri"), if (o.isNull("pkg")) null else o.getString("pkg"))
+            if (o.isNull("uri")) null else o.getString("uri"), if (o.isNull("pkg")) null else o.getString("pkg"),
+            o.optString("kind"), o.optString("summary"))
     }
 }
 
@@ -42,22 +45,49 @@ interface ContentSource {
     fun load(net: Net, pkg: String): List<ContentItem>   // worker thread; throws on failure
 }
 
-/** Minimal HTTPS client. Every request is counted and logged (tag EppleNet) so API usage can be measured. */
-class Net {
+/**
+ * Minimal HTTPS client. Every request is counted and logged (tag EppleNet) by host and path only:
+ * query strings and headers, where API keys travel, are never logged.
+ */
+class Net(private val dir: File) {
     val calls = AtomicInteger()
-    fun bytes(url: String, bearer: String? = null): ByteArray {
+    private val locks = HashMap<String, Any>()
+
+    fun bytes(url: String, headers: Map<String, String> = emptyMap()): ByteArray {
         val n = calls.incrementAndGet()
         Log.i("EppleNet", "#$n GET ${url.substringBefore('?')}")
         val c = URL(url).openConnection() as HttpURLConnection
         try {
             c.connectTimeout = 8000; c.readTimeout = 12000
             c.setRequestProperty("Accept", "application/json, image/*")
-            bearer?.let { c.setRequestProperty("Authorization", "Bearer $it") }
-            if (c.responseCode !in 200..299) throw java.io.IOException("HTTP ${c.responseCode}")
+            c.setRequestProperty("User-Agent", "EppleTV/0.3")
+            headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
+            val code = c.responseCode
+            if (code !in 200..299) throw HttpError(code)
             return c.inputStream.use { it.readBytes() }
         } finally { c.disconnect() }
     }
-    fun json(url: String, bearer: String? = null) = JSONObject(String(bytes(url, bearer)))
+
+    fun text(url: String, headers: Map<String, String> = emptyMap()) = String(bytes(url, headers))
+
+    /**
+     * JSON response cached on disk under [key] for [ttlMs]. Concurrent callers for the same key wait for one request.
+     * On failure a stale copy is returned if there is one.
+     */
+    fun cached(key: String, ttlMs: Long, url: String, headers: Map<String, String> = emptyMap()): String {
+        val lock = synchronized(locks) { locks.getOrPut(key) { Any() } }
+        synchronized(lock) {
+            val f = File(dir, "raw-$key.json")
+            if (f.exists() && System.currentTimeMillis() - f.lastModified() < ttlMs) return f.readText()
+            return try {
+                text(url, headers).also { body -> File(dir, f.name + ".tmp").apply { writeText(body); renameTo(f) } }
+            } catch (e: Exception) {
+                if (f.exists()) f.readText() else throw e
+            }
+        }
+    }
+
+    class HttpError(val code: Int) : java.io.IOException("HTTP $code")
 }
 
 /**
@@ -65,15 +95,15 @@ class Net {
  * so a list is fetched at most once per [TTL_MS] and an image at most once ever.
  */
 class ContentRepository(ctx: Context, private val sources: List<ContentSource>) {
-    val net = Net()
+    private val listDir = File(ctx.filesDir, "content").apply { mkdirs() }
+    val net = Net(listDir)
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newFixedThreadPool(2) { r -> Thread(r, "epple-content").apply { priority = Thread.NORM_PRIORITY - 1 } }
-    private val listDir = File(ctx.filesDir, "content").apply { mkdirs() }
     private val imgDir = File(ctx.cacheDir, "img").apply { mkdirs() }
     private val lists = HashMap<String, List<ContentItem>>()                       // source key -> items (main thread)
     private val listWaiters = HashMap<String, ArrayList<(List<ContentItem>) -> Unit>>()
     private val failedAt = HashMap<String, Long>()
-    private val images = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
+    private val images = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
     private val imageWaiters = HashMap<String, ArrayList<(Bitmap?) -> Unit>>()
@@ -131,6 +161,16 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>) 
 
     fun prefetch(url: String) = image(url) {}
 
+    /** Warms the lists (and each first image) for [pkgs] one after another, so switching apps is instant. */
+    fun warm(pkgs: List<String>) {
+        val todo = pkgs.filter { sourceFor(it) != null }.toMutableList()
+        fun next() {
+            val p = todo.removeFirstOrNull() ?: return
+            items(p) { l -> l.firstOrNull()?.let { prefetch(it.imageUrl) }; next() }
+        }
+        next()
+    }
+
     private fun decode(f: File): Bitmap? {
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(f.path, o)
@@ -146,7 +186,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>) 
 
     private companion object {
         const val TAG = "EppleContent"
-        const val TTL_MS = 6 * 60 * 60 * 1000L
+        const val TTL_MS = 12 * 60 * 60 * 1000L
         const val RETRY_MS = 5 * 60 * 1000L
     }
 }

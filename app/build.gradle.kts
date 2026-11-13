@@ -17,8 +17,12 @@ android {
         versionCode = 1
         versionName = "0.2.0"
         // Optional content keys; without them those providers fall back gracefully. Never committed (local.properties is ignored).
-        buildConfigField("String", "TMDB_KEY", "\"${local.getProperty("tmdb.key", "")}\"")
-        buildConfigField("String", "YOUTUBE_KEY", "\"${local.getProperty("youtube.key", "")}\"")
+        fun prop(vararg names: String) = names.firstNotNullOfOrNull { local.getProperty(it)?.trim()?.takeIf { v -> v.isNotEmpty() } } ?: ""
+        buildConfigField("String", "TMDB_KEY", "\"${prop("tmdb_key", "tmdb.key")}\"")
+        buildConfigField("String", "WATCHMODE_KEY", "\"${prop("watchmode_key", "watchmode.key")}\"")
+        buildConfigField("String", "TRAKT_ID", "\"${prop("trakt_client_id", "trakt.client_id")}\"")
+        buildConfigField("String", "YOUTUBE_KEY", "\"${prop("youtube_key", "youtube.key")}\"")
+        buildConfigField("String", "CONTENT_REGION", "\"${prop("content_region", "content.region")}\"")
     }
 
     // base: no Google dependencies. google: may use Google TV / Assistant capabilities (added behind interfaces).

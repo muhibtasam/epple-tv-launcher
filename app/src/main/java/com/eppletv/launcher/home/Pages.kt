@@ -176,7 +176,7 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
  */
 class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, private val repo: ContentRepository, root: FrameLayout) : FrameClock.Tick {
     val backdrop = Backdrop(ctx, clock)
-    private class Layer(val box: LinearLayout, val eyebrow: TextView, val title: TextView, val meta: TextView, val a: Spring)
+    private class Layer(val box: LinearLayout, val eyebrow: TextView, val title: TextView, val meta: TextView, val summary: TextView, val a: Spring)
     private val textBox = FrameLayout(ctx)
     private val layers: Array<Layer>
     private val dots = Dots(ctx, l)
@@ -202,7 +202,14 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         root.addView(View(ctx).apply {
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x8C000000.toInt(), 0x0D000000, 0xA6000000.toInt()))
         }, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(360)).apply { leftMargin = l.left; topMargin = l.px(84) })
+        // Second scrim from the top-left corner, under the title block only, so text stays readable on bright artwork.
+        root.addView(View(ctx).apply {
+            background = GradientDrawable().apply {
+                gradientType = GradientDrawable.RADIAL_GRADIENT; gradientRadius = l.pxf(1150f); setGradientCenter(0f, 0f)
+                colors = intArrayOf(0x99000000.toInt(), 0x4D000000, 0x00000000)
+            }
+        }, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(420)).apply { leftMargin = l.left; topMargin = l.px(84) })
         layers = Array(2) { layer(ctx) }
         root.addView(hint, FrameLayout.LayoutParams(l.px(44), l.px(16), Gravity.CENTER_HORIZONTAL).apply { topMargin = l.dockY - l.platterPad - l.px(34) })
         root.addView(dots, FrameLayout.LayoutParams(MATCH_PARENT, l.px(12)).apply { topMargin = l.px(1010) })
@@ -242,9 +249,9 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         val it = item
         dots.set(items.size, index)
         if (it == null) {
-            want = null; backdrop.show(e.backdrop); text("", e.label, "")
+            want = null; backdrop.show(e.backdrop); text("", e.label, "", "")
         } else {
-            text(e.label, it.title, it.meta)
+            text(it.kind.ifEmpty { e.label }, it.title, it.meta, it.summary)
             val url = it.imageUrl; want = url
             var ready = false
             repo.image(url) { bmp -> ready = true; if (want == url && bmp != null) backdrop.show(bmp) }
@@ -254,8 +261,8 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         clock.add(this)
     }
 
-    private fun text(eyebrow: String, title: String, meta: String) {
-        val key = "$eyebrow\n$title\n$meta"
+    private fun text(eyebrow: String, title: String, meta: String, summary: String) {
+        val key = "$eyebrow\n$title\n$meta\n$summary"
         if (key == shown) return
         shown = key
         layers[front].a.target = 0f
@@ -264,6 +271,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         y.eyebrow.text = eyebrow; y.title.text = title; y.meta.text = meta
         y.eyebrow.visibility = if (eyebrow.isEmpty()) View.GONE else View.VISIBLE
         y.meta.visibility = if (meta.isEmpty()) View.GONE else View.VISIBLE
+        y.summary.text = summary; y.summary.visibility = if (summary.isEmpty()) View.GONE else View.VISIBLE
         y.a.target = 1f
     }
 
@@ -286,14 +294,16 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         val eyebrow = shadowed(TextView(ctx).apply { style(Txt.CAPTION, l.u, 0xD9FFFFFF.toInt()) }, 8f)
         val title = shadowed(TextView(ctx).apply { style(Txt.HERO, l.u) }, 20f)
         val meta = shadowed(TextView(ctx).apply { style(Txt.META, l.u, 0xE6FFFFFF.toInt()) }, 10f)
+        val summary = shadowed(TextView(ctx).apply { style(Txt.BODY, l.u, 0xD9FFFFFF.toInt()) }, 10f)
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; alpha = 0f
             addView(eyebrow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(title, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(12) })
             addView(meta, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(16) })
+            addView(summary, LinearLayout.LayoutParams(l.px(820), WRAP_CONTENT).apply { topMargin = l.px(14) })
         }
         textBox.addView(box, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
-        return Layer(box, eyebrow, title, meta, Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f))
+        return Layer(box, eyebrow, title, meta, summary, Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f))
     }
 }
 

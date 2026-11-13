@@ -55,6 +55,7 @@ enum class Txt(val px: Float, val weight: Int, val tracking: Float, val lines: I
     META(27f, 500, 0f),             // metadata line, dates
     LABEL(26f, 500, 0f),            // app name under a focused tile
     CAPTION(22f, 700, 0.10f),       // upper-case eyebrow
+    BODY(24f, 400, 0f, 2),          // short description under the hero title
     FOOT(19f, 400, 0f, 3),          // attribution
 }
 
