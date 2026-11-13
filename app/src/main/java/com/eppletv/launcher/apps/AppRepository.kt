@@ -136,11 +136,9 @@ class AppRepository(
         val intent = Intent(Intent.ACTION_MAIN).addCategory(cat).setClassName(ai.packageName, ai.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         val info = ai.applicationInfo
-        @Suppress("DEPRECATION")
-        val game = info.category == ApplicationInfo.CATEGORY_GAME || (info.flags and ApplicationInfo.FLAG_IS_GAME) != 0
         // Two-step resample: a 12x7 average of the artwork, smoothed up to 96x54, becomes a soft colour field at full screen.
         val soft = backdropOf(art)
-        AppEntry(ai.packageName, label, intent, art, soft, if (game) ApplicationInfo.CATEGORY_GAME else info.category)
+        AppEntry(ai.packageName, label, intent, art, soft, info.category)
     } catch (e: RuntimeException) {
         Log.w(TAG, "skipping ${ai.packageName}", e); null
     }

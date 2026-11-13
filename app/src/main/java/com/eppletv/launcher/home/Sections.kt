@@ -200,7 +200,7 @@ class AppsScreen(nav: Nav) : Screen(nav), TileHost, FrameClock.Tick {
     override val view = FrameLayout(nav.ctx).apply { clipChildren = false }
     override var dirX = 0; private set
     override var dirY = 0; private set
-    private val cats = listOf("All Apps", "Top Row", "Video", "Music", "Games", "Other")
+    private val cats = listOf("All Apps", "Top Row", "Video", "Music", "Other")
     private val chips = LinearLayout(nav.ctx).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
     private val chipPills = cats.map { Pill(nav.ctx, it, l.pxf(26f), l.pxf(30f), l.px(30), nav.clock, Colors.FILL, Colors.TEXT_DIM, 0.06f) }
     private val grid = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
@@ -228,8 +228,7 @@ class AppsScreen(nav: Nav) : Screen(nav), TileHost, FrameClock.Tick {
             1 -> nav.library.pinned(nav.apps)
             2 -> all.filter { it.category == android.content.pm.ApplicationInfo.CATEGORY_VIDEO }
             3 -> all.filter { it.category == android.content.pm.ApplicationInfo.CATEGORY_AUDIO }
-            4 -> all.filter { it.category == android.content.pm.ApplicationInfo.CATEGORY_GAME }
-            5 -> all.filter { it.category !in setOf(android.content.pm.ApplicationInfo.CATEGORY_VIDEO, android.content.pm.ApplicationInfo.CATEGORY_AUDIO, android.content.pm.ApplicationInfo.CATEGORY_GAME) }
+            4 -> all.filter { it.category !in setOf(android.content.pm.ApplicationInfo.CATEGORY_VIDEO, android.content.pm.ApplicationInfo.CATEGORY_AUDIO) }
             else -> all
         }
     }

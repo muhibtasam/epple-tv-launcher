@@ -53,7 +53,6 @@ class Library(ctx: Context) {
     fun categoryLabel(category: Int): String = when (category) {
         ApplicationInfo.CATEGORY_VIDEO -> app.getString(R.string.cat_video)
         ApplicationInfo.CATEGORY_AUDIO -> app.getString(R.string.cat_audio)
-        ApplicationInfo.CATEGORY_GAME -> app.getString(R.string.cat_game)
         else -> ""
     }
 }
