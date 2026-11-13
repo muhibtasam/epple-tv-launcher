@@ -1,12 +1,15 @@
 package com.eppletv.launcher.home
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
@@ -14,204 +17,139 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.eppletv.launcher.apps.AppEntry
-import com.eppletv.launcher.apps.Section
+import com.eppletv.launcher.content.ContentItem
+import com.eppletv.launcher.content.ContentRepository
 import com.eppletv.launcher.motion.FrameClock
 import com.eppletv.launcher.motion.Motion
 import com.eppletv.launcher.motion.Spring
-import com.eppletv.launcher.ui.Colors
-import com.eppletv.launcher.ui.textStyle
-import kotlin.math.min
-import kotlin.math.roundToInt
+import com.eppletv.launcher.ui.Txt
+import com.eppletv.launcher.ui.style
 
 interface PageHost : TileHost {
-    /** [deep] = focus has moved below the top of the page (top bar hides, backdrop dims). */
-    fun onPageDepth(page: Page, deep: Boolean)
-}
-
-/** A tab's content. Focus movement is explicit and deterministic: the page decides where each key press lands. */
-interface Page {
-    val view: FrameLayout
-    /** Returns false only when moving up from the top row (the caller then focuses the top bar). */
-    fun move(dx: Int, dy: Int): Boolean
-    fun focusCurrent(): Boolean
-    fun atTop(): Boolean
-    fun toTop()
+    /** [deep] = focus is in the app grid below the top row (artwork gives way to the grid). */
+    fun onPageDepth(deep: Boolean)
 }
 
 internal fun makeShadow(l: Layout): Bitmap {
     val p = l.shadowPad
     val b = Bitmap.createBitmap(l.tileW + 2 * p, l.tileH + 2 * p, Bitmap.Config.ARGB_8888)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xB8000000.toInt(); maskFilter = BlurMaskFilter(p * 0.62f, BlurMaskFilter.Blur.NORMAL)
+        color = 0xC0000000.toInt(); maskFilter = BlurMaskFilter(p * 0.6f, BlurMaskFilter.Blur.NORMAL)
     }
     Canvas(b).drawRoundRect(RectF(p.toFloat(), p.toFloat(), (p + l.tileW).toFloat(), (p + l.tileH).toFloat()), l.corner, l.corner, paint)
     b.prepareToDraw()
     return b
 }
 
-/** Adds a tile and its (focus-only) label to [parent] at x,y and returns the tile. */
-private fun addTile(parent: FrameLayout, l: Layout, clock: FrameClock, host: TileHost, shadow: Bitmap, app: AppEntry, x: Int, y: Int): Tile {
-    val ctx = parent.context
-    val extra = l.px(40)
-    val label = TextView(ctx).apply {
-        text = app.label; textStyle(l.pxf(26f), 500); alpha = 0f; gravity = Gravity.CENTER
-        setShadowLayer(l.pxf(10f), 0f, l.pxf(2f), 0x99000000.toInt())
-    }
-    parent.addView(label, FrameLayout.LayoutParams(l.tileW + 2 * extra, l.labelH).apply { leftMargin = x - extra; topMargin = y + l.tileH + l.labelTop })
-    val tile = Tile(ctx, app, shadow, label, l, clock, host)
-    parent.addView(tile, FrameLayout.LayoutParams(l.tileW, l.tileH).apply { leftMargin = x; topMargin = y })
-    return tile
-}
-
-/** One horizontal row on Home. Scrolls by springing the strip so the focused tile stays inside the safe area. */
-class RowView(
-    ctx: Context, private val l: Layout, private val clock: FrameClock, host: TileHost, shadow: Bitmap,
-    val section: Section, k: Int, parent: FrameLayout,
-) : FrameClock.Tick {
-    val tiles = ArrayList<Tile>(section.apps.size)
-    private val strip = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
-    private val sx = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
-    private var first = 0
-    var col = 0; private set
-
-    init {
-        section.title?.let { t ->
-            parent.addView(TextView(ctx).apply {
-                text = t; textStyle(l.pxf(30f), 600, 0xEBFFFFFF.toInt())
-                setShadowLayer(l.pxf(10f), 0f, l.pxf(2f), 0x80000000.toInt())
-            }, FrameLayout.LayoutParams(l.px(1200), l.px(44)).apply { leftMargin = l.left; topMargin = l.sectionTitleY(k) })
+/**
+ * Home: the top row of pinned apps on a glass platter, and every other app in a grid below it.
+ * Focus movement is explicit: this class decides where each key press lands, so it is always restorable.
+ */
+class HomePage(ctx: Context, private val l: Layout, private val clock: FrameClock, private val host: PageHost, private val shadow: Bitmap) : FrameClock.Tick {
+    val view = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
+    private val platter = View(ctx).apply {
+        background = GradientDrawable().apply {
+            cornerRadius = l.platterRadius; setColor(0x73141416); setStroke(l.px(2).coerceAtLeast(1), 0x2EFFFFFF)
         }
-        parent.addView(strip, FrameLayout.LayoutParams(MATCH_PARENT, l.stripH).apply { topMargin = l.sectionTilesY(k) })
-        section.apps.forEachIndexed { i, app -> tiles.add(addTile(strip, l, clock, host, shadow, app, l.left + i * l.pitchX, 0)) }
+    }
+    private val strip = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
+    private val dock = ArrayList<Tile>()
+    private val grid = ArrayList<Tile>()
+    private var r = 0; private var c = 0; private var first = 0
+    private val sy = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
+    private val sx = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
+    private val shelf = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS)
+
+    private val rowCount get() = 1 + (grid.size + Layout.COLS - 1) / Layout.COLS
+    private fun rowSize(row: Int) = if (row == 0) dock.size else minOf(Layout.COLS, grid.size - (row - 1) * Layout.COLS)
+    private fun tile(): Tile? = if (r == 0) dock.getOrNull(c) else grid.getOrNull((r - 1) * Layout.COLS + c)
+
+    fun setApps(pinned: List<AppEntry>, rest: List<AppEntry>) {
+        val keep = tile()?.entry?.packageName
+        view.removeAllViews(); strip.removeAllViews(); dock.clear(); grid.clear()
+        val p = l.platterPad
+        view.addView(platter, FrameLayout.LayoutParams(l.px(1920) - 2 * (l.left - p), l.tileH + 2 * p).apply { leftMargin = l.left - p; topMargin = l.dockY - p })
+        platter.visibility = if (pinned.isEmpty()) View.INVISIBLE else View.VISIBLE
+        view.addView(strip, FrameLayout.LayoutParams(MATCH_PARENT, l.tileH).apply { topMargin = l.dockY })
+        pinned.forEachIndexed { i, app ->
+            val t = Tile(view.context, app, shadow, null, l, clock, host).apply { inDock = true }
+            strip.addView(t, FrameLayout.LayoutParams(l.tileW, l.tileH).apply { leftMargin = l.left + i * l.pitchX })
+            dock.add(t)
+        }
+        val extra = l.px(22)
+        rest.forEachIndexed { i, app ->
+            val x = l.left + (i % Layout.COLS) * l.pitchX; val y = l.rowY(1 + i / Layout.COLS)
+            val label = TextView(view.context).apply {
+                text = app.label; style(Txt.LABEL, l.u); alpha = 0f; gravity = Gravity.CENTER
+                setShadowLayer(l.pxf(10f), 0f, l.pxf(2f), 0x99000000.toInt())
+            }
+            view.addView(label, FrameLayout.LayoutParams(l.tileW + 2 * extra, l.labelH).apply { leftMargin = x - extra; topMargin = y + l.tileH + l.labelTop })
+            val t = Tile(view.context, app, shadow, label, l, clock, host)
+            view.addView(t, FrameLayout.LayoutParams(l.tileW, l.tileH).apply { leftMargin = x; topMargin = y })
+            grid.add(t)
+        }
+        view.layoutParams?.let { it.height = l.height(rowCount); view.layoutParams = it }
+        if (keep == null || !locate(keep)) {
+            r = r.coerceIn(if (dock.isEmpty()) 1 else 0, rowCount - 1)
+            c = c.coerceIn(0, maxOf(0, rowSize(r) - 1))
+        }
+        place()
     }
 
-    /** On-screen x of column [c] once the row has settled. */
-    fun screenX(c: Int) = l.left + (c - first) * l.pitchX
-    fun nearest(x: Int) = (first + ((x - l.left).toFloat() / l.pitchX).roundToInt()).coerceIn(0, tiles.size - 1)
+    /** Points the cursor at [pkg] if it is on the page. */
+    fun locate(pkg: String): Boolean {
+        val d = dock.indexOfFirst { it.entry.packageName == pkg }
+        if (d >= 0) { r = 0; c = d; return true }
+        val g = grid.indexOfFirst { it.entry.packageName == pkg }
+        if (g >= 0) { r = 1 + g / Layout.COLS; c = g % Layout.COLS; return true }
+        return false
+    }
 
-    fun place(c: Int) {
-        col = c.coerceIn(0, tiles.size - 1)
-        if (col < first) first = col
-        if (col > first + Layout.COLS - 1) first = col - Layout.COLS + 1
-        sx.target = -(first * l.pitchX).toFloat()
+    /** Returns false only when moving up from the top row. */
+    fun move(dx: Int, dy: Int): Boolean {
+        if (tile() == null) return dy >= 0
+        if (dx != 0) { if (c + dx in 0 until rowSize(r)) { c += dx; focusCurrent() }; return true }
+        val nr = r + dy
+        if (nr < 0 || (nr == 0 && dock.isEmpty())) return false
+        if (nr >= rowCount) return true
+        val col = if (r == 0) c - first else c            // keep the same on-screen column
+        r = nr
+        c = (if (r == 0) first + col else col).coerceIn(0, rowSize(r) - 1)
+        focusCurrent()
+        return true
+    }
+
+    private fun place() {
+        if (r == 0) { if (c < first) first = c; if (c > first + Layout.COLS - 1) first = c - Layout.COLS + 1 }
+        first = first.coerceIn(0, maxOf(0, dock.size - Layout.COLS))
+        sx.target = -(first * l.pitchX).toFloat(); sy.target = l.scroll(r)
         clock.add(this)
     }
 
-    fun focus(c: Int) { place(c); tiles[col].requestFocus() }
-
-    override fun tick(dt: Float): Boolean { sx.step(dt); strip.translationX = sx.value; return !sx.atRest() }
-}
-
-/** Home: hero title over the backdrop, a top row, then titled sections. */
-class HomePage(ctx: Context, private val l: Layout, private val clock: FrameClock, private val host: PageHost, private val shadow: Bitmap) : Page, FrameClock.Tick {
-    override val view = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
-    val hero = Hero(ctx, l, clock)
-    private val rows = ArrayList<RowView>()
-    private var r = 0
-    private val sy = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
-
-    init { addHero() }
-
-    private fun addHero() = view.addView(hero.view, FrameLayout.LayoutParams(l.px(1400), l.px(180)).apply { leftMargin = l.left; topMargin = l.dockY - l.px(260) })
-
-    fun setSections(sections: List<Section>) {
-        val key = rows.getOrNull(r)?.section?.key
-        val pkg = rows.getOrNull(r)?.let { it.tiles.getOrNull(it.col)?.entry?.packageName }
-        val oldCol = rows.getOrNull(r)?.col ?: 0
-        view.removeAllViews(); rows.clear(); addHero()
-        sections.forEachIndexed { k, s -> rows.add(RowView(view.context, l, clock, host, shadow, s, k, view)) }
-        view.layoutParams?.let { it.height = l.homeHeight(rows.size); view.layoutParams = it }
-        r = rows.indexOfFirst { it.section.key == key }.let { if (it < 0) 0 else it }
-        rows.getOrNull(r)?.let { row ->
-            val c = row.tiles.indexOfFirst { it.entry.packageName == pkg }
-            row.place(if (c >= 0) c else oldCol)
-        }
-        sy.target = l.homeScroll(r, rows.size); clock.add(this)
-    }
-
-    override fun move(dx: Int, dy: Int): Boolean {
-        val row = rows.getOrNull(r) ?: return dy >= 0
-        if (dx != 0) { val c = row.col + dx; if (c in row.tiles.indices) row.focus(c); return true }
-        val nr = r + dy
-        if (nr < 0) return false
-        if (nr >= rows.size) return true
-        val x = row.screenX(row.col)
-        r = nr
-        rows[r].focus(rows[r].nearest(x))
-        scrolled()
+    fun focusCurrent(): Boolean {
+        val t = tile() ?: return false
+        place(); t.requestFocus(); host.onPageDepth(r > 0)
         return true
     }
 
-    override fun focusCurrent(): Boolean {
-        val row = rows.getOrNull(r) ?: return false
-        row.focus(row.col); scrolled()
-        return true
-    }
+    fun atTop() = r == 0 || dock.isEmpty() && r == 1
+    fun toTop() { r = if (dock.isEmpty()) 1 else 0; c = c.coerceIn(0, maxOf(0, rowSize(r) - 1)); focusCurrent() }
 
-    override fun atTop() = r == 0
-    override fun toTop() { r = 0; focusCurrent() }
-
-    private fun scrolled() { sy.target = l.homeScroll(r, rows.size); clock.add(this); host.onPageDepth(this, r > 0) }
+    /** Full-screen artwork mode: the apps slide down out of the way. */
+    fun shelf(on: Boolean) { shelf.target = if (on) 1f else 0f; clock.add(this) }
 
     override fun tick(dt: Float): Boolean {
-        sy.step(dt)
-        view.translationY = sy.value
-        hero.view.alpha = (1f + sy.value / l.pxf(260f)).coerceIn(0f, 1f)
-        return !sy.atRest()
+        sx.step(dt); sy.step(dt); shelf.step(dt)
+        strip.translationX = sx.value
+        val s = shelf.value.coerceIn(0f, 1f)
+        view.translationY = sy.value + s * l.pxf(300f)
+        view.alpha = 1f - s
+        return !(sx.atRest() && sy.atRest() && shelf.atRest())
     }
-}
-
-/** Apps: every app in a six-column grid under a page title. */
-class AppsPage(ctx: Context, private val l: Layout, private val clock: FrameClock, private val host: PageHost, private val shadow: Bitmap, private val title: String) : Page, FrameClock.Tick {
-    override val view = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
-    private val tiles = ArrayList<Tile>()
-    private var i = 0
-    private val sy = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
-
-    fun setApps(apps: List<AppEntry>) {
-        val pkg = tiles.getOrNull(i)?.entry?.packageName
-        view.removeAllViews(); tiles.clear()
-        view.addView(TextView(view.context).apply { text = title; textStyle(l.pxf(56f), 600); letterSpacing = -0.02f },
-            FrameLayout.LayoutParams(l.px(1200), l.px(72)).apply { leftMargin = l.left; topMargin = l.px(150) })
-        apps.forEachIndexed { n, app ->
-            tiles.add(addTile(view, l, clock, host, shadow, app, l.left + (n % Layout.COLS) * l.pitchX, l.gridTop + (n / Layout.COLS) * l.gridPitchY))
-        }
-        view.layoutParams?.let { it.height = l.gridHeight((apps.size + Layout.COLS - 1) / Layout.COLS); view.layoutParams = it }
-        val keep = tiles.indexOfFirst { it.entry.packageName == pkg }
-        i = if (keep >= 0) keep else min(i, tiles.size - 1).coerceAtLeast(0)
-        sy.target = l.gridScroll(i / Layout.COLS); clock.add(this)
-    }
-
-    override fun move(dx: Int, dy: Int): Boolean {
-        if (tiles.isEmpty()) return dy >= 0
-        if (dx != 0) {
-            val n = i + dx
-            if (n in tiles.indices && n / Layout.COLS == i / Layout.COLS) focus(n)
-            return true
-        }
-        if (i / Layout.COLS + dy < 0) return false
-        val n = min(i + dy * Layout.COLS, tiles.size - 1)
-        if (n / Layout.COLS != i / Layout.COLS) focus(n)
-        return true
-    }
-
-    private fun focus(n: Int) {
-        i = n
-        tiles[n].requestFocus()
-        sy.target = l.gridScroll(n / Layout.COLS); clock.add(this)
-        host.onPageDepth(this, n / Layout.COLS >= 2)
-    }
-
-    override fun focusCurrent(): Boolean { if (tiles.isEmpty()) return false; focus(i); return true }
-    override fun atTop() = i < Layout.COLS
-    override fun toTop() { if (tiles.isNotEmpty()) focus(i % Layout.COLS) }
-
-    override fun tick(dt: Float): Boolean { sy.step(dt); view.translationY = sy.value; return !sy.atRest() }
 }
 
 /**
- * Full-screen backdrop: the focused app's own artwork as a soft colour field.
- * Two layers; the top one fades over an opaque bottom, so a change never dips through black.
+ * Full-screen backdrop. Two layers; the top one fades over an opaque bottom, so a change never dips through black.
  */
 class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
     val bottom = ImageView(ctx).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
@@ -232,51 +170,152 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
     override fun tick(dt: Float): Boolean { fade.step(dt); top.alpha = fade.value; return !fade.atRest() }
 }
 
-/** Hero text for the focused app: small category eyebrow over a large title. Cross-fades with a slight upward drift. */
-class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock) : FrameClock.Tick {
-    val view = FrameLayout(ctx)
-    private class Layer(val box: LinearLayout, val eyebrow: TextView, val title: TextView, val a: Spring)
-    private val layers = Array(2) { layer(ctx) }
+/**
+ * The cinematic area: full-screen artwork for the focused app's content, with title and metadata at the top left.
+ * Apps without a content source show their own colours and name instead, never invented content.
+ */
+class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, private val repo: ContentRepository, root: FrameLayout) : FrameClock.Tick {
+    val backdrop = Backdrop(ctx, clock)
+    private class Layer(val box: LinearLayout, val eyebrow: TextView, val title: TextView, val meta: TextView, val a: Spring)
+    private val textBox = FrameLayout(ctx)
+    private val layers: Array<Layer>
+    private val dots = Dots(ctx, l)
+    private val hint = Chevron(ctx, l)
     private var front = 0
     private var shown: String? = null
+    private var entry: AppEntry? = null
+    private var items: List<ContentItem> = emptyList()
+    private var index = 0
+    private var want: String? = null
+    private val textVis = Spring(1f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)
+    private val shelf = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)
+    private var deep = false
 
-    fun show(eyebrow: String, title: String) {
-        val key = "$eyebrow\n$title"
+    val item: ContentItem? get() = items.getOrNull(index)
+    val hasItems get() = items.isNotEmpty()
+    val count get() = items.size
+
+    init {
+        root.addView(backdrop.bottom, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        root.addView(backdrop.top, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        // Scrim: darkens the top for the title and the bottom for the app rows; the middle of the artwork stays clean.
+        root.addView(View(ctx).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x8C000000.toInt(), 0x0D000000, 0xA6000000.toInt()))
+        }, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(360)).apply { leftMargin = l.left; topMargin = l.px(84) })
+        layers = Array(2) { layer(ctx) }
+        root.addView(hint, FrameLayout.LayoutParams(l.px(44), l.px(16), Gravity.CENTER_HORIZONTAL).apply { topMargin = l.dockY - l.platterPad - l.px(34) })
+        root.addView(dots, FrameLayout.LayoutParams(MATCH_PARENT, l.px(12)).apply { topMargin = l.px(1010) })
+        dots.alpha = 0f; hint.alpha = 0f
+    }
+
+    /** Shows [items] for a top-row app (empty = the app's own colours and name). */
+    fun bind(e: AppEntry, list: List<ContentItem>) {
+        val sameApp = entry?.packageName == e.packageName
+        if (sameApp && list === items && !deep) return
+        val wasDeep = deep
+        entry = e; deep = false
+        if (!sameApp || list !== items) { items = list; index = 0 }
+        textVis.target = 1f
+        show(fresh = !sameApp || wasDeep)
+    }
+
+    /** Grid mode: only the focused app's colour field, no text. */
+    fun field(e: AppEntry) {
+        deep = true; want = null
+        backdrop.show(e.backdrop)
+        textVis.target = 0f; clock.add(this)
+    }
+
+    fun step(d: Int, wrap: Boolean = false): Boolean {
+        if (items.size < 2) return false
+        val n = if (wrap) (index + d + items.size) % items.size else index + d
+        if (n !in items.indices) return false
+        index = n; show(fresh = false)
+        return true
+    }
+
+    fun shelf(on: Boolean) { shelf.target = if (on) 1f else 0f; clock.add(this) }
+
+    private fun show(fresh: Boolean) {
+        val e = entry ?: return
+        val it = item
+        dots.set(items.size, index)
+        if (it == null) {
+            want = null; backdrop.show(e.backdrop); text("", e.label, "")
+        } else {
+            text(e.label, it.title, it.meta)
+            val url = it.imageUrl; want = url
+            var ready = false
+            repo.image(url) { bmp -> ready = true; if (want == url && bmp != null) backdrop.show(bmp) }
+            if (!ready && fresh) backdrop.show(e.backdrop)       // new app: its colours until the artwork arrives
+            items.getOrNull((index + 1) % items.size)?.let { n -> repo.prefetch(n.imageUrl) }
+        }
+        clock.add(this)
+    }
+
+    private fun text(eyebrow: String, title: String, meta: String) {
+        val key = "$eyebrow\n$title\n$meta"
         if (key == shown) return
         shown = key
         layers[front].a.target = 0f
         front = 1 - front
-        layers[front].eyebrow.text = eyebrow; layers[front].title.text = title
-        layers[front].eyebrow.visibility = if (eyebrow.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
-        layers[front].a.target = 1f
-        clock.add(this)
+        val y = layers[front]
+        y.eyebrow.text = eyebrow; y.title.text = title; y.meta.text = meta
+        y.eyebrow.visibility = if (eyebrow.isEmpty()) View.GONE else View.VISIBLE
+        y.meta.visibility = if (meta.isEmpty()) View.GONE else View.VISIBLE
+        y.a.target = 1f
     }
 
     override fun tick(dt: Float): Boolean {
         var moving = false
         for (y in layers) {
             y.a.step(dt)
-            y.box.alpha = y.a.value; y.box.translationY = (1f - y.a.value) * l.pxf(14f)
+            y.box.alpha = y.a.value; y.box.translationY = (1f - y.a.value) * l.pxf(12f)
             if (!y.a.atRest()) moving = true
         }
-        return moving
+        textVis.step(dt); shelf.step(dt)
+        textBox.alpha = textVis.value
+        dots.alpha = shelf.value * textVis.value
+        hint.alpha = (if (items.isNotEmpty()) 0.75f else 0f) * (1f - shelf.value) * textVis.value
+        return moving || !textVis.atRest() || !shelf.atRest()
     }
 
     private fun layer(ctx: Context): Layer {
-        val eyebrow = TextView(ctx).apply {
-            textStyle(l.pxf(22f), 600, 0xC7FFFFFF.toInt()); letterSpacing = 0.12f; isAllCaps = true
-            setShadowLayer(l.pxf(8f), 0f, l.pxf(2f), 0x80000000.toInt())
-        }
-        val title = TextView(ctx).apply {
-            textStyle(l.pxf(76f), 600); letterSpacing = -0.02f
-            setShadowLayer(l.pxf(18f), 0f, l.pxf(3f), 0x80000000.toInt())
-        }
+        fun shadowed(t: TextView, r: Float) = t.apply { setShadowLayer(l.pxf(r), 0f, l.pxf(2f), 0x99000000.toInt()) }
+        val eyebrow = shadowed(TextView(ctx).apply { style(Txt.CAPTION, l.u, 0xD9FFFFFF.toInt()) }, 8f)
+        val title = shadowed(TextView(ctx).apply { style(Txt.HERO, l.u) }, 20f)
+        val meta = shadowed(TextView(ctx).apply { style(Txt.META, l.u, 0xE6FFFFFF.toInt()) }, 10f)
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; alpha = 0f
             addView(eyebrow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-            addView(title, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(10) })
+            addView(title, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(12) })
+            addView(meta, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(16) })
         }
-        view.addView(box, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
-        return Layer(box, eyebrow, title, Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f))
+        textBox.addView(box, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
+        return Layer(box, eyebrow, title, meta, Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f))
+    }
+}
+
+/** Page indicator for full-screen artwork mode. */
+@SuppressLint("ViewConstructor")
+private class Dots(ctx: Context, private val l: Layout) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var n = 0; private var i = 0
+    fun set(count: Int, index: Int) { if (count != n || index != i) { n = count; i = index; invalidate() } }
+    override fun onDraw(c: Canvas) {
+        if (n < 2) return
+        val gap = l.pxf(22f); val x0 = width / 2f - gap * (n - 1) / 2f
+        for (k in 0 until n) { p.color = if (k == i) 0xFFFFFFFF.toInt() else 0x66FFFFFF; c.drawCircle(x0 + k * gap, height / 2f, l.pxf(if (k == i) 5f else 4f), p) }
+    }
+}
+
+/** Small upward chevron above the top row: more of this content is one press up. */
+@SuppressLint("ViewConstructor")
+private class Chevron(ctx: Context, l: Layout) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = l.pxf(4f); strokeCap = Paint.Cap.ROUND }
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat(); val h = height.toFloat(); val m = p.strokeWidth
+        c.drawLine(m, h - m, w / 2f, m, p); c.drawLine(w / 2f, m, w - m, h - m, p)
     }
 }

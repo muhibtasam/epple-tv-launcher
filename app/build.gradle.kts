@@ -1,6 +1,10 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
 }
+
+val local = Properties().apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) } }
 
 android {
     namespace = "com.eppletv.launcher"
@@ -11,7 +15,10 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.2.0"
+        // Optional content keys; without them those providers fall back gracefully. Never committed (local.properties is ignored).
+        buildConfigField("String", "TMDB_KEY", "\"${local.getProperty("tmdb.key", "")}\"")
+        buildConfigField("String", "YOUTUBE_KEY", "\"${local.getProperty("youtube.key", "")}\"")
     }
 
     // base: no Google dependencies. google: may use Google TV / Assistant capabilities (added behind interfaces).

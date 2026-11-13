@@ -4,39 +4,28 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Home geometry on a 1920x1080 canvas, scaled by [u] to the real window.
- * Six 16:9 tiles per row inside 80 px side margins (safe area), 40 px gutters.
+ * Home geometry on a 1920x1080 canvas, scaled by [u] to the real window. Measured from tvOS reference screens:
+ * six tiles per row, a glass platter around the top row sitting low on the artwork, the next row just peeking in.
  */
 class Layout(val u: Float) {
     fun px(v: Int): Int = (v * u).roundToInt()
     fun pxf(v: Float): Float = v * u
 
-    val tileW = px(260); val tileH = px(146)
-    val pitchX = px(300)
-    val left = px(80)
-    val corner = pxf(14f)
-    val shadowPad = px(40)
-    val labelTop = px(30); val labelH = px(40)
-    val stripH = tileH + px(90)
+    val tileW = px(250); val tileH = px(141)      // 16:9, the native shape of Android TV banners
+    val pitchX = px(294)
+    val left = px(100)
+    val corner = pxf(26f)
+    val shadowPad = px(44)
+    val labelTop = px(26); val labelH = px(40)
 
-    // Home: hero above a top row ("dock"), titled sections below.
-    val dockY = px(640)
-    private val sectionPitch = px(300)
-    fun sectionTitleY(k: Int) = px(884) + (k - 1) * sectionPitch
-    fun sectionTilesY(k: Int) = if (k == 0) dockY else sectionTitleY(k) + px(60)
-    /** Keeps the focused section at a fixed height, but never scrolls past the end of the content. */
-    fun homeScroll(k: Int, count: Int): Float {
-        if (k == 0) return 0f
-        val wanted = sectionTilesY(k) - px(420)
-        val end = sectionTilesY(count - 1) + tileH + px(170) - px(1080)
-        return -minOf(wanted, max(0, end)).toFloat()
-    }
-    fun homeHeight(n: Int) = sectionTilesY(max(0, n - 1)) + px(700)
+    val dockY = px(832)                            // top row of tiles
+    val platterPad = px(36); val platterRadius = pxf(58f)
+    val rowPitch = px(225)
+    fun rowY(r: Int) = dockY + r * rowPitch
 
-    // Apps: a plain grid under a page title.
-    val gridTop = px(260); val gridPitchY = px(250)
-    fun gridScroll(row: Int): Float = -(max(0, row - 1) * gridPitchY).toFloat()
-    fun gridHeight(rows: Int) = gridTop + rows * gridPitchY + px(500)
+    /** Row 0 shows the artwork. Below it the page slides up so the top row sits at the top of the screen, then scrolls row by row. */
+    fun scroll(r: Int): Float = if (r == 0) 0f else -(dockY - px(96) + max(0, r - 3) * rowPitch).toFloat()
+    fun height(rows: Int) = rowY(rows) + px(900)
 
     companion object {
         const val COLS = 6

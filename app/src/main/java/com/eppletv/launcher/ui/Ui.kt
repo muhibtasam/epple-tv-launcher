@@ -46,6 +46,24 @@ object Colors {
     }
 }
 
+/** Type scale for a 10-foot UI, in px on the 1080p canvas. Every text in the app uses one of these. */
+enum class Txt(val px: Float, val weight: Int, val tracking: Float, val lines: Int = 1) {
+    HERO(72f, 700, -0.022f, 2),     // content title over artwork
+    CLOCK(72f, 300, -0.02f),        // Control Center time
+    TITLE(36f, 600, -0.012f),       // panel titles
+    ROW(30f, 500, -0.005f),         // menu rows
+    META(27f, 500, 0f),             // metadata line, dates
+    LABEL(26f, 500, 0f),            // app name under a focused tile
+    CAPTION(22f, 700, 0.10f),       // upper-case eyebrow
+    FOOT(19f, 400, 0f, 3),          // attribution
+}
+
+fun TextView.style(t: Txt, u: Float, color: Int = Colors.WHITE) {
+    textStyle(t.px * u, t.weight, color); letterSpacing = t.tracking
+    if (t.lines > 1) { isSingleLine = false; maxLines = t.lines; setLineSpacing(0f, 1.06f) }
+    if (t == Txt.CAPTION) isAllCaps = true
+}
+
 fun TextView.textStyle(px: Float, weight: Int, color: Int = Colors.WHITE) {
     setTextSize(TypedValue.COMPLEX_UNIT_PX, px); typeface = Type.of(weight); setTextColor(color)
     includeFontPadding = false; isSingleLine = true; ellipsize = TextUtils.TruncateAt.END

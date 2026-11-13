@@ -37,7 +37,7 @@ class Tile(
     ctx: Context,
     val entry: AppEntry,
     shadowBmp: Bitmap,
-    private val label: TextView,
+    private val label: TextView?,
     private val l: Layout,
     private val clock: FrameClock,
     private val host: TileHost,
@@ -48,6 +48,7 @@ class Tile(
     private val tiltX = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS, Motion.REST_DEG)
     private val tiltY = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS, Motion.REST_DEG)
     private var pressed = false
+    var inDock = false
     private var longPressed = false
 
     private val shadow = ImageView(ctx).apply { setImageBitmap(shadowBmp); alpha = 0f; scaleType = ImageView.ScaleType.FIT_XY }
@@ -120,8 +121,8 @@ class Tile(
         highlight.alpha = 0.6f * v
         highlight.translationX = -tiltY.value * l.pxf(6f)
         highlight.translationY = tiltX.value * l.pxf(6f)
-        label.alpha = v
-        label.translationY = l.tileH * (s - 1f) / 2f - (1f - v) * l.pxf(10f)
+        label?.alpha = v
+        label?.translationY = l.tileH * (s - 1f) / 2f - (1f - v) * l.pxf(10f)
         return !(focus.atRest() && press.atRest() && tiltX.atRest() && tiltY.atRest())
     }
 
@@ -131,11 +132,15 @@ class Tile(
 
 /** Banner drawn once with a bitmap shader and rounded corners; never redrawn during motion. */
 @SuppressLint("ViewConstructor")
-private class BannerView(ctx: Context, bmp: Bitmap, private val corner: Float) : View(ctx) {
+private class BannerView(ctx: Context, private val bmp: Bitmap, private val corner: Float) : View(ctx) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
         shader = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
     }
     private val rect = RectF()
-    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { rect.set(0f, 0f, w.toFloat(), h.toFloat()) }
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+        rect.set(0f, 0f, w.toFloat(), h.toFloat())
+        // The artwork is rendered larger than the tile so it stays sharp when the focused tile scales up.
+        paint.shader.setLocalMatrix(android.graphics.Matrix().apply { setScale(w.toFloat() / bmp.width, h.toFloat() / bmp.height) })
+    }
     override fun onDraw(canvas: Canvas) { canvas.drawRoundRect(rect, corner, corner, paint) }
 }

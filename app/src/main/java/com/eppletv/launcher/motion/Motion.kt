@@ -12,7 +12,7 @@ object Motion {
     const val FADE_DAMPING = 1.0f; const val FADE_STIFFNESS = 120f
     const val PRESS_DAMPING = 1.0f; const val PRESS_STIFFNESS = 900f
 
-    const val FOCUS_SCALE = 0.12f    // focused tile grows by 12 %
+    const val FOCUS_SCALE = 0.16f    // focused tile grows by 16 %
     const val PRESS_SCALE = 0.06f    // pressed tile shrinks by 6 %
     const val TILT_DEG = 5f          // tilt kick in the direction of travel, springs back to 0
 

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Runs as a normal TV app. It deliberately does NOT declare the HOME category (HOME takeover is not approved). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Only used to fetch content lists and artwork for the hero area. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 

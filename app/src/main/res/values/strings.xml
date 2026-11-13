@@ -20,6 +20,9 @@
     <string name="menu_pin">Add to Top Row</string>
     <string name="menu_unpin">Remove from Top Row</string>
     <string name="menu_info">App Info</string>
+    <string name="menu_left">Move Left</string>
+    <string name="menu_right">Move Right</string>
+    <string name="tmdb_credit">This product uses the TMDB API but is not endorsed or certified by TMDB.</string>
     <string name="cc_settings">Settings</string>
     <string name="cc_network">Network &amp; Internet</string>
     <string name="cc_display">Display</string>
