@@ -160,6 +160,15 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
     var onChange: (() -> Unit)? = null
     val bottomBitmap: Bitmap? get() = (bottom.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
     val topBitmap: Bitmap? get() = (top.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+    private var dimLevel = 0
+    /** Darkens both layers by [v] (0..1) inside their own draw: no full-screen overlay pass. */
+    fun dim(v: Float) {
+        val lvl = (v.coerceIn(0f, 1f) * 255).toInt()
+        if (lvl == dimLevel) return
+        dimLevel = lvl
+        val f = if (lvl == 0) null else android.graphics.PorterDuffColorFilter(android.graphics.Color.argb(lvl, 0, 0, 0), android.graphics.PorterDuff.Mode.SRC_ATOP)
+        bottom.colorFilter = f; top.colorFilter = f
+    }
     val topAlpha: Float get() = if (top.visibility == View.VISIBLE) top.alpha else 0f
     val bottomVisible: Boolean get() = bottom.visibility == View.VISIBLE
 
@@ -210,17 +219,8 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
     init {
         root.addView(backdrop.bottom, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         root.addView(backdrop.top, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        // Scrim: darkens the top for the title and the bottom for the app rows; the middle of the artwork stays clean.
-        root.addView(View(ctx).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x8C000000.toInt(), 0x0D000000, 0xA6000000.toInt()))
-        }, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        // Second scrim from the top-left corner, under the title block only, so text stays readable on bright artwork.
-        root.addView(View(ctx).apply {
-            background = GradientDrawable().apply {
-                gradientType = GradientDrawable.RADIAL_GRADIENT; gradientRadius = l.pxf(1150f); setGradientCenter(0f, 0f)
-                colors = intArrayOf(0x99000000.toInt(), 0x4D000000, 0x00000000)
-            }
-        }, FrameLayout.LayoutParams(l.px(1250), l.px(760)))      // only the corner it darkens: saves fill rate
+        // The scrims (top for the title, bottom for the app rows, top-left corner under the text) are painted into each
+        // backdrop image once when it is decoded (see Scrim): as overlay views they cost two translucent full-screen passes a frame.
         root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(420)).apply { leftMargin = l.left; topMargin = l.px(84) })
         layers = Array(2) { layer(ctx) }
         root.addView(hint, FrameLayout.LayoutParams(l.px(44), l.px(16), Gravity.CENTER_HORIZONTAL).apply { topMargin = l.dockY - l.platterPad - l.px(34) })
@@ -340,5 +340,24 @@ private class Chevron(ctx: Context, l: Layout) : View(ctx) {
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat(); val m = p.strokeWidth
         c.drawLine(m, h - m, w / 2f, m, p); c.drawLine(w / 2f, m, w - m, h - m, p)
+    }
+}
+
+/**
+ * The hero scrim, painted into a backdrop bitmap of any size (it scales with the image, which fills the screen):
+ * a top-to-bottom darkening for the title and the app rows, plus a radial darkening from the top-left corner,
+ * limited to the 1250x760 (of 1920x1080) corner it covered as a view.
+ */
+object Scrim {
+    private val linear = intArrayOf(0x8C000000.toInt(), 0x0D000000, 0xA6000000.toInt())
+    private val radial = intArrayOf(0x99000000.toInt(), 0x4D000000, 0x00000000)
+    fun paint(b: Bitmap) {
+        if (!b.isMutable) return
+        val w = b.width.toFloat(); val h = b.height.toFloat(); val c = Canvas(b)
+        c.drawRect(0f, 0f, w, h, Paint().apply { isDither = true; shader = android.graphics.LinearGradient(0f, 0f, 0f, h, linear, null, android.graphics.Shader.TileMode.CLAMP) })
+        val k = w / 1920f
+        c.drawRect(0f, 0f, 1250f * k, 760f * h / 1080f, Paint().apply { isDither = true
+            shader = android.graphics.RadialGradient(0f, 0f, 1150f * k, radial, null, android.graphics.Shader.TileMode.CLAMP)
+        })
     }
 }

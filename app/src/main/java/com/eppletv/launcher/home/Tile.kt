@@ -53,11 +53,6 @@ class Tile(
     // Layered artwork: banner (parallax layer, drawn with its own rounded corners; no view clipping, which is costly on
     // this GPU), static gloss, moving specular light, light rim.
     private val banner = BannerView(ctx, entry.banner, l.corner)
-    private val gloss = View(ctx).apply {
-        // Top light and a faint darker base: the tile reads as a lit, slightly convex surface rather than a flat image.
-        background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x24FFFFFF, 0x05FFFFFF, 0x00000000, 0x14000000))
-            .apply { cornerRadius = l.corner }
-    }
     private val highlight = View(ctx).apply {
         background = GradientDrawable().apply {
             gradientType = GradientDrawable.RADIAL_GRADIENT; gradientRadius = l.pxf(300f)
@@ -65,7 +60,9 @@ class Tile(
         }
         alpha = 0f
     }
-    private val rim = ImageView(ctx).apply { setImageBitmap(rimFor(l)); scaleType = ImageView.ScaleType.FIT_XY; alpha = 0.45f }
+    // Gloss and rim in one pre-rendered bitmap shared by every tile: one cheap layer instead of a gradient pass plus a bitmap.
+    // The resting surface (gloss + rim at 45%) is baked into each tile's art; focus adds the rest of the rim live.
+    private val rim = ImageView(ctx).apply { setImageBitmap(surfaceFor(l)); scaleType = ImageView.ScaleType.FIT_XY; alpha = 0f; visibility = View.INVISIBLE }
 
     init {
         isFocusable = true
@@ -77,7 +74,6 @@ class Tile(
         shadow.visibility = View.INVISIBLE
         addView(shadow, LayoutParams(l.tileW + 2 * p, l.tileH + 2 * p).apply { leftMargin = -p; topMargin = -p + l.px(14) })
         addView(banner, LayoutParams(l.tileW, l.tileH))
-        addView(gloss, LayoutParams(l.tileW, l.tileH))
         addView(highlight, LayoutParams(l.tileW, l.tileH))
         addView(rim, LayoutParams(l.tileW, l.tileH))
     }
@@ -133,7 +129,8 @@ class Tile(
         // Parallax: the artwork layer sits slightly behind the glass and shifts against the tilt.
         banner.parallax(1f + 0.04f * v, tiltY.value * l.pxf(2.2f), -tiltX.value * l.pxf(2.2f))
         highlight.alpha = 0.75f * v
-        rim.alpha = 0.45f + 0.55f * v
+        rim.alpha = 0.55f * v
+        rim.visibility = if (v > 0.002f) View.VISIBLE else View.INVISIBLE   // unfocused tiles: baked surface only
         label?.alpha = v
         label?.translationY = l.tileH * (s - 1f) / 2f - (1f - v) * l.pxf(10f)
         return !(focus.atRest() && press.atRest() && tiltX.atRest() && tiltY.atRest())
@@ -143,21 +140,38 @@ class Tile(
         k == KeyEvent.KEYCODE_NUMPAD_ENTER || k == KeyEvent.KEYCODE_BUTTON_A
 }
 
-/** Light rim shared by every tile, pre-rendered once: live stroked rounded rects are expensive on this GPU. */
+/**
+ * Tile surface shared by every tile, pre-rendered once: top light and a faint darker base (the tile reads as a lit,
+ * slightly convex surface) plus the light rim. Live gradients and stroked rounded rects are expensive on this GPU.
+ */
 private var rimCache: Pair<Int, Bitmap>? = null
-private fun rimFor(l: Layout): Bitmap {
+private fun surfaceFor(l: Layout): Bitmap {
     rimCache?.let { if (it.first == l.tileW) return it.second }
     val b = Bitmap.createBitmap(l.tileW, l.tileH, Bitmap.Config.ARGB_8888)
-    val sw = l.pxf(2f).coerceAtLeast(1f)
-    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = sw
-        shader = android.graphics.LinearGradient(0f, 0f, 0f, l.tileH.toFloat(), intArrayOf(0x8CFFFFFF.toInt(), 0x26FFFFFF, 0x33FFFFFF),
-            null, android.graphics.Shader.TileMode.CLAMP)
-    }
-    Canvas(b).drawRoundRect(android.graphics.RectF(sw / 2, sw / 2, l.tileW - sw / 2, l.tileH - sw / 2), l.corner, l.corner, p)
+    paintRim(Canvas(b), l.tileW, l.tileH, l.corner, l.pxf(2f).coerceAtLeast(1f), 255)
     b.prepareToDraw()
     rimCache = l.tileW to b
     return b
+}
+
+/** Light rim: brighter along the top edge, where the light falls. */
+private fun paintRim(c: Canvas, w: Int, h: Int, corner: Float, sw: Float, alpha: Int) {
+    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = sw; this.alpha = alpha
+        shader = android.graphics.LinearGradient(0f, 0f, 0f, h.toFloat(), intArrayOf(0x8CFFFFFF.toInt(), 0x26FFFFFF, 0x33FFFFFF),
+            null, android.graphics.Shader.TileMode.CLAMP)
+    }
+    c.drawRoundRect(android.graphics.RectF(sw / 2, sw / 2, w - sw / 2, h - sw / 2), corner, corner, p)
+}
+
+/**
+ * The resting tile surface, baked into each app's art once: top light and a faint darker base (a lit, slightly convex
+ * surface) plus the rim at 45%. As live layers these cost ~4.5 ms a frame across a full grid on this GPU.
+ */
+fun paintTileSurface(c: Canvas, w: Int, h: Int, corner: Float, stroke: Float) {
+    GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x24FFFFFF, 0x05FFFFFF, 0x00000000, 0x14000000))
+        .apply { cornerRadius = corner; setBounds(0, 0, w, h); draw(c) }
+    paintRim(c, w, h, corner, stroke, 115)
 }
 
 /** Banner with rounded corners, drawn through a bitmap shader. Parallax moves the artwork inside its rounded frame. */

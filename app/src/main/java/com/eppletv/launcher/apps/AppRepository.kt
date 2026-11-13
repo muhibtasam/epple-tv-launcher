@@ -47,6 +47,8 @@ class AppRepository(
     private val tileH: Int,
     private val onApps: (List<AppEntry>) -> Unit,
     private val debugRepeat: Int = 1,   // debug builds only: repeats the list so scrolling can be tested on an emulator
+    private val decorate: ((Canvas, Int, Int) -> Unit)? = null,   // static tile surface baked into the art (saves a layer per tile)
+    private val backdropFilter: ((Bitmap) -> Unit)? = null,       // e.g. the hero scrim, baked into the app's backdrop field
 ) {
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -130,7 +132,7 @@ class AppRepository(
         val label = ai.loadLabel(pm).toString().trim().ifEmpty { ai.packageName }
         val file = File(artDir, "${ai.packageName}@$key.png")
         val art = file.takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path)?.also { b -> b.prepareToDraw() } }
-            ?: render(pm, ai).also { b -> try { file.outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) } } catch (e: java.io.IOException) { Log.w(TAG, "art cache write failed", e) } }
+            ?: render(pm, ai).also { b -> decorate?.invoke(Canvas(b), b.width, b.height); b.prepareToDraw() }.also { b -> try { file.outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) } } catch (e: java.io.IOException) { Log.w(TAG, "art cache write failed", e) } }
         val intent = Intent(Intent.ACTION_MAIN).addCategory(cat).setClassName(ai.packageName, ai.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         val info = ai.applicationInfo
@@ -154,6 +156,7 @@ class AppRepository(
         val cm = ColorMatrix().apply { setSaturation(1.5f); postConcat(ColorMatrix().apply { setScale(0.52f, 0.52f, 0.52f, 1f) }) }
         val p = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = ColorMatrixColorFilter(cm) }
         Canvas(out).drawBitmap(mid, null, Rect(0, 0, 96, 54), p)
+        backdropFilter?.invoke(out)
         tiny.recycle(); mid.recycle()
         return out
     }
@@ -263,7 +266,7 @@ class AppRepository(
 
     private companion object {
         const val TAG = "EppleApps"
-        const val RENDER = 2   // bump when the artwork layout changes, so cached art is re-rendered
+        const val RENDER = 3   // bump when the artwork layout changes, so cached art is re-rendered
         const val BG = 0xFF262A33.toInt()
     }
 }

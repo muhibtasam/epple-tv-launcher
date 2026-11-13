@@ -62,7 +62,6 @@ class HomeActivity : Activity(), PageHost {
     private lateinit var content: ContentRepository
     private lateinit var titles: TitleLauncher
     private lateinit var hero: Hero
-    private lateinit var dim: View
     private lateinit var page: HomePage
     private lateinit var pill: Pill
     private lateinit var panel: MenuPanel
@@ -77,7 +76,7 @@ class HomeActivity : Activity(), PageHost {
 
     private val dimP = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS)
     private val dimTick = object : FrameClock.Tick {
-        override fun tick(dt: Float): Boolean { dimP.step(dt); dim.alpha = dimP.value; pill.alpha = (1f - dimP.value * 2f).coerceIn(0f, 1f); return !dimP.atRest() }
+        override fun tick(dt: Float): Boolean { dimP.step(dt); hero.backdrop.dim(dimP.value); pill.alpha = (1f - dimP.value * 2f).coerceIn(0f, 1f); return !dimP.atRest() }
     }
 
     // The artwork follows focus after a short pause, so fast navigation doesn't flicker the whole screen.
@@ -116,13 +115,12 @@ class HomeActivity : Activity(), PageHost {
         val dm = resources.displayMetrics
         l = Layout.forWindow(dm.widthPixels, dm.heightPixels)
         library = Library(this)
-        content = ContentRepository(this, Sources.all(if (BuildConfig.DEBUG) intent.getStringExtra("cinemetaFor") else null))
+        content = ContentRepository(this, Sources.all(if (BuildConfig.DEBUG) intent.getStringExtra("cinemetaFor") else null), Scrim::paint)
         titles = TitleLauncher(this, content.net, BuildConfig.WATCHMODE_KEY, Sources.region)
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK); clipChildren = false }
         hero = Hero(this, l, clock, content, root)
-        dim = View(this).apply { setBackgroundColor(Color.BLACK); alpha = 0f }
-        root.addView(dim, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        // Grid depth darkens the backdrop through a colour filter in its own draw rather than a full-screen overlay.
         anchor = View(this).apply { isFocusable = true }          // holds focus in full-screen artwork mode
         root.addView(anchor, FrameLayout.LayoutParams(1, 1))
 
@@ -143,7 +141,10 @@ class HomeActivity : Activity(), PageHost {
         setContentView(root)
         val repeat = if (BuildConfig.DEBUG) intent.getIntExtra("repeat", 1) else 1
         // Artwork is rendered 20 % larger than the resting tile so the focused, scaled-up tile stays sharp.
-        repo = AppRepository(this, l.px(300), l.px(169), { onApps(it) }, repeat)
+        val artScale = l.px(300) / l.tileW.toFloat()     // art is rendered larger than the tile, so it stays sharp when focused
+        repo = AppRepository(this, l.px(300), l.px(169), { onApps(it) }, repeat,
+            decorate = { c, w, h -> paintTileSurface(c, w, h, l.corner * artScale, l.pxf(2f).coerceAtLeast(1f) * artScale) },
+            backdropFilter = Scrim::paint)
         repo.start()
     }
 

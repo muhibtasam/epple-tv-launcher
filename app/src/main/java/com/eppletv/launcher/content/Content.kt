@@ -94,7 +94,7 @@ class Net(private val dir: File) {
  * Loads content lists and artwork with three cache levels (memory, disk, network) and in-flight de-duplication,
  * so a list is fetched at most once per [TTL_MS] and an image at most once ever.
  */
-class ContentRepository(ctx: Context, private val sources: List<ContentSource>) {
+class ContentRepository(ctx: Context, private val sources: List<ContentSource>, private val backdropFilter: ((Bitmap) -> Unit)? = null) {
     private val listDir = File(ctx.filesDir, "content").apply { mkdirs() }
     val net = Net(listDir)
     private val main = Handler(Looper.getMainLooper())
@@ -176,8 +176,9 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>) 
         BitmapFactory.decodeFile(f.path, o)
         var s = 1
         while (o.outWidth / (s * 2) >= 1920) s *= 2
-        return BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = s; inPreferredConfig = Bitmap.Config.RGB_565 })
-            ?.also { it.prepareToDraw() }
+        // Mutable so the hero scrim is painted into the image once here, on the worker, instead of as overlay passes every frame.
+        return BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = s; inPreferredConfig = Bitmap.Config.RGB_565; inMutable = true })
+            ?.also { backdropFilter?.invoke(it); it.prepareToDraw() }
     }
 
     private fun sha1(s: String) = MessageDigest.getInstance("SHA-1").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
