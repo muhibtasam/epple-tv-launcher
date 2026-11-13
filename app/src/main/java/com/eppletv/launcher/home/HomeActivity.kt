@@ -235,6 +235,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     override fun onStop() {
         resumed = false; main.removeCallbacks(rotate); main.removeCallbacks(idle); saver.stop()
+        setup.pause()                                        // phone setup stops listening when the TV leaves Epple TV
         unregisterReceiver(timeReceiver)
         super.onStop()
     }

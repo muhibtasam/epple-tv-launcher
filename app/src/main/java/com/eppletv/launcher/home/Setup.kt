@@ -14,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.eppletv.launcher.content.Catalog
 import com.eppletv.launcher.content.Credentials
+import com.eppletv.launcher.pair.PhoneLink
 import com.eppletv.launcher.ui.Colors
 import com.eppletv.launcher.ui.Pill
 import com.eppletv.launcher.ui.Txt
@@ -58,6 +59,23 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     val active get() = view.visibility == View.VISIBLE
     val done get() = state.getBoolean("done", false)
 
+    // Phone setup (QR code): the panel redraws on every phase change; a 1 s tick updates only the countdown.
+    private var phoneMode = false
+    private val phone by lazy {
+        PhoneLink(ctx, nav.content.net) { if (phoneMode) render() }.apply {
+            onSaved = { s -> if (s.check.ok) { checks[s.key] = s.check; changedKeys = true } }
+        }
+    }
+    private var countdown: TextView? = null
+    private val tick = object : Runnable {
+        override fun run() {
+            val c = countdown ?: return
+            val s = (phone.remainingMs / 1000).toInt()
+            c.text = "Code expires in ${s / 60}:${"%02d".format(s % 60)}"
+            if (phoneMode && phone.live) view.postDelayed(this, 1000)
+        }
+    }
+
     init {
         column.addView(stepLabel)
         column.addView(title, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(14) })
@@ -80,6 +98,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     /** BACK: closes the key editor, then goes to the previous step. On the first step it does nothing (setup must finish). */
     fun back(): Boolean {
+        if (phoneMode) { leavePhone(); render(); return true }
         if (editing != null) { editing = null; render(); return true }
         if (single) { close(); return true }
         if (step > 0) { go(step - 1) }
@@ -91,9 +110,21 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     private fun go(n: Int) { step = n; if (!single) state.edit().putInt("step", n).apply(); render() }
 
-    private fun close() { view.visibility = View.GONE; block(false); host.setupClosed(changedKeys) }
+    private fun close() { leavePhone(); view.visibility = View.GONE; block(false); host.setupClosed(changedKeys) }
+
+    /** The TV left the foreground: stop listening; the user starts a new code when they return. */
+    fun pause() { if (phoneMode) { leavePhone(); render() } }
+
+    private fun leavePhone() {
+        phoneMode = false
+        phone.stop()
+        countdown = null
+        view.removeCallbacks(tick)
+        view.keepScreenOn = false
+    }
 
     private fun finish() {
+        leavePhone()
         state.edit().putBoolean("done", true).putInt("step", 4).apply()
         view.visibility = View.GONE; block(false)
         host.setupFinished(changedKeys)
@@ -123,7 +154,8 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         content.removeAllViews(); buttons.removeAllViews()
         stepLabel.text = if (single) "SETTINGS" else "STEP ${step + 1} OF 5"
         var first: View? = null
-        if (editing != null) { first = renderEditor(editing!!) } else when (step) {
+        countdown = null
+        if (phoneMode) { first = renderPhone() } else if (editing != null) { first = renderEditor(editing!!) } else when (step) {
             0 -> {
                 title.text = "Welcome to Epple TV"
                 body.text = "A cinematic home for this TV: your apps, what's new on your services and everything you're watching, in one place.\n\n" +
@@ -133,6 +165,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             1 -> {
                 title.text = "Content Providers"
                 body.text = "Epple TV uses these services for artwork, new releases and trends. Keys are encrypted on this TV and only the last four characters are ever shown. Skip any you don't have."
+                first = row("Set up with your phone", "Scan a code") { phoneMode = true; render(); phone.start() }
                 Credentials.Key.values().forEach { k ->
                     val r = row(k.label, status(k)) { editing = k; render() }
                     if (first == null) first = r
@@ -180,6 +213,82 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             }
         }
         view.post { (first ?: buttons.getChildAt(buttons.childCount - 1))?.requestFocus() }
+    }
+
+    /** Phone setup: the QR code on the left, what is happening on the right. Returns the view to focus. */
+    private fun renderPhone(): View? {
+        title.text = "Set Up with Your Phone"
+        body.text = "Scan the code with your phone's camera. Your phone must be on the same Wi-Fi as this TV. " +
+            "Keys you enter on your phone go straight to this TV over your home network."
+        val p = phone.phase
+        val green = 0xFF7CE38B.toInt(); val orange = 0xFFFFB86B.toInt(); val red = 0xFFFF8A80.toInt()
+        val side = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
+        val box = l.px(420)
+        val showQr = p == PhoneLink.Phase.WAITING || p == PhoneLink.Phase.CONFIRMING
+        val image = android.widget.ImageView(ctx).apply {
+            scaleType = android.widget.ImageView.ScaleType.CENTER
+            background = GradientDrawable().apply { cornerRadius = l.pxf(24f); setColor(if (showQr) Colors.WHITE else Colors.FILL) }
+            val q = phone.qr
+            if (q != null && showQr) setImageDrawable(android.graphics.drawable.BitmapDrawable(resources, qrBitmap(q, box)).apply { isFilterBitmap = false })
+        }
+        side.addView(image, LinearLayout.LayoutParams(box, box))
+        val info = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        side.addView(info, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { leftMargin = l.px(48) })
+        fun line(text: String, color: Int = Colors.TEXT_DIM, size: Txt = Txt.META) = TextView(ctx).apply {
+            style(size, l.u, color); isSingleLine = false; maxLines = 4; this.text = text
+            info.addView(this, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { if (info.childCount > 0) topMargin = l.px(14) })
+        }
+        content.addView(side, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        var focus: View? = null
+        when (p) {
+            PhoneLink.Phase.IDLE, PhoneLink.Phase.STARTING -> line("Starting…")
+            PhoneLink.Phase.NO_NETWORK -> line("This TV isn't on a Wi-Fi or Ethernet network. Connect it, then choose New Code.", orange)
+            PhoneLink.Phase.FAILED -> line("Phone setup couldn't start on this network. Choose New Code to try again.", orange)
+            PhoneLink.Phase.WAITING -> {
+                line("Waiting for your phone…", Colors.WHITE, Txt.TITLE)
+                line("Make sure your phone uses the same Wi-Fi network as this TV, not mobile data.")
+                countdown = line("")
+            }
+            PhoneLink.Phase.CONFIRMING -> {
+                line("A phone wants to connect", Colors.WHITE, Txt.TITLE)
+                line(phone.code.orEmpty().toCharArray().joinToString("  "), Colors.WHITE, Txt.HERO)
+                line("Allow it only if your phone shows the same code.")
+                countdown = line("")
+                focus = button("Allow", primary = true) { phone.allow() }
+                button("Deny") { phone.deny() }
+            }
+            PhoneLink.Phase.PAIRED -> {
+                line("✓  Phone connected", green, Txt.TITLE)
+                line("Enter your keys on the phone and tap Save. Each key is tested before it is stored.")
+                for (s in phone.saved) line(if (s.check.ok) "✓  ${s.key.label}: connected and saved" else "✕  ${s.key.label}: ${s.check.message}", if (s.check.ok) green else red)
+            }
+            PhoneLink.Phase.DENIED -> line("Connection refused. Choose New Code to try again.", orange)
+            PhoneLink.Phase.EXPIRED -> line("This code has ended. Choose New Code to get a fresh one.", orange)
+            PhoneLink.Phase.LOST -> line("The network connection was lost. Check the Wi-Fi, then choose New Code.", orange)
+            PhoneLink.Phase.DONE -> line("Phone setup finished.", green)
+        }
+        if (p != PhoneLink.Phase.CONFIRMING) {
+            val again = button("New Code") { phone.start() }
+            if (p != PhoneLink.Phase.PAIRED && p != PhoneLink.Phase.WAITING) focus = again
+        }
+        val done = button(if (p == PhoneLink.Phase.PAIRED) "Done" else "Back") { leavePhone(); render() }
+        if (focus == null) focus = done
+        view.keepScreenOn = phone.live || p == PhoneLink.Phase.STARTING
+        view.removeCallbacks(tick)
+        if (countdown != null) tick.run()
+        return focus
+    }
+
+    /** Crisp QR bitmap: whole pixels per module and a 4-module quiet zone, no scaling when drawn. */
+    private fun qrBitmap(q: com.eppletv.launcher.pair.Qr, box: Int): android.graphics.Bitmap {
+        val modules = q.size + 8
+        val scale = maxOf(1, (box - l.px(24)) / modules)
+        val px = modules * scale
+        val pixels = IntArray(px * px)
+        for (y in 0 until px) for (x in 0 until px) {
+            pixels[y * px + x] = if (q.isDark(x / scale - 4, y / scale - 4)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
+        }
+        return android.graphics.Bitmap.createBitmap(pixels, px, px, android.graphics.Bitmap.Config.ARGB_8888)
     }
 
     private fun languageChips() {
