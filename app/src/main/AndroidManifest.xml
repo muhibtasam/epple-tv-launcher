@@ -3,6 +3,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Only used to fetch content lists and artwork for the hero area. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Apps > hold OK > Uninstall: asks the system to show its own uninstall confirmation. -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 

@@ -123,6 +123,14 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     private val shownPrefs = ctx.getSharedPreferences("shown", Context.MODE_PRIVATE)
     private val usedThisLaunch = HashSet<String>()                                // titles already picked for another app
     private val rnd = java.util.Random()
+    private val thumbs = object : LruCache<String, Bitmap>(14 * 1024 * 1024) {      // card artwork (no scrim)
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
+    private val thumbWaiters = HashMap<String, ArrayList<(Bitmap?) -> Unit>>()
+    private val results = LruCache<String, Any>(64)                                    // catalogue results this launch
+    private val workWaiters = HashMap<String, ArrayList<(Any?) -> Unit>>()
+    /** 0 balanced, 1 more Indian, 2 more Hollywood, 3 Hollywood only (Settings > Indian titles). */
+    var indianMode = 0
 
     fun sourceFor(pkg: String): ContentSource? = sources.firstOrNull { it.ready && it.handles(pkg) }
 
@@ -168,9 +176,24 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
             it to Math.pow(rnd.nextDouble(), 1.0 / w.coerceAtLeast(1e-3))
         }.sortedByDescending { it.second }.map { it.first }
         val n = minOf(SHOW, keyed.size)
-        val groups = keyed.groupBy { it.origin }.values.map { ArrayDeque(it) }.shuffled(rnd)
+        val byOrigin = keyed.groupBy { it.origin }
         val out = ArrayList<ContentItem>(n)
-        while (out.size < n) for (g in groups) { if (out.size < n) g.removeFirstOrNull()?.let { out.add(it) } }
+        if (byOrigin.keys.containsAll(listOf("in", "intl"))) {
+            val ind = ArrayDeque(byOrigin.getValue("in")); val intl = ArrayDeque(byOrigin.getValue("intl"))
+            // Interleaving pattern per setting; the first slot is random so the opening title alternates between launches.
+            val pattern = when (indianMode) { 1 -> "iiw"; 2 -> "wwi"; 3 -> "w"; else -> if (rnd.nextBoolean()) "iw" else "wi" }
+            var k = 0
+            while (out.size < n && (ind.isNotEmpty() || intl.isNotEmpty())) {
+                val wantIndian = pattern[k++ % pattern.length] == 'i'
+                val next = if (wantIndian) ind.removeFirstOrNull() ?: if (indianMode == 3) null else intl.removeFirstOrNull()
+                           else intl.removeFirstOrNull() ?: if (indianMode == 3) null else ind.removeFirstOrNull()
+                if (next == null) { if (indianMode == 3 && intl.isEmpty()) break else continue }
+                out.add(next)
+            }
+        } else {
+            val groups = byOrigin.values.map { ArrayDeque(it) }.shuffled(rnd)
+            while (out.size < n) for (g in groups) { if (out.size < n) g.removeFirstOrNull()?.let { out.add(it) } }
+        }
         usedThisLaunch += out.map { it.id }
         Log.i(TAG, "picked $key (pool ${pool.size}): " + out.joinToString(" | ") { "${it.origin}:${it.title}" })
         shownPrefs.edit().putString(key, (out.map { it.id } + recent.filter { it.isNotEmpty() }).distinct().take(40).joinToString("\n")).apply()
@@ -202,6 +225,82 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     }
 
     fun prefetch(url: String) = image(url) {}
+
+    /** Main thread. Card artwork, decoded once at card size (no scrim), from the shared disk cache. */
+    fun thumb(url: String, cb: (Bitmap?) -> Unit) {
+        if (url.isEmpty()) return cb(null)
+        thumbs.get(url)?.let { return cb(it) }
+        thumbWaiters[url]?.let { it.add(cb); return }
+        thumbWaiters[url] = arrayListOf(cb)
+        io.execute {
+            // w780 artwork decodes at 390 px: card size, a quarter of the pixels.
+            val bmp = try { decodeScaled(fetch(url), 380) } catch (e: Exception) { Log.w(TAG, "thumb failed: ${e.javaClass.simpleName}"); null }
+            main.post { if (bmp != null) thumbs.put(url, bmp); thumbWaiters.remove(url)?.forEach { it(bmp) } }
+        }
+    }
+
+    /** Main thread. A full-screen image without the hero scrim, not kept in memory caches (the screensaver holds two). */
+    fun wide(url: String, cb: (Bitmap?) -> Unit) {
+        io.execute {
+            val bmp = try { decodeScaled(fetch(url), 1920) } catch (e: Exception) { null }
+            main.post { cb(bmp) }
+        }
+    }
+
+    /**
+     * Main thread. Runs [job] on the worker and calls back on the main thread; results are kept for this launch under
+     * [key] and concurrent requests for the same key share one run, so screens never repeat a request.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <T : Any> work(key: String, job: () -> T, cb: (T?) -> Unit) {
+        results.get(key)?.let { return cb(it as T) }
+        workWaiters[key]?.let { it.add { v -> cb(v as T?) }; return }
+        workWaiters[key] = arrayListOf({ v -> cb(v as T?) })
+        io.execute {
+            val v: Any? = try { job() } catch (e: Exception) { Log.w(TAG, "$key failed: ${e.javaClass.simpleName} ${e.message}"); null }
+            main.post { if (v != null) results.put(key, v); workWaiters.remove(key)?.forEach { it(v) } }
+        }
+    }
+    fun forget(key: String) { results.remove(key) }
+
+    /** Every content item loaded for the top-row apps this launch. */
+    fun loadedItems(): List<ContentItem> = lists.values.flatten()
+
+    fun imageCacheBytes(): Long = imgDir.listFiles()?.sumOf { it.length() } ?: 0L
+    fun listCacheBytes(): Long = listDir.listFiles()?.sumOf { it.length() } ?: 0L
+
+    /** Main thread. Empties the image caches (memory and disk). */
+    fun clearImages() {
+        images.evictAll(); thumbs.evictAll(); logos.evictAll(); logoUrls.clear()
+        io.execute { imgDir.listFiles()?.forEach { it.delete() } }
+    }
+
+    /** Main thread. The launcher went to the background: memory caches are emptied (disk copies stay). */
+    fun trimMemory() { thumbs.evictAll(); images.evictAll(); logos.evictAll() }
+
+    /** Main thread. Picks titles again from the saved pools (after a mix setting changed). */
+    fun resetPicks() { lists.clear() }
+
+    /** Main thread. Drops cached lists and API responses so everything is fetched fresh. */
+    fun clearLists() {
+        lists.clear(); failedAt.clear(); results.evictAll()
+        io.execute { listDir.listFiles()?.forEach { it.delete() } }
+    }
+
+    private fun fetch(url: String): File {
+        val f = File(imgDir, sha1(url))
+        if (!f.exists()) { val tmp = File(imgDir, f.name + ".tmp"); tmp.writeBytes(net.bytes(url)); tmp.renameTo(f) }
+        else f.setLastModified(System.currentTimeMillis())
+        return f
+    }
+
+    private fun decodeScaled(f: File, maxW: Int): Bitmap? {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(f.path, o)
+        var s = 1
+        while (o.outWidth / (s * 2) >= maxW) s *= 2
+        return BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = s; inPreferredConfig = Bitmap.Config.RGB_565 })?.also { it.prepareToDraw() }
+    }
 
     /**
      * Main thread. The item's transparent title logo, or null (then the title is set in type). Resolved and downloaded

@@ -237,7 +237,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         val wasDeep = deep
         entry = e; deep = false
         if (!sameApp || list !== items || restart) { items = list; index = 0 }
-        textVis.target = 1f
+        textVis.target = if (quietOn) 0f else 1f
         show(fresh = !sameApp || wasDeep)
     }
 
@@ -256,6 +256,9 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         return true
     }
 
+    private var quietOn = false
+    /** Another section is in front: the title text fades out, the artwork stays as the shared backdrop. */
+    fun quiet(on: Boolean) { quietOn = on; textVis.target = if (on || deep) 0f else 1f; clock.add(this) }
     fun shelf(on: Boolean) { shelf.target = if (on) 1f else 0f; clock.add(this) }
 
     private fun show(fresh: Boolean) {

@@ -17,6 +17,9 @@ import com.eppletv.launcher.motion.Spring
 object Type {
     private var assets: AssetManager? = null
     private val cache = HashMap<Int, Typeface>()
+    /** Settings > Text size and Text weight, applied to every text style. */
+    var scale = 1f
+    var boldDelta = 0
     fun init(ctx: Context) { assets = ctx.applicationContext.assets }
     fun of(weight: Int): Typeface = cache.getOrPut(weight) {
         try {
@@ -60,7 +63,7 @@ enum class Txt(val px: Float, val weight: Int, val tracking: Float, val lines: I
 }
 
 fun TextView.style(t: Txt, u: Float, color: Int = Colors.WHITE) {
-    textStyle(t.px * u, t.weight, color); letterSpacing = t.tracking
+    textStyle(t.px * u * Type.scale, (t.weight + Type.boldDelta).coerceAtMost(800), color); letterSpacing = t.tracking
     if (t.lines > 1) { isSingleLine = false; maxLines = t.lines; setLineSpacing(0f, 1.06f) }
     if (t == Txt.CAPTION) isAllCaps = true
 }
@@ -75,7 +78,7 @@ fun TextView.textStyle(px: Float, weight: Int, color: Int = Colors.WHITE) {
  * rests translucent, turns solid white with dark text when focused (spring-driven), optional "selected" state.
  */
 @SuppressLint("ViewConstructor", "AppCompatCustomView")
-class Pill(
+open class Pill(
     ctx: Context, label: String, textPx: Float, radius: Float, padH: Int,
     private val clock: FrameClock, private val restBg: Int, private val restText: Int,
     private val focusScale: Float, startAligned: Boolean = false,

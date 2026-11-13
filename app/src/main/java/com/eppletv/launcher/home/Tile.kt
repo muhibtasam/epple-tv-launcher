@@ -155,7 +155,7 @@ private fun surfaceFor(l: Layout): Bitmap {
 }
 
 /** Light rim: brighter along the top edge, where the light falls. */
-private fun paintRim(c: Canvas, w: Int, h: Int, corner: Float, sw: Float, alpha: Int) {
+internal fun paintRim(c: Canvas, w: Int, h: Int, corner: Float, sw: Float, alpha: Int) {
     val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = sw; this.alpha = alpha
         shader = android.graphics.LinearGradient(0f, 0f, 0f, h.toFloat(), intArrayOf(0x8CFFFFFF.toInt(), 0x26FFFFFF, 0x33FFFFFF),

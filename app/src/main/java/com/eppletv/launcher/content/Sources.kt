@@ -20,7 +20,9 @@ object Apps {
 
 object Sources {
     /** Content region: local.properties content_region, else the device's country. */
-    val region: String get() = BuildConfig.CONTENT_REGION.ifEmpty { Locale.getDefault().country }.ifEmpty { "US" }.uppercase(Locale.US)
+    /** Settings > Content region; empty = automatic. Set before the sources are built. */
+    var override = ""
+    val region: String get() = override.ifEmpty { BuildConfig.CONTENT_REGION }.ifEmpty { Locale.getDefault().country }.ifEmpty { "US" }.uppercase(Locale.US)
 
     /** [debugCinemetaFor]: debug builds only, lets an emulator without Stremio exercise the content pipeline. */
     fun all(debugCinemetaFor: String? = null): List<ContentSource> = listOf(

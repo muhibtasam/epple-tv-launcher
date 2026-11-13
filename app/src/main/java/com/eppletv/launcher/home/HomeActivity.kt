@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -27,9 +28,12 @@ import com.eppletv.launcher.R
 import com.eppletv.launcher.apps.AppEntry
 import com.eppletv.launcher.apps.AppRepository
 import com.eppletv.launcher.apps.Library
+import com.eppletv.launcher.content.Catalog
+import com.eppletv.launcher.content.ContentItem
 import com.eppletv.launcher.content.ContentRepository
 import com.eppletv.launcher.content.Sources
 import com.eppletv.launcher.content.TitleLauncher
+import com.eppletv.launcher.content.UserLibrary
 import com.eppletv.launcher.motion.FrameClock
 import com.eppletv.launcher.motion.Motion
 import com.eppletv.launcher.motion.Spring
@@ -43,46 +47,75 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * The launcher's single screen: cinematic artwork, the top row of pinned apps, the app grid and overlay panels.
- * All D-pad movement is routed here, so focus is deterministic and always restorable.
- * Nothing animates at rest except a slow artwork change every few seconds while the top row is in view.
+ * The launcher's single activity and navigation shell. Home (cinematic artwork, the top row, and content rows below
+ * it) plus six sections reached from the tab bar, a details page that opens over any of them, Control Center and the
+ * screensaver. All D-pad movement is routed here, so focus is deterministic and restorable everywhere.
+ * Nothing animates at rest except a slow artwork change while Home's top row is in view.
  */
-class HomeActivity : Activity(), PageHost {
+class HomeActivity : Activity(), PageHost, Nav {
     override var dirX = 0; private set
     override var dirY = 0; private set
 
-    /** CONTENT = a tile has focus. HERO = full-screen artwork, left/right browse it. PILL = the clock pill. */
-    private enum class Zone { CONTENT, HERO, PILL }
+    /** CONTENT = a top-row tile. HERO = full-screen artwork. TABS = the tab bar (or the clock). FEED = Home's rows.
+     *  SECTION = inside another tab. DETAIL = a details page. */
+    private enum class Zone { CONTENT, HERO, TABS, FEED, SECTION, DETAIL }
 
-    private val clock = FrameClock()
+    override val ctx: Context get() = this
+    override val clock = FrameClock()
     private val main = Handler(Looper.getMainLooper())
-    private lateinit var l: Layout
-    private lateinit var library: Library
+    override lateinit var l: Layout; private set
+    override lateinit var library: Library; private set
+    override lateinit var content: ContentRepository; private set
+    override lateinit var catalog: Catalog; private set
+    override lateinit var user: UserLibrary; private set
+    override lateinit var prefs: Prefs; private set
     private lateinit var repo: AppRepository
-    private lateinit var content: ContentRepository
     private lateinit var titles: TitleLauncher
     private lateinit var hero: Hero
     private lateinit var page: HomePage
+    private lateinit var homeLayer: FrameLayout
+    private lateinit var sectionLayer: FrameLayout
+    private lateinit var tabs: TabBar
     private lateinit var pill: Pill
     private lateinit var panel: MenuPanel
     private lateinit var empty: TextView
     private lateinit var anchor: View
+    private lateinit var feed: HomeFeed
+    private lateinit var saver: Screensaver
+    private lateinit var shadowBmp: Bitmap
 
-    private var apps: List<AppEntry> = emptyList()
+    override var apps: List<AppEntry> = emptyList(); private set
     private var zone = Zone.CONTENT
+    private var section = 0
+    private var tabIdx = 0                          // 0..6 tabs, 7 = the clock (Control Center)
+    private val screens = arrayOfNulls<Screen>(7)
+    private val details = ArrayList<DetailScreen>()
+    private var detailReturn = Zone.SECTION
     private var backHandled = false
+    private var swallowUp = false
     private var timeText = ""
     private var resumed = false
 
     private val dimP = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS)
-    private val dimTick = object : FrameClock.Tick {
-        override fun tick(dt: Float): Boolean { dimP.step(dt); hero.backdrop.dim(dimP.value); pill.alpha = (1f - dimP.value * 2f).coerceIn(0f, 1f); return !dimP.atRest() }
+    private val tabsP = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)
+    private val homeP = Spring(1f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS)      // the top row and its artwork text
+    private val shell = object : FrameClock.Tick {
+        override fun tick(dt: Float): Boolean {
+            dimP.step(dt); tabsP.step(dt); homeP.step(dt)
+            hero.backdrop.dim(dimP.value)
+            tabs.alpha = tabsP.value; tabs.translationY = -(1f - tabsP.value) * l.pxf(30f)
+            tabs.visibility = if (tabsP.value > 0.01f) View.VISIBLE else View.INVISIBLE
+            val homeClock = if (section == 0 && zone != Zone.FEED && zone != Zone.DETAIL) (1f - dimP.value * 2f).coerceIn(0f, 1f) else 0f
+            pill.alpha = maxOf(tabsP.value, homeClock)
+            homeLayer.alpha = homeP.value; homeLayer.translationY = -(1f - homeP.value) * l.pxf(260f)
+            homeLayer.visibility = if (homeP.value > 0.01f) View.VISIBLE else View.INVISIBLE
+            return !(dimP.atRest() && tabsP.atRest() && homeP.atRest())
+        }
     }
+    private fun animateShell() = clock.add(shell)
 
     // The artwork follows focus after a short pause, so fast navigation doesn't flicker the whole screen.
     private var pending: Tile? = null
-    // Focus moved to a different app since the hero was last bound: its carousel restarts at the first item.
-    // Tracked at focus time, not apply time, so a fast A -> B -> A inside the debounce still counts as a switch.
     private var focusedPkg: String? = null
     private var switched = false
     private val applyPending = Runnable {
@@ -90,42 +123,56 @@ class HomeActivity : Activity(), PageHost {
         val e = t.entry
         if (!t.inDock) { hero.field(e); return@Runnable }
         val restart = switched; switched = false
-        if (restart) restartRotation()                // the new app's first item gets its full time on screen
+        if (restart) restartRotation()
         var answered = false
         content.items(e.packageName) { items -> answered = true; if (pending === t) hero.bind(e, items, restart) }
-        if (!answered) hero.bind(e, emptyList(), restart)     // the app's own colours while its content loads
+        if (!answered) hero.bind(e, emptyList(), restart)
     }
 
-    // Slow rotation through the focused app's content, only while the artwork is on screen.
     private val rotate = object : Runnable {
         override fun run() {
-            if (resumed && !panel.open && (zone == Zone.HERO || zone == Zone.CONTENT && page.atTop())) hero.step(1, wrap = true)
-            main.postDelayed(this, ROTATE_MS)
+            if (resumed && !panel.open && section == 0 && (zone == Zone.HERO || zone == Zone.CONTENT && page.atTop())) hero.step(1, wrap = true)
+            if (prefs.rotateMs > 0) main.postDelayed(this, prefs.rotateMs)
         }
     }
-    private fun restartRotation() { main.removeCallbacks(rotate); if (resumed) main.postDelayed(rotate, ROTATE_MS) }
+    private fun restartRotation() { main.removeCallbacks(rotate); if (resumed && prefs.rotateMs > 0) main.postDelayed(rotate, prefs.rotateMs) }
 
-    private val timeReceiver = object : BroadcastReceiver() {
-        override fun onReceive(c: Context, i: Intent) = updateTime()
-    }
+    private val idle = Runnable { if (resumed && !panel.open) saver.start() }
+    private fun restartIdle() { main.removeCallbacks(idle); if (resumed && prefs.saverMs > 0) main.postDelayed(idle, prefs.saverMs) }
+
+    private val timeReceiver = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) = updateTime() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Type.init(this)
+        prefs = Prefs(this)
+        Type.init(this); Type.scale = prefs.textScale; Type.boldDelta = if (prefs.boldText) 150 else 0
+        Sources.override = prefs.regionCode
         val dm = resources.displayMetrics
         l = Layout.forWindow(dm.widthPixels, dm.heightPixels)
         library = Library(this)
+        user = UserLibrary(this)
         content = ContentRepository(this, Sources.all(if (BuildConfig.DEBUG) intent.getStringExtra("cinemetaFor") else null), Scrim::paint)
+        content.indianMode = prefs.get(Prefs.INDIAN)
+        catalog = Catalog(content.net, BuildConfig.TMDB_KEY) { Sources.region }
         titles = TitleLauncher(this, content.net, BuildConfig.WATCHMODE_KEY, Sources.region)
+        shadowBmp = makeShadow(l)
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK); clipChildren = false }
         hero = Hero(this, l, clock, content, root)
-        // Grid depth darkens the backdrop through a colour filter in its own draw rather than a full-screen overlay.
-        anchor = View(this).apply { isFocusable = true }          // holds focus in full-screen artwork mode
+        anchor = View(this).apply { isFocusable = true }
         root.addView(anchor, FrameLayout.LayoutParams(1, 1))
 
-        page = HomePage(this, l, clock, this, makeShadow(l), hero.backdrop)
-        root.addView(page.view, FrameLayout.LayoutParams(MATCH_PARENT, l.height(1)))
+        homeLayer = FrameLayout(this).apply { clipChildren = false }
+        page = HomePage(this, l, clock, this, shadowBmp, hero.backdrop)
+        homeLayer.addView(page.view, FrameLayout.LayoutParams(MATCH_PARENT, l.height(1)))
+        root.addView(homeLayer, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+
+        sectionLayer = FrameLayout(this).apply { clipChildren = false }
+        root.addView(sectionLayer, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        feed = HomeFeed(this)
+
+        tabs = TabBar(this, l, clock, TAB_NAMES).apply { alpha = 0f; visibility = View.INVISIBLE }
+        root.addView(tabs, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(76), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = l.px(48) })
 
         pill = Pill(this, "", l.pxf(Txt.META.px), l.pxf(30f), l.px(28), clock, Colors.GLASS, Colors.WHITE, 0.06f)
         pill.setOnClickListener { openControlCenter() }
@@ -138,9 +185,11 @@ class HomeActivity : Activity(), PageHost {
         root.addView(panel.dim, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         root.addView(panel.panel, panel.params())
 
+        saver = Screensaver(this).apply { clockText = { timeText } }
+        root.addView(saver.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+
         setContentView(root)
         val repeat = if (BuildConfig.DEBUG) intent.getIntExtra("repeat", 1) else 1
-        // Artwork is rendered 20 % larger than the resting tile so the focused, scaled-up tile stays sharp.
         val artScale = l.px(300) / l.tileW.toFloat()     // art is rendered larger than the tile, so it stays sharp when focused
         repo = AppRepository(this, l.px(300), l.px(169), { onApps(it) }, repeat,
             decorate = { c, w, h -> paintTileSurface(c, w, h, l.corner * artScale, l.pxf(2f).coerceAtLeast(1f) * artScale) },
@@ -152,14 +201,15 @@ class HomeActivity : Activity(), PageHost {
         apps = list
         refresh(null)
         empty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+        (screens[4] as? AppsScreen)?.rebuild()
     }
 
-    /** Rebuilds the page from the library; optionally moves focus to [focusPkg]. */
+    /** Rebuilds the top row from the library; optionally moves focus to [focusPkg]. */
     private fun refresh(focusPkg: String?) {
         val pinned = library.pinned(apps)
-        page.setApps(pinned, library.rest(apps))
+        page.setApps(pinned, emptyList())             // every app lives in the Apps section; Home keeps the top row
         content.warm(pinned.map { it.packageName })
-        if (focusPkg != null && page.locate(focusPkg)) zone = Zone.CONTENT
+        if (focusPkg != null && page.locate(focusPkg) && section == 0) zone = Zone.CONTENT
         restoreFocus()
     }
 
@@ -169,41 +219,198 @@ class HomeActivity : Activity(), PageHost {
             addAction(Intent.ACTION_TIME_TICK); addAction(Intent.ACTION_TIME_CHANGED); addAction(Intent.ACTION_TIMEZONE_CHANGED)
         })
         updateTime()
-        resumed = true; restartRotation()
+        resumed = true; restartRotation(); restartIdle()
     }
 
     override fun onStop() {
-        resumed = false; main.removeCallbacks(rotate)
+        resumed = false; main.removeCallbacks(rotate); main.removeCallbacks(idle); saver.stop()
         unregisterReceiver(timeReceiver)
         super.onStop()
     }
 
-    override fun onDestroy() { main.removeCallbacks(applyPending); repo.stop(); content.stop(); titles.stop(); super.onDestroy() }
+    override fun onDestroy() { main.removeCallbacks(applyPending); main.removeCallbacks(artRun); repo.stop(); content.stop(); titles.stop(); super.onDestroy() }
+
+    /** In the background (e.g. while Netflix plays) the launcher keeps only what is on its own screen. */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            content.trimMemory()
+            screens.forEachIndexed { i, s -> if (i != section) (s as? BrowseScreen)?.hide() }
+        }
+    }
 
     private fun updateTime() {
-        timeText = DateFormat.getTimeFormat(this).format(Date())
+        val now = Date()
+        timeText = when (prefs.get(Prefs.CLOCK)) {
+            1 -> SimpleDateFormat("h:mm a", Locale.getDefault()).format(now)
+            2 -> SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
+            else -> DateFormat.getTimeFormat(this).format(now)
+        }
         pill.text = timeText; pill.contentDescription = getString(R.string.cc_label, timeText)
     }
 
-    // ---- focus ----
+    // ---- focus and zones ----
 
     private fun restoreFocus() {
         if (panel.open) return
         when (zone) {
-            Zone.CONTENT -> if (!page.focusCurrent()) { zone = Zone.PILL; pill.requestFocus() }
+            Zone.CONTENT -> if (!page.focusCurrent()) enterTabs(section)
             Zone.HERO -> anchor.requestFocus()
-            Zone.PILL -> pill.requestFocus()
+            Zone.TABS -> focusTab()
+            Zone.FEED -> if (!feed.focus()) enterContent()
+            Zone.SECTION -> screens[section]?.focus()
+            Zone.DETAIL -> details.lastOrNull()?.focus() ?: run { zone = detailReturn; restoreFocus() }
         }
     }
 
     private fun setShelf(on: Boolean) { page.shelf(on); hero.shelf(on) }
-    private fun enterHero() { zone = Zone.HERO; anchor.requestFocus(); setShelf(true) }
-    private fun enterContent() { setShelf(false); zone = Zone.CONTENT; if (!page.focusCurrent()) { zone = Zone.PILL; pill.requestFocus() } }
-    private fun enterPill() { zone = Zone.PILL; pill.requestFocus() }
+    private fun enterHero() { zone = Zone.HERO; anchor.requestFocus(); setShelf(true); tabsP.target = 0f; animateShell() }
+    private fun enterContent() {
+        setShelf(false); zone = Zone.CONTENT; tabsP.target = 0f
+        if (homeP.target < 1f) leaveFeed()
+        if (!page.focusCurrent()) enterTabs(0)
+        animateShell()
+    }
 
-    override fun onPageDepth(deep: Boolean) { dimP.target = if (deep) 0.5f else 0f; clock.add(dimTick) }
+    private fun enterTabs(i: Int) {
+        zone = Zone.TABS; tabIdx = i; tabsP.target = 1f; animateShell(); focusTab()
+    }
+    private fun focusTab() { if (tabIdx >= TAB_NAMES.size) pill.requestFocus() else tabs.tabs[tabIdx].requestFocus() }
 
-    // ---- tiles ----
+    /** Home's rows: the top row and its artwork text slide away, the rows take the screen. */
+    private fun enterFeed() {
+        zone = Zone.FEED; homeP.target = 0f; dimP.target = 0.25f; hero.quiet(true)
+        if (feed.view.parent == null) sectionLayer.addView(feed.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        feed.view.visibility = View.VISIBLE
+        feed.show(); if (!feed.focus()) { /* rows still loading: focus arrives with the first row */ }
+        animateShell()
+    }
+    private fun leaveFeed() {
+        homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE; feed.hide()
+        main.removeCallbacks(applyPending); applyPending.run()          // the top row's artwork comes back
+        animateShell()
+    }
+
+    /** Shows tab [i]. Home restores the top row; other tabs build lazily and keep their state while hidden. */
+    private fun showSection(i: Int) {
+        if (i == section && (i == 0 || screens[i]?.view?.visibility == View.VISIBLE)) return
+        screens[section]?.let { it.hide(); it.view.visibility = View.GONE }
+        section = i; tabs.selected = i
+        if (i == 0) {
+            homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE
+            main.removeCallbacks(applyPending); applyPending.run()
+        } else {
+            homeP.target = 0f; hero.quiet(true); feed.view.visibility = View.GONE
+            val s = screens[i] ?: create(i).also { screens[i] = it; sectionLayer.addView(it.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)) }
+            s.view.visibility = View.VISIBLE
+            dimP.target = if (s.wantsArt) 0.2f else 0.55f
+            s.show()
+        }
+        animateShell()
+    }
+
+    private fun create(i: Int): Screen = when (i) {
+        1 -> BrowseScreen(this, catalog.movieRows().map { Rows.catalog(this, it) })
+        2 -> BrowseScreen(this, catalog.tvRows().map { Rows.catalog(this, it) })
+        3 -> LibraryScreen(this)
+        4 -> AppsScreen(this)
+        5 -> SearchScreen(this)
+        else -> SettingsScreen(this) { c -> onSetting(c) }
+    }
+
+    private fun onSetting(c: Prefs.Choice) {
+        when (c) {
+            Prefs.CLOCK -> updateTime()
+            Prefs.ROTATE -> restartRotation()
+            Prefs.SAVER -> restartIdle()
+            Prefs.INDIAN -> { content.indianMode = prefs.get(Prefs.INDIAN); content.resetPicks(); content.warm(library.pinned(apps).map { it.packageName }) }
+            else -> if (c.restart) restartUi()
+        }
+    }
+
+    private val switchTab = Runnable { if (zone == Zone.TABS && tabIdx < TAB_NAMES.size) showSection(tabIdx) }
+
+    // ---- details ----
+
+    override fun details(item: ContentItem) {
+        if (!Regex("^(movie|tv):\\d+$").matches(item.id)) { toast("Details aren't available for this title"); return }
+        if (details.isEmpty()) detailReturn = zone
+        details.lastOrNull()?.view?.visibility = View.GONE
+        (if (zone == Zone.FEED) feed else screens[section])?.let { it.hide(); it.view.visibility = View.GONE }
+        val d = DetailScreen(this, item)
+        details.add(d)
+        sectionLayer.addView(d.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        zone = Zone.DETAIL; tabsP.target = 0f; dimP.target = 0f; homeP.target = 0f; hero.quiet(true)
+        d.show(); d.focus(); animateShell()
+    }
+
+    private fun closeDetail() {
+        val d = details.removeLastOrNull() ?: return
+        sectionLayer.removeView(d.view)
+        val prev = details.lastOrNull()
+        if (prev != null) { prev.view.visibility = View.VISIBLE; prev.show(); prev.focus(); return }
+        zone = detailReturn
+        when (zone) {
+            Zone.FEED -> { feed.view.visibility = View.VISIBLE; dimP.target = 0.25f; feed.show() }
+            Zone.SECTION, Zone.TABS -> screens[section]?.let { it.view.visibility = View.VISIBLE; dimP.target = if (it.wantsArt) 0.2f else 0.55f; it.show(); if (zone == Zone.TABS) tabsP.target = 1f }
+            else -> { homeP.target = 1f; hero.quiet(false); main.removeCallbacks(applyPending); applyPending.run() }
+        }
+        if (zone == Zone.SECTION) tabsP.target = 1f
+        animateShell(); restoreFocus()
+    }
+
+    // ---- Nav ----
+
+    private var artItem: ContentItem? = null
+    private var artBmp: Bitmap? = null
+    private val artRun = Runnable {
+        artBmp?.let { hero.backdrop.show(it); artBmp = null; return@Runnable }
+        val it = artItem ?: return@Runnable
+        content.image(it.imageUrl) { b -> if (b != null && artItem === it) hero.backdrop.show(b) }
+    }
+    /** The backdrop follows the focused title after a short pause (fast scrolling doesn't churn full-screen images). */
+    override fun art(item: ContentItem?) {
+        if (item == null || item.imageUrl.isEmpty()) return
+        artItem = item; artBmp = null; main.removeCallbacks(artRun); main.postDelayed(artRun, 260)
+    }
+    override fun artBitmap(b: Bitmap) { artItem = null; artBmp = b; main.removeCallbacks(artRun); main.postDelayed(artRun, 140) }
+
+    override fun launch(e: AppEntry) { open(e.launchIntent, e.label) }
+
+    override fun play(item: ContentItem, pkg: String, appName: String) {
+        user.add(UserLibrary.Kind.CONTINUE, ContentItem(item.id, item.title, item.meta, item.imageUrl, item.linkUri, pkg, "Continue in $appName", item.summary))
+        val app = apps.firstOrNull { it.packageName == pkg }
+        titles.open(item, pkg) { if (app != null) launch(app) else toast(getString(R.string.cannot_open, appName)) }
+    }
+
+    override fun appMenu(e: AppEntry) {
+        val pkg = e.packageName
+        val items = ArrayList<Pair<String, () -> Unit>>()
+        items.add(getString(R.string.menu_open) to { launch(e) })
+        if (library.isPinned(apps, pkg)) {
+            if (library.canMove(apps, pkg, -1)) items.add(getString(R.string.menu_left) to { library.move(apps, pkg, -1); appsChanged() })
+            if (library.canMove(apps, pkg, 1)) items.add(getString(R.string.menu_right) to { library.move(apps, pkg, 1); appsChanged() })
+            items.add(getString(R.string.menu_unpin) to { library.remove(apps, pkg); appsChanged() })
+        } else items.add(getString(R.string.menu_pin) to { library.add(apps, pkg); appsChanged() })
+        if (!library.isPinned(apps, pkg)) items.add("Hide from Apps" to { library.hide(pkg); appsChanged(); toast("${e.label} hidden. Settings > Hidden apps shows it again.") })
+        items.add(getString(R.string.menu_info) to { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)), e.label); Unit })
+        items.add("Uninstall" to { open(Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null)), e.label); Unit })
+        menu(e.label, items)
+    }
+
+    override fun menu(title: String, items: List<Pair<String, () -> Unit>>) {
+        panel.show(listOf<View>(TextView(this).apply { text = title; style(Txt.TITLE, l.u) }), items, atCorner = false)
+    }
+
+    override fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    override fun appsChanged() { refresh(null); (screens[4] as? AppsScreen)?.rebuild(force = true) }
+    override fun restartUi() { recreate() }
+    override fun startSaver() { main.postDelayed({ saver.start() }, 300) }
+    override fun tileShadow(): Bitmap = shadowBmp
+
+    // ---- tiles (top row) ----
+
+    override fun onPageDepth(deep: Boolean) { if (section == 0 && zone != Zone.FEED) { dimP.target = if (deep) 0.5f else 0f; animateShell() } }
 
     override fun onTileFocused(tile: Tile) {
         val first = pending == null
@@ -214,42 +421,27 @@ class HomeActivity : Activity(), PageHost {
     }
 
     override fun onTileClicked(tile: Tile) { launch(tile.entry, tile) }
-
-    override fun onTileLongPressed(tile: Tile) {
-        val e = tile.entry; val pkg = e.packageName
-        val header = listOf<View>(TextView(this).apply { text = e.label; style(Txt.TITLE, l.u) })
-        val items = ArrayList<Pair<String, () -> Unit>>()
-        items.add(getString(R.string.menu_open) to { launch(e, null); Unit })
-        if (library.isPinned(apps, pkg)) {
-            if (library.canMove(apps, pkg, -1)) items.add(getString(R.string.menu_left) to { library.move(apps, pkg, -1); refresh(pkg) })
-            if (library.canMove(apps, pkg, 1)) items.add(getString(R.string.menu_right) to { library.move(apps, pkg, 1); refresh(pkg) })
-            items.add(getString(R.string.menu_unpin) to { library.remove(apps, pkg); refresh(null) })
-        } else {
-            items.add(getString(R.string.menu_pin) to { library.add(apps, pkg); refresh(null) })
-        }
-        items.add(getString(R.string.menu_info) to {
-            open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)), e.label); Unit
-        })
-        panel.show(header, items, atCorner = false)
-    }
+    override fun onTileLongPressed(tile: Tile) { appMenu(tile.entry) }
 
     private fun launch(e: AppEntry, from: View?): Boolean {
         val opts = from?.let { ActivityOptions.makeScaleUpAnimation(it, 0, 0, it.width, it.height).toBundle() }
         return open(e.launchIntent, e.label, opts)
     }
 
-    /** OK on full-screen artwork: open that title in its app when the app supports it, otherwise open the app. */
     private fun openHeroItem() {
         val e = pending?.entry ?: return
-        titles.open(hero.item, e.packageName) { launch(e, null) }
+        val item = hero.item
+        if (item != null && item.linkUri == null && item.linkPkg == null) user.add(UserLibrary.Kind.CONTINUE,
+            ContentItem(item.id, item.title, item.meta, item.imageUrl, null, e.packageName, "Continue in ${e.label}", item.summary))
+        titles.open(item, e.packageName) { launch(e, null) }
     }
 
     private fun open(intent: Intent, name: String, opts: Bundle? = null): Boolean = try {
         startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), opts); true
     } catch (e: ActivityNotFoundException) {
-        Toast.makeText(this, getString(R.string.cannot_open, name), Toast.LENGTH_SHORT).show(); false
+        toast(getString(R.string.cannot_open, name)); false
     } catch (e: SecurityException) {
-        Toast.makeText(this, getString(R.string.cannot_open, name), Toast.LENGTH_SHORT).show(); false
+        toast(getString(R.string.cannot_open, name)); false
     }
 
     // ---- Control Center ----
@@ -260,20 +452,31 @@ class HomeActivity : Activity(), PageHost {
             TextView(this).apply { text = timeText; style(Txt.CLOCK, l.u) },
             TextView(this).apply { text = date; style(Txt.META, l.u, Colors.TEXT_DIM); setPadding(0, l.px(10), 0, 0) },
         )
-        val items = listOf(
+        val quick = listOf<Pair<String, () -> Unit>>(
+            "Search" to { goTab(5) },
+            "Epple TV Settings" to { goTab(6) },
+            "Start Screensaver" to { startSaver() },
+        )
+        val system = listOf(
             R.string.cc_settings to Settings.ACTION_SETTINGS,
             R.string.cc_network to Settings.ACTION_WIFI_SETTINGS,
             R.string.cc_display to Settings.ACTION_DISPLAY_SETTINGS,
             R.string.cc_sound to Settings.ACTION_SOUND_SETTINGS,
             R.string.cc_accessories to Settings.ACTION_BLUETOOTH_SETTINGS,
-            R.string.cc_screensaver to Settings.ACTION_DREAM_SETTINGS,
-            R.string.cc_apps to Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS,
         ).filter { packageManager.resolveActivity(Intent(it.second), 0) != null }
             .map { (label, action) -> getString(label).let { name -> name to { open(Intent(action), name); Unit } } }
         val footer = if (!Sources.usesTmdb) null else TextView(this).apply {
             setText(R.string.tmdb_credit); style(Txt.FOOT, l.u, Colors.TEXT_DIM); setPadding(l.px(6), l.px(22), l.px(6), 0)
         }
-        if (items.isNotEmpty()) panel.show(header, items, atCorner = true, footer = footer)
+        panel.show(header, quick + system, atCorner = true, footer = footer)
+    }
+
+    /** Jumps straight into a tab (from Control Center). */
+    private fun goTab(i: Int) {
+        while (details.isNotEmpty()) { sectionLayer.removeView(details.removeAt(details.size - 1).view) }
+        if (zone == Zone.FEED) feed.view.visibility = View.GONE
+        tabIdx = i; showSection(i); zone = Zone.SECTION; tabsP.target = 1f; animateShell()
+        main.post { screens[i]?.focus() }
     }
 
     // ---- keys ----
@@ -281,6 +484,11 @@ class HomeActivity : Activity(), PageHost {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val k = event.keyCode
         val down = event.action == KeyEvent.ACTION_DOWN
+        if (down) { restartIdle() }
+        // Any button wakes the screensaver and does nothing else.
+        if (saver.showing) { if (down) { saver.stop(); swallowUp = true }; return true }
+        if (swallowUp) { if (!down) swallowUp = false; return true }
+
         val dx = when (k) { KeyEvent.KEYCODE_DPAD_LEFT -> -1; KeyEvent.KEYCODE_DPAD_RIGHT -> 1; else -> 0 }
         val dy = when (k) { KeyEvent.KEYCODE_DPAD_UP -> -1; KeyEvent.KEYCODE_DPAD_DOWN -> 1; else -> 0 }
         val dpad = dx != 0 || dy != 0
@@ -292,14 +500,13 @@ class HomeActivity : Activity(), PageHost {
             if (k == KeyEvent.KEYCODE_BACK && down) backHandled = true
             return if (dpad || k == KeyEvent.KEYCODE_BACK || k == KeyEvent.KEYCODE_MENU) panel.key(event) else super.dispatchKeyEvent(event)
         }
-        if (select && zone == Zone.HERO) {
-            if (!down && !event.isCanceled) openHeroItem()
+        if (select && zone == Zone.HERO) { if (!down && !event.isCanceled) openHeroItem(); return true }
+        if (select && zone == Zone.TABS && tabIdx < TAB_NAMES.size) {
+            if (down && event.repeatCount == 0) { main.removeCallbacks(switchTab); showSection(tabIdx); intoSection() }
             return true
         }
-        if (k == KeyEvent.KEYCODE_MENU) {
-            if (down && event.repeatCount == 0) openControlCenter()
-            return true
-        }
+        if (k == KeyEvent.KEYCODE_MENU || k == KeyEvent.KEYCODE_SETTINGS) { if (down && event.repeatCount == 0) openControlCenter(); return true }
+        if (k == KeyEvent.KEYCODE_SEARCH) { if (down && event.repeatCount == 0) goTab(5); return true }
         if (k == KeyEvent.KEYCODE_BACK) {
             if (down && event.repeatCount == 0) backHandled = handleBack()
             return if (backHandled) true else super.dispatchKeyEvent(event)
@@ -308,18 +515,43 @@ class HomeActivity : Activity(), PageHost {
         if (!down) return true
         dirX = dx; dirY = dy
         when (zone) {
-            Zone.CONTENT -> if (!page.move(dx, dy)) { if (hero.hasItems) enterHero() else enterPill() }
-            Zone.HERO -> if (dx != 0) hero.step(dx) else if (dy < 0) enterPill() else enterContent()
-            Zone.PILL -> if (dy > 0) { if (hero.hasItems) enterHero() else enterContent() }
+            Zone.CONTENT -> when {
+                dy > 0 && page.atTop() -> enterFeed()
+                !page.move(dx, dy) -> if (hero.hasItems) enterHero() else enterTabs(0)
+            }
+            Zone.HERO -> if (dx != 0) hero.step(dx) else if (dy < 0) enterTabs(0) else enterContent()
+            Zone.TABS -> when {
+                dx != 0 -> {
+                    tabIdx = (tabIdx + dx).coerceIn(0, TAB_NAMES.size); focusTab()
+                    main.removeCallbacks(switchTab); if (tabIdx < TAB_NAMES.size) main.postDelayed(switchTab, 260)
+                }
+                dy > 0 -> { main.removeCallbacks(switchTab); if (tabIdx < TAB_NAMES.size) showSection(tabIdx); intoSection() }
+            }
+            Zone.FEED -> if (!feed.key(dx, dy)) enterContent()
+            Zone.SECTION -> if (screens[section]?.key(dx, dy) == false) enterTabs(section)
+            Zone.DETAIL -> details.lastOrNull()?.key(dx, dy)
         }
         return true
     }
 
-    /** BACK walks up: grid -> top row; full-screen artwork or the clock -> top row. At the top row it leaves the app. */
-    private fun handleBack(): Boolean = when (zone) {
-        Zone.CONTENT -> if (!page.atTop()) { dirX = 0; dirY = -1; page.toTop(); true } else false
-        else -> { enterContent(); true }
+    /** From the tab bar down into the selected section (Home: back to its artwork and top row). */
+    private fun intoSection() {
+        if (section == 0) { tabsP.target = 0f; animateShell(); if (hero.hasItems) enterHero() else enterContent(); return }
+        zone = Zone.SECTION
+        screens[section]?.focus()
     }
 
-    private companion object { const val ROTATE_MS = 9000L }
+    /** BACK walks up: details -> section -> tab bar -> Home's top row; at the top row it leaves the app. */
+    private fun handleBack(): Boolean = when (zone) {
+        Zone.DETAIL -> { closeDetail(); true }
+        Zone.SECTION -> { if (screens[section]?.back() != true) enterTabs(section); true }
+        Zone.FEED -> { if (!feed.back()) enterContent(); true }
+        Zone.TABS -> { if (section != 0) { showSection(0); enterContent() } else enterContent(); true }
+        Zone.CONTENT -> if (!page.atTop()) { dirX = 0; dirY = -1; page.toTop(); true } else false
+        Zone.HERO -> { enterContent(); true }
+    }
+
+    private companion object {
+        val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Library", "Apps", "Search", "Settings")
+    }
 }
