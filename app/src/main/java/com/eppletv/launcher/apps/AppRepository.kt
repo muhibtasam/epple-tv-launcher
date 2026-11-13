@@ -18,7 +18,10 @@ import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
+import android.graphics.BitmapFactory
+import android.util.DisplayMetrics
 import android.util.Log
+import java.io.File
 import java.text.Collator
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -49,7 +52,8 @@ class AppRepository(
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "epple-apps").apply { priority = Thread.NORM_PRIORITY - 1 }
     }
-    private val cache = HashMap<String, Pair<Long, AppEntry>>()   // package -> (lastUpdateTime, entry); worker thread only
+    private val cache = HashMap<String, Pair<String, AppEntry>>()   // package -> (version key, entry); worker thread only
+    private val artDir = File(app.cacheDir, "art").apply { mkdirs() }   // rendered tile art, one PNG per package + version
     private var started = false
 
     private val reload = Runnable { load() }
@@ -104,23 +108,28 @@ class AppRepository(
         for ((pkg, v) in found) {
             val (ai, cat) = v
             seen.add(pkg)
-            val updated = try { pm.getPackageInfo(pkg, 0).lastUpdateTime } catch (_: PackageManager.NameNotFoundException) { continue }
+            val pi = try { pm.getPackageInfo(pkg, 0) } catch (_: PackageManager.NameNotFoundException) { continue }
+            // Artwork is keyed by package, version and install time: an update (even one keeping the version) re-renders it.
+            val key = "${pi.longVersionCode}_${pi.lastUpdateTime}_${tileW}x$tileH"
             val cached = cache[pkg]
-            if (cached != null && cached.first == updated) { out.add(cached.second); continue }
-            val entry = build(pm, ai, cat) ?: continue
-            cache[pkg] = updated to entry
+            if (cached != null && cached.first == key) { out.add(cached.second); continue }
+            val entry = build(pm, ai, cat, key) ?: continue
+            cache[pkg] = key to entry
             out.add(entry)
         }
         cache.keys.retainAll(seen)
+        // Drop art for uninstalled apps and superseded versions.
+        artDir.listFiles()?.forEach { f -> val pkg = f.name.substringBefore("@"); if (pkg !in seen || cache[pkg]?.first?.let { f.name != "$pkg@$it.png" } == true) f.delete() }
         val collator = Collator.getInstance()
         out.sortWith { a, b -> collator.compare(a.label, b.label) }
         return if (debugRepeat > 1) List(out.size * debugRepeat) { out[it % out.size] } else out
     }
 
-    private fun build(pm: PackageManager, ai: ActivityInfo, cat: String): AppEntry? = try {
+    private fun build(pm: PackageManager, ai: ActivityInfo, cat: String, key: String): AppEntry? = try {
         val label = ai.loadLabel(pm).toString().trim().ifEmpty { ai.packageName }
-        val banner = ai.loadBanner(pm) ?: ai.applicationInfo.loadBanner(pm)
-        val art = if (banner != null) renderBanner(banner) else renderIcon(ai.loadIcon(pm))
+        val file = File(artDir, "${ai.packageName}@$key.png")
+        val art = file.takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path)?.also { b -> b.prepareToDraw() } }
+            ?: render(pm, ai).also { b -> try { file.outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) } } catch (e: java.io.IOException) { Log.w(TAG, "art cache write failed", e) } }
         val intent = Intent(Intent.ACTION_MAIN).addCategory(cat).setClassName(ai.packageName, ai.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         val info = ai.applicationInfo
@@ -148,11 +157,34 @@ class AppRepository(
         return out
     }
 
+    /**
+     * The app's own artwork, loaded from its resources at high density so the tile stays sharp when focused:
+     * its TV banner (activity's, else the app's), else its launcher icon. Nothing is shared between apps.
+     */
+    private fun render(pm: PackageManager, ai: ActivityInfo): Bitmap {
+        val res = try { pm.getResourcesForApplication(ai.applicationInfo) } catch (_: PackageManager.NameNotFoundException) { null }
+        fun hd(id: Int, density: Int): Drawable? = if (id == 0 || res == null) null else
+            try { res.getDrawableForDensity(id, density, null) } catch (_: RuntimeException) { null }
+        val bannerId = if (ai.banner != 0) ai.banner else ai.applicationInfo.banner
+        val banner = hd(bannerId, DisplayMetrics.DENSITY_XXHIGH) ?: ai.loadBanner(pm) ?: ai.applicationInfo.loadBanner(pm)
+        if (banner != null) return renderBanner(banner)
+        return renderIcon(hd(ai.iconResource, DisplayMetrics.DENSITY_XXXHIGH) ?: ai.loadIcon(pm))
+    }
+
     private fun renderBanner(d: Drawable): Bitmap {
         val b = Bitmap.createBitmap(tileW, tileH, Bitmap.Config.ARGB_8888)
         val c = Canvas(b)
-        c.drawColor(BG)
-        d.setBounds(0, 0, tileW, tileH)
+        val iw = d.intrinsicWidth; val ih = d.intrinsicHeight
+        if (iw > 0 && ih > 0 && kotlin.math.abs(iw.toFloat() / ih - tileW.toFloat() / tileH) > 0.06f) {
+            // Not 16:9: fit it whole, never stretched, on a field of its own colour.
+            c.drawColor(mix(averageColor(d), BG, 0.15f))
+            val s = minOf(tileW.toFloat() / iw, tileH.toFloat() / ih)
+            val w = (iw * s).toInt(); val h = (ih * s).toInt()
+            d.setBounds((tileW - w) / 2, (tileH - h) / 2, (tileW + w) / 2, (tileH + h) / 2)
+        } else {
+            c.drawColor(BG)
+            d.setBounds(0, 0, tileW, tileH)
+        }
         d.draw(c)
         b.prepareToDraw()
         return b
