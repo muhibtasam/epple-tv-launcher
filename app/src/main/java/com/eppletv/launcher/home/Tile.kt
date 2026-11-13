@@ -48,31 +48,24 @@ class Tile(
     var inDock = false
     private var longPressed = false
 
-    private val shadow = ImageView(ctx).apply { setImageBitmap(shadowBmp); alpha = 0.35f; scaleType = ImageView.ScaleType.FIT_XY }
+    private val shadow = ImageView(ctx).apply { setImageBitmap(shadowBmp); alpha = 0f; scaleType = ImageView.ScaleType.FIT_XY }
 
-    // Layered artwork, clipped to the rounded tile: banner (parallax layer), static gloss, moving specular light, light rim.
-    private val art = FrameLayout(ctx).apply {
-        clipToOutline = true
-        outlineProvider = object : android.view.ViewOutlineProvider() {
-            override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, l.corner) }
-        }
-    }
-    private val banner = BannerView(ctx, entry.banner)
+    // Layered artwork: banner (parallax layer, drawn with its own rounded corners; no view clipping, which is costly on
+    // this GPU), static gloss, moving specular light, light rim.
+    private val banner = BannerView(ctx, entry.banner, l.corner)
     private val gloss = View(ctx).apply {
         // Top light and a faint darker base: the tile reads as a lit, slightly convex surface rather than a flat image.
         background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x24FFFFFF, 0x05FFFFFF, 0x00000000, 0x14000000))
+            .apply { cornerRadius = l.corner }
     }
     private val highlight = View(ctx).apply {
         background = GradientDrawable().apply {
             gradientType = GradientDrawable.RADIAL_GRADIENT; gradientRadius = l.pxf(300f)
-            colors = intArrayOf(0x66FFFFFF, 0x14FFFFFF, 0x00FFFFFF); setGradientCenter(0.25f, -0.1f)
+            colors = intArrayOf(0x66FFFFFF, 0x14FFFFFF, 0x00FFFFFF); setGradientCenter(0.25f, -0.1f); cornerRadius = l.corner
         }
         alpha = 0f
     }
-    private val rim = View(ctx).apply {
-        background = GradientDrawable().apply { cornerRadius = l.corner; setStroke(l.px(2).coerceAtLeast(1), 0x40FFFFFF) }
-        alpha = 0.45f
-    }
+    private val rim = ImageView(ctx).apply { setImageBitmap(rimFor(l)); scaleType = ImageView.ScaleType.FIT_XY; alpha = 0.45f }
 
     init {
         isFocusable = true
@@ -81,11 +74,11 @@ class Tile(
         cameraDistance = 12000f * l.u
         contentDescription = entry.label
         val p = l.shadowPad
+        shadow.visibility = View.INVISIBLE
         addView(shadow, LayoutParams(l.tileW + 2 * p, l.tileH + 2 * p).apply { leftMargin = -p; topMargin = -p + l.px(14) })
-        art.addView(banner, LayoutParams(l.tileW, l.tileH))
-        art.addView(gloss, LayoutParams(l.tileW, l.tileH))
-        art.addView(highlight, LayoutParams(l.tileW, l.tileH))
-        addView(art, LayoutParams(l.tileW, l.tileH))
+        addView(banner, LayoutParams(l.tileW, l.tileH))
+        addView(gloss, LayoutParams(l.tileW, l.tileH))
+        addView(highlight, LayoutParams(l.tileW, l.tileH))
         addView(rim, LayoutParams(l.tileW, l.tileH))
     }
 
@@ -134,13 +127,12 @@ class Tile(
         translationZ = v * l.pxf(10f)
         rotationX = tiltX.value; rotationY = tiltY.value
         // Depth: the shadow grows, softens and drops as the tile lifts.
-        shadow.alpha = 0.35f + 0.65f * v
+        shadow.alpha = v
+        shadow.visibility = if (v > 0.002f) View.VISIBLE else View.INVISIBLE   // unfocused tiles draw no shadow
         val ss = 1f + 0.06f * v; shadow.scaleX = ss; shadow.scaleY = ss; shadow.translationY = v * l.pxf(14f)
         // Parallax: the artwork layer sits slightly behind the glass and shifts against the tilt.
-        val bs = 1f + 0.04f * v; banner.scaleX = bs; banner.scaleY = bs
-        banner.translationX = tiltY.value * l.pxf(2.2f); banner.translationY = -tiltX.value * l.pxf(2.2f)
+        banner.parallax(1f + 0.04f * v, tiltY.value * l.pxf(2.2f), -tiltX.value * l.pxf(2.2f))
         highlight.alpha = 0.75f * v
-        highlight.translationX = -tiltY.value * l.pxf(9f); highlight.translationY = tiltX.value * l.pxf(9f)
         rim.alpha = 0.45f + 0.55f * v
         label?.alpha = v
         label?.translationY = l.tileH * (s - 1f) / 2f - (1f - v) * l.pxf(10f)
@@ -151,11 +143,42 @@ class Tile(
         k == KeyEvent.KEYCODE_NUMPAD_ENTER || k == KeyEvent.KEYCODE_BUTTON_A
 }
 
-/** Banner drawn once (the rounded clip comes from its parent's outline); never redrawn during motion. */
+/** Light rim shared by every tile, pre-rendered once: live stroked rounded rects are expensive on this GPU. */
+private var rimCache: Pair<Int, Bitmap>? = null
+private fun rimFor(l: Layout): Bitmap {
+    rimCache?.let { if (it.first == l.tileW) return it.second }
+    val b = Bitmap.createBitmap(l.tileW, l.tileH, Bitmap.Config.ARGB_8888)
+    val sw = l.pxf(2f).coerceAtLeast(1f)
+    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = sw
+        shader = android.graphics.LinearGradient(0f, 0f, 0f, l.tileH.toFloat(), intArrayOf(0x8CFFFFFF.toInt(), 0x26FFFFFF, 0x33FFFFFF),
+            null, android.graphics.Shader.TileMode.CLAMP)
+    }
+    Canvas(b).drawRoundRect(android.graphics.RectF(sw / 2, sw / 2, l.tileW - sw / 2, l.tileH - sw / 2), l.corner, l.corner, p)
+    b.prepareToDraw()
+    rimCache = l.tileW to b
+    return b
+}
+
+/** Banner with rounded corners, drawn through a bitmap shader. Parallax moves the artwork inside its rounded frame. */
 @SuppressLint("ViewConstructor")
-private class BannerView(ctx: Context, private val bmp: Bitmap) : View(ctx) {
-    private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val dst = Rect()
-    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { dst.set(0, 0, w, h) }
-    override fun onDraw(canvas: Canvas) { canvas.drawBitmap(bmp, null, dst, paint) }
+private class BannerView(ctx: Context, private val bmp: Bitmap, private val corner: Float) : View(ctx) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+        shader = android.graphics.BitmapShader(bmp, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP)
+    }
+    private val rect = android.graphics.RectF()
+    private val m = android.graphics.Matrix()
+    private var scale = 1f; private var dx = 0f; private var dy = 0f
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { rect.set(0f, 0f, w.toFloat(), h.toFloat()); update() }
+    fun parallax(s: Float, x: Float, y: Float) {
+        if (s == scale && x == dx && y == dy) return
+        scale = s; dx = x; dy = y; update(); invalidate()
+    }
+    private fun update() {
+        if (width == 0) return
+        val sx = width.toFloat() / bmp.width * scale; val sy = height.toFloat() / bmp.height * scale
+        m.setScale(sx, sy); m.postTranslate((width - bmp.width * sx) / 2f + dx, (height - bmp.height * sy) / 2f + dy)
+        paint.shader.setLocalMatrix(m)
+    }
+    override fun onDraw(canvas: Canvas) { canvas.drawRoundRect(rect, corner, corner, paint) }
 }

@@ -137,12 +137,13 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     fun shelf(on: Boolean) { shelf.target = if (on) 1f else 0f; clock.add(this) }
 
     override fun tick(dt: Float): Boolean {
+        val vertical = !(sy.atRest() && shelf.atRest())
         sx.step(dt); sy.step(dt); shelf.step(dt)
         strip.translationX = sx.value
         val s = shelf.value.coerceIn(0f, 1f)
         view.translationY = sy.value + s * l.pxf(300f)
         view.alpha = 1f - s
-        platter.moved()
+        if (vertical) platter.moved()          // the glass re-samples only when it moves over the artwork
         return !(sx.atRest() && sy.atRest() && shelf.atRest())
     }
 }
@@ -159,7 +160,8 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
     var onChange: (() -> Unit)? = null
     val bottomBitmap: Bitmap? get() = (bottom.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
     val topBitmap: Bitmap? get() = (top.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-    val topAlpha: Float get() = top.alpha
+    val topAlpha: Float get() = if (top.visibility == View.VISIBLE) top.alpha else 0f
+    val bottomVisible: Boolean get() = bottom.visibility == View.VISIBLE
 
     fun show(b: Bitmap) {
         if (b === current) return
@@ -167,10 +169,17 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
         if (bottom.drawable == null) { bottom.setImageBitmap(b); onChange?.invoke(); return }
         if (topIsFront) { bottom.setImageBitmap(b); fade.target = 0f; topIsFront = false }
         else { top.setImageBitmap(b); fade.target = 1f; topIsFront = true }
+        bottom.visibility = View.VISIBLE; top.visibility = View.VISIBLE
         clock.add(this)
     }
 
-    override fun tick(dt: Float): Boolean { fade.step(dt); top.alpha = fade.value; onChange?.invoke(); return !fade.atRest() }
+    override fun tick(dt: Float): Boolean {
+        fade.step(dt); top.alpha = fade.value; onChange?.invoke()
+        if (!fade.atRest()) return true
+        // At rest only one full-screen layer is drawn: the GPU on this TV has little fill rate to spare at 1080p.
+        if (fade.value >= 1f) bottom.visibility = View.INVISIBLE else top.visibility = View.INVISIBLE
+        return false
+    }
 }
 
 /**
@@ -211,7 +220,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
                 gradientType = GradientDrawable.RADIAL_GRADIENT; gradientRadius = l.pxf(1150f); setGradientCenter(0f, 0f)
                 colors = intArrayOf(0x99000000.toInt(), 0x4D000000, 0x00000000)
             }
-        }, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        }, FrameLayout.LayoutParams(l.px(1250), l.px(760)))      // only the corner it darkens: saves fill rate
         root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(420)).apply { leftMargin = l.left; topMargin = l.px(84) })
         layers = Array(2) { layer(ctx) }
         root.addView(hint, FrameLayout.LayoutParams(l.px(44), l.px(16), Gravity.CENTER_HORIZONTAL).apply { topMargin = l.dockY - l.platterPad - l.px(34) })
