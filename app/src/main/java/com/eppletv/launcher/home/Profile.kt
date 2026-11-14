@@ -38,9 +38,9 @@ class Profile(ctx: Context) {
         src.recycle()
         val tmp = File(file.path + ".tmp")
         return try {
-            tmp.outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+            tmp.outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, 88, it) }
             if (!tmp.renameTo(file)) { tmp.delete(); Wallpapers.Result(false, "Couldn't save this picture") }
-            else { out.prepareToDraw(); cached = out; Wallpapers.Result(true, "Set as your profile picture") }
+            else { out.prepareToDraw(); cached = out; android.util.Log.i("EppleProfile", "stored ${w}x$h as ${SIZE}x$SIZE, ${file.length() / 1024} KB"); Wallpapers.Result(true, "Set as your profile picture") }
         } catch (_: Exception) { tmp.delete(); Wallpapers.Result(false, "Couldn't save this picture") }
     }
 

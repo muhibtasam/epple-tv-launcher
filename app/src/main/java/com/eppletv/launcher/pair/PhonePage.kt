@@ -43,6 +43,12 @@ a{color:#8fbcff}
 .ok{color:#7ce38b}.no{color:#ff8a80}.wait{color:#ffb86b}
 #files,#face{position:absolute;width:1px;height:1px;opacity:0}
 ul{padding-left:20px;margin:8px 0;color:#aeb3bd;word-break:break-word}
+.stage{position:relative;width:100%;max-width:340px;aspect-ratio:1/1;margin:14px auto 0;overflow:hidden;border-radius:16px;background:#0f1116;touch-action:none;user-select:none;-webkit-user-select:none}
+.stage img{position:absolute;left:0;top:0;transform-origin:0 0;max-width:none;pointer-events:none}
+.ring{position:absolute;inset:6%;border-radius:50%;box-shadow:0 0 0 999px rgba(11,12,16,0.62);border:2px solid rgba(255,255,255,0.85);pointer-events:none}
+.zoom{display:flex;align-items:center;gap:12px;margin-top:14px;color:#aeb3bd;font-size:14px}
+.zoom input{flex:1;accent-color:#f2f3f5}
+.two{display:flex;gap:10px;margin-top:14px}.two button{flex:1;margin:0}
 </style></head>
 """
 
@@ -101,9 +107,14 @@ ul{padding-left:20px;margin:8px 0;color:#aeb3bd;word-break:break-word}
 
 <section id="profile" class="card hide">
  <h2>Profile picture</h2>
- <p>Shown in the round badge next to the clock on your TV. Cropped to a square on this phone.</p>
- <label class="pick" for="face">Choose Picture</label>
+ <p>Shown in the round badge next to the clock on your TV. Choose a picture, then drag and zoom to frame it.</p>
+ <label class="pick" for="face" id="facePick">Choose Picture</label>
  <input id="face" type="file" accept="image/*">
+ <div id="cropper" class="hide">
+  <div class="stage" id="stage"><img id="cropImg" alt=""><div class="ring"></div></div>
+  <div class="zoom"><span>Zoom</span><input id="zoom" type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom"></div>
+  <div class="two"><button type="button" id="cropCancel">Cancel</button><button type="button" class="main" id="cropUse">Use Picture</button></div>
+ </div>
  <div class="st" id="faceSt"></div>
 </section>
 
@@ -207,10 +218,10 @@ function shrink(file,square){
    var w=img.naturalWidth,h=img.naturalHeight,c=document.createElement('canvas');
    if(square){var side=Math.min(w,h),out=Math.min(512,side);c.width=out;c.height=out;
     c.getContext('2d').drawImage(img,(w-side)/2,(h-side)/2,side,side,0,0,out,out);}
-   else{var k=Math.min(1,Math.max(1920/w,1080/h));c.width=Math.max(1,Math.round(w*k));c.height=Math.max(1,Math.round(h*k));
-    c.getContext('2d').drawImage(img,0,0,c.width,c.height);}
+   else{var cw=Math.min(w,h*16/9),ch=cw*9/16,k=Math.min(1,1920/cw);c.width=Math.max(1,Math.round(cw*k));c.height=Math.max(1,Math.round(ch*k));
+    c.getContext('2d').drawImage(img,(w-cw)/2,(h-ch)/2,cw,ch,0,0,c.width,c.height);}
    URL.revokeObjectURL(url);
-   c.toBlob(function(b){if(b)ok(b);else fail();},'image/jpeg',0.88);
+   c.toBlob(function(b){if(b)ok(b);else fail();},'image/jpeg',0.85);
   };
   img.onerror=function(){URL.revokeObjectURL(url);fail();};
   img.src=url;
@@ -248,13 +259,57 @@ el('files').addEventListener('change',function(){
  }
  next();
 });
+// Profile picture cropper: drag to move, pinch or the slider to zoom; the circle shows what the TV will show.
+var cr={img:null,url:null,w:0,h:0,s0:1,z:1,ox:0,oy:0,pts:{},pinch:0};
+function crV(){return el('stage').clientWidth;}
+function crLayout(){
+ var V=crV(),s=cr.s0*cr.z,iw=cr.w*s,ih=cr.h*s;
+ cr.ox=Math.min(0,Math.max(V-iw,cr.ox));cr.oy=Math.min(0,Math.max(V-ih,cr.oy));
+ var im=el('cropImg');im.style.width=cr.w+'px';im.style.height=cr.h+'px';
+ im.style.transform='translate('+cr.ox+'px,'+cr.oy+'px) scale('+s+')';
+}
+function crZoom(z){var V=crV(),s=cr.s0*cr.z,cx=(V/2-cr.ox)/s,cy=(V/2-cr.oy)/s;cr.z=Math.min(4,Math.max(1,z));var n=cr.s0*cr.z;cr.ox=V/2-cx*n;cr.oy=V/2-cy*n;el('zoom').value=cr.z;crLayout();}
+function crClose(){if(cr.url)URL.revokeObjectURL(cr.url);cr.url=null;show('cropper',false);show('facePick',true);}
 el('face').addEventListener('change',function(){
  var f=(el('face').files||[])[0];el('face').value='';
  if(!f||over)return;
+ if(cr.url)URL.revokeObjectURL(cr.url);
+ cr.url=URL.createObjectURL(f);
+ var im=el('cropImg');
+ im.onload=function(){
+  cr.w=im.naturalWidth;cr.h=im.naturalHeight;show('cropper',true);show('facePick',false);say('faceSt','');
+  var V=crV();cr.s0=Math.max(V/cr.w,V/cr.h);cr.z=1;el('zoom').value=1;
+  cr.ox=(V-cr.w*cr.s0)/2;cr.oy=(V-cr.h*cr.s0)/2;crLayout();
+ };
+ im.onerror=function(){crClose();say('faceSt','This phone couldn\u2019t open that picture.','no');};
+ im.src=cr.url;
+});
+var stg=el('stage');
+stg.addEventListener('pointerdown',function(e){stg.setPointerCapture(e.pointerId);cr.pts[e.pointerId]={x:e.clientX,y:e.clientY};cr.pinch=0;});
+stg.addEventListener('pointermove',function(e){
+ var p=cr.pts[e.pointerId];if(!p)return;
+ var ids=Object.keys(cr.pts);
+ if(ids.length===1){cr.ox+=e.clientX-p.x;cr.oy+=e.clientY-p.y;p.x=e.clientX;p.y=e.clientY;crLayout();return;}
+ p.x=e.clientX;p.y=e.clientY;
+ var a=cr.pts[ids[0]],b=cr.pts[ids[1]],d=Math.hypot(a.x-b.x,a.y-b.y);
+ if(cr.pinch)crZoom(cr.z*d/cr.pinch);cr.pinch=d;
+});
+function lift(e){delete cr.pts[e.pointerId];cr.pinch=0;}
+stg.addEventListener('pointerup',lift);stg.addEventListener('pointercancel',lift);
+el('zoom').addEventListener('input',function(){crZoom(parseFloat(el('zoom').value));});
+el('cropCancel').addEventListener('click',crClose);
+el('cropUse').addEventListener('click',function(){
+ if(!cr.url||over)return;
+ var V=crV(),s=cr.s0*cr.z,side=V/s,sx=-cr.ox/s,sy=-cr.oy/s,out=Math.min(512,Math.round(side));
+ var c=document.createElement('canvas');c.width=out;c.height=out;
+ c.getContext('2d').drawImage(el('cropImg'),sx,sy,side,side,0,0,out,out);
  var box={textContent:'',className:''};
- say('faceSt','Sending…','wait');
- shrink(f,true).then(function(b){return send(b,box,'Picture',0,'profile');},function(){box.textContent='Picture: this phone couldn’t open it';return false;})
- .then(function(ok){say('faceSt',box.textContent.replace(/^Picture: /,''),ok?'ok':'no');},function(){release(null);say('faceSt','Lost the connection to your TV.','no');});
+ el('cropUse').disabled=true;say('faceSt','Sending\u2026','wait');
+ new Promise(function(ok,fail){c.toBlob(function(b){if(b)ok(b);else fail();},'image/jpeg',0.88);})
+ .then(function(b){return send(b,box,'Picture',0,'profile');})
+ .then(function(ok){say('faceSt',box.textContent.replace(/^Picture: /,''),ok?'ok':'no');if(ok)crClose();},
+       function(){release(null);say('faceSt','Lost the connection to your TV.','no');})
+ .then(function(){el('cropUse').disabled=false;});
 });
 start();
 })();

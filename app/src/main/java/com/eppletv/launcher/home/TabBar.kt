@@ -148,12 +148,12 @@ class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock
  * Three cheap draws over a small area; it redraws only when the backdrop changes.
  */
 @SuppressLint("ViewConstructor")
-class TabGlass(ctx: Context, private val l: Layout, private val backdrop: Backdrop) : View(ctx) {
+class TabGlass(ctx: Context, private val l: Layout, private val backdrop: Backdrop, private val corner: Float = -1f) : View(ctx) {
     private val frost = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val tint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x6613151A }
     private val rect = RectF(); private val m = Matrix(); private val loc = IntArray(2)
     private var overlay: Bitmap? = null
-    private val radius get() = height / 2f
+    private val radius get() = if (corner < 0f) height / 2f else corner
 
     init { backdrop.listeners.add { invalidate() } }
 
@@ -163,10 +163,11 @@ class TabGlass(ctx: Context, private val l: Layout, private val backdrop: Backdr
         overlay?.recycle()
         overlay = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { b ->
             val c = Canvas(b)
-            c.drawRoundRect(rect, h / 2f, h / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            val rr = if (corner < 0f) h / 2f else corner
+            c.drawRoundRect(rect, rr, rr, Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 shader = LinearGradient(0f, 0f, 0f, h.toFloat(), intArrayOf(0x1AFFFFFF, 0x05FFFFFF, 0x00FFFFFF), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP) })
             val sw = l.pxf(1.5f).coerceAtLeast(1f)
-            c.drawRoundRect(RectF(sw / 2, sw / 2, w - sw / 2, h - sw / 2), h / 2f - sw / 2, h / 2f - sw / 2, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            c.drawRoundRect(RectF(sw / 2, sw / 2, w - sw / 2, h - sw / 2), rr - sw / 2, rr - sw / 2, Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.STROKE; strokeWidth = sw
                 shader = LinearGradient(0f, 0f, 0f, h.toFloat(), intArrayOf(0x59FFFFFF, 0x1AFFFFFF, 0x26FFFFFF), null, Shader.TileMode.CLAMP) })
             b.prepareToDraw()

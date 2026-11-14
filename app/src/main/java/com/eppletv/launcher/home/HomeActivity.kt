@@ -84,6 +84,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private lateinit var tabs: TabBar
     private lateinit var pill: ClockPill
     private lateinit var panel: MenuPanel
+    private lateinit var cc: ControlCenter
+    private lateinit var tv: com.eppletv.launcher.system.TvControl
     private lateinit var empty: TextView
     private lateinit var anchor: View
     private lateinit var feed: HomeFeed
@@ -114,7 +116,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             tabs.alpha = tabsP.value; tabs.translationY = -(1f - tabsP.value) * l.pxf(30f)
             tabs.visibility = if (tabsP.value > 0.01f) View.VISIBLE else View.INVISIBLE
             val homeClock = if (section == 0 && zone != Zone.FEED && zone != Zone.DETAIL) (1f - dimP.value * 2f).coerceIn(0f, 1f) else 0f
-            pill.alpha = maxOf(tabsP.value, homeClock)
+            pill.alpha = if (::cc.isInitialized && cc.open) 1f else maxOf(tabsP.value, homeClock)
             homeLayer.alpha = homeP.value; homeLayer.translationY = -(1f - homeP.value) * l.pxf(260f)
             homeLayer.visibility = if (homeP.value > 0.01f) View.VISIBLE else View.INVISIBLE
             return !(dimP.atRest() && tabsP.atRest() && homeP.atRest())
@@ -149,7 +151,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
     private fun restartRotation() { main.removeCallbacks(rotate); if (resumed && prefs.rotateMs > 0) main.postDelayed(rotate, prefs.rotateMs) }
 
-    private val idle = Runnable { if (resumed && !panel.open && !setup.active) saver.start() }
+    private val idle = Runnable { if (resumed && !panel.open && !cc.open && !setup.active) saver.start() }
     private fun restartIdle() { main.removeCallbacks(idle); if (resumed && prefs.saverMs > 0) main.postDelayed(idle, prefs.saverMs) }
 
     private val timeReceiver = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) = updateTime() }
@@ -193,6 +195,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         tabs = TabBar(this, l, clock, TAB_NAMES, TAB_ICONS, hero.backdrop).apply { alpha = 0f; visibility = View.INVISIBLE }
         root.addView(tabs, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(80), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = l.px(44) })
 
+        // Control Center sits under the clock badge (which stays bright above its dim) and under menus and setup.
+        tv = com.eppletv.launcher.system.TvControl(this)
+        cc = ControlCenter(this, l, clock, hero.backdrop)
+        root.addView(cc.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        buildControlCenter()
         pill = ClockPill(this, l, clock, hero.backdrop)
         pill.setOnClickListener { openControlCenter() }
         root.addView(pill, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(60), Gravity.TOP or Gravity.END).apply { topMargin = l.px(54); rightMargin = l.px(64) })
@@ -359,7 +366,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     // ---- focus and zones ----
 
     private fun restoreFocus() {
-        if (panel.open || (::setup.isInitialized && setup.active)) return      // setup owns focus while it is open
+        if (panel.open || (::cc.isInitialized && cc.open) || (::setup.isInitialized && setup.active)) return      // setup owns focus while it is open
         when (zone) {
             Zone.CONTENT -> if (!page.focusCurrent()) enterTabs(section)
             Zone.HERO -> anchor.requestFocus()
@@ -642,30 +649,80 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     // ---- Control Center ----
 
+    // ---- Control Center ----
+
+    private lateinit var ccWifi: CcTile; private lateinit var ccInputs: CcTile
+    private lateinit var ccVolume: CcTile; private lateinit var ccSleep: CcTile
+    private var sleepAt = 0L                                  // elapsedRealtime of the sleep timer, 0 = off
+    private val sleepRun = Runnable { sleepAt = 0L; content.run({ tv.standby() ?: "" }) { e -> if (!e.isNullOrEmpty()) toast(e) } }
+
+    private fun buildControlCenter() {
+        fun act(a: () -> Unit) = { cc.hide(); a() }
+        cc.build(listOf(
+            ControlCenter.Item(Glyphs.POWER, "Standby", big = true) { cc.hide(); content.run({ tv.standby() ?: "" }) { e -> if (!e.isNullOrEmpty()) toast(e) } },
+            ControlCenter.Item(Glyphs.WIFI, "Wi-Fi", action = act { open(Intent(Settings.ACTION_WIFI_SETTINGS), "Wi-Fi") }),
+            ControlCenter.Item(Glyphs.INPUT, "Inputs", action = act { inputsMenu() }),
+            ControlCenter.Item(Glyphs.VOLUME, "Volume") {
+                getSystemService(android.media.AudioManager::class.java)?.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,
+                    android.media.AudioManager.ADJUST_SAME, android.media.AudioManager.FLAG_SHOW_UI)
+                ccRefresh()
+            },
+            ControlCenter.Item(Glyphs.MOON, "Sleep Timer") { cycleSleep() },
+            ControlCenter.Item(Glyphs.PICTURE, "Screensaver", round = true, action = act { startSaver() }),
+            ControlCenter.Item(Glyphs.BLUETOOTH, "Bluetooth & Accessories", round = true, action = act { open(Intent(Settings.ACTION_BLUETOOTH_SETTINGS), "Accessories") }),
+            ControlCenter.Item(Glyphs.SEARCH, "Search", round = true, action = act { goTab(5) }),
+            ControlCenter.Item(Glyphs.GEAR, "Epple TV Settings", round = true, action = act { goTab(SETTINGS) }),
+            ControlCenter.Item(Glyphs.SLIDERS, "TV Settings", round = true, action = act { open(Intent(Settings.ACTION_SETTINGS), "Settings") }),
+        ))
+        ccWifi = cc.tiles[1]; ccInputs = cc.tiles[2]; ccVolume = cc.tiles[3]; ccSleep = cc.tiles[4]
+    }
+
     private fun openControlCenter() {
-        val date = SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date())
-        val header = listOf<View>(
-            TextView(this).apply { text = timeText; style(Txt.CLOCK, l.u) },
-            TextView(this).apply { text = date; style(Txt.META, l.u, Colors.TEXT_DIM); setPadding(0, l.px(10), 0, 0) },
-        )
-        val quick = listOf<Pair<String, () -> Unit>>(
-            "Search" to { goTab(5) },
-            "Profile Picture" to { profileMenu() },
-            "Epple TV Settings" to { goTab(SETTINGS) },
-            "Start Screensaver" to { startSaver() },
-        )
-        val system = listOf(
-            R.string.cc_settings to Settings.ACTION_SETTINGS,
-            R.string.cc_network to Settings.ACTION_WIFI_SETTINGS,
-            R.string.cc_display to Settings.ACTION_DISPLAY_SETTINGS,
-            R.string.cc_sound to Settings.ACTION_SOUND_SETTINGS,
-            R.string.cc_accessories to Settings.ACTION_BLUETOOTH_SETTINGS,
-        ).filter { packageManager.resolveActivity(Intent(it.second), 0) != null }
-            .map { (label, action) -> getString(label).let { name -> name to { open(Intent(action), name); Unit } } }
-        val footer = if (!Sources.usesTmdb) null else TextView(this).apply {
-            setText(R.string.tmdb_credit); style(Txt.FOOT, l.u, Colors.TEXT_DIM); setPadding(l.px(6), l.px(22), l.px(6), 0)
+        if (cc.open) return
+        ccRefresh()
+        cc.show { restoreFocus() }
+    }
+
+    /** Status lines: network, inputs, volume, sleep timer. The Wi-Fi name arrives a moment later when the TV allows it. */
+    private fun ccRefresh() {
+        val cm = getSystemService(android.net.ConnectivityManager::class.java)
+        val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+        ccWifi.sub = when {
+            caps == null -> "Not connected"
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            else -> "Connected"
         }
-        panel.show(header, quick + system, atCorner = true, footer = footer)
+        if (caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true) content.run({ tv.wifiName() ?: "" }) { n -> if (!n.isNullOrEmpty()) ccWifi.sub = n }
+        val n = tvInputs().size
+        ccInputs.sub = if (n == 0) "TV inputs" else "$n ${if (n == 1) "input" else "inputs"}"
+        val am = getSystemService(android.media.AudioManager::class.java)
+        ccVolume.sub = am?.let { "${100 * it.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) / it.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).coerceAtLeast(1)} %" } ?: ""
+        ccSleep.sub = if (sleepAt == 0L) "Off" else "${((sleepAt - android.os.SystemClock.elapsedRealtime()) / 60_000L + 1).coerceAtLeast(1)} min left"
+    }
+
+    /** Off, 15, 30, 60, 90 minutes, then off again; at the end the TV goes to standby. */
+    private fun cycleSleep() {
+        val left = if (sleepAt == 0L) 0L else (sleepAt - android.os.SystemClock.elapsedRealtime()) / 60_000L + 1
+        val next = SLEEP_STEPS.firstOrNull { it > left } ?: 0L
+        main.removeCallbacks(sleepRun)
+        sleepAt = if (next == 0L) 0L else android.os.SystemClock.elapsedRealtime() + next * 60_000L
+        if (sleepAt != 0L) main.postAtTime(sleepRun, sleepAt)
+        ccRefresh()
+    }
+
+    private fun tvInputs(): List<android.media.tv.TvInputInfo> = try {
+        getSystemService(android.media.tv.TvInputManager::class.java)?.tvInputList.orEmpty()
+            .filter { it.type != android.media.tv.TvInputInfo.TYPE_TUNER && !it.isHidden(this) }
+    } catch (_: Exception) { emptyList() }
+
+    /** The TV's inputs (HDMI and others) as a menu; choosing one opens it in the TV's own player. */
+    private fun inputsMenu() {
+        val list = tvInputs()
+        if (list.isEmpty()) { open(Intent(Settings.ACTION_SETTINGS), "Settings"); return }
+        menu("Inputs", list.map { info ->
+            val name = info.loadCustomLabel(this)?.toString()?.takeIf { it.isNotBlank() } ?: info.loadLabel(this).toString()
+            name to { open(Intent(Intent.ACTION_VIEW, android.media.tv.TvContract.buildChannelUriForPassthroughInput(info.id)), name); Unit }
+        })
     }
 
     /** Jumps straight into a tab (from Control Center). */
@@ -697,6 +754,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         val select = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER || k == KeyEvent.KEYCODE_NUMPAD_ENTER
         if (down) restartRotation()
 
+        if (cc.open && !panel.open) {
+            if (select) return super.dispatchKeyEvent(event)
+            if (k == KeyEvent.KEYCODE_BACK || k == KeyEvent.KEYCODE_MENU || k == KeyEvent.KEYCODE_SETTINGS) { if (down) cc.key(event); return true }
+            return if (dpad) cc.key(event) else super.dispatchKeyEvent(event)
+        }
         if (panel.open) {
             if (select) return super.dispatchKeyEvent(event)
             if (k == KeyEvent.KEYCODE_BACK && down) backHandled = true
@@ -758,6 +820,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Library", "Apps", "Search")
         val TAB_ICONS = listOf(TabIcons.HOME, TabIcons.MOVIES, TabIcons.TV, TabIcons.LIBRARY, TabIcons.APPS, TabIcons.SEARCH)
         const val SETTINGS = 6
+        val SLEEP_STEPS = listOf(15L, 30L, 60L, 90L)
         const val REQ_HOME = 41
     }
 }

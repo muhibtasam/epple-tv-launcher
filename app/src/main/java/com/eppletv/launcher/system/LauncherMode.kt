@@ -101,7 +101,7 @@ class LauncherMode(ctx: Context) {
 
     private fun run(status: (String) -> Unit, block: (Adb) -> String?): String? = try {
         status("Connecting to this TV…")
-        Adb.connect(KeystoreSigner, waiting = { status("On the TV, choose “Always allow from this computer”, then Allow.") }).use(block)
+        Adb.connect(AdbKey, waiting = { status("On the TV, choose “Always allow from this computer”, then Allow.") }).use { adb -> AdbKey.allowed(app); block(adb) }
     } catch (e: IOException) {
         e.message ?: "Couldn't reach this TV's debugging service."
     } catch (e: Exception) {
@@ -136,25 +136,6 @@ class LauncherMode(ctx: Context) {
     }
 
     private fun label(p: String) = when (p) { GOOGLE_SETUP -> "Google TV setup"; pkgOf(GOOGLE_HOME) -> "the Google TV home screen"; else -> p }
-
-    /** Signs with a 2048-bit RSA key generated in, and never leaving, the Android Keystore. */
-    private object KeystoreSigner : Adb.Signer {
-        private const val ALIAS = "epple_adb"
-        private val ks by lazy { KeyStore.getInstance("AndroidKeyStore").apply { load(null) } }
-        private fun ensure() {
-            if (ks.containsAlias(ALIAS)) return
-            KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, "AndroidKeyStore").apply {
-                initialize(KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN)
-                    .setKeySize(2048).setDigests(KeyProperties.DIGEST_NONE)
-                    .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1).build())
-            }.generateKeyPair()
-        }
-        override val publicKey: RSAPublicKey get() { ensure(); return ks.getCertificate(ALIAS).publicKey as RSAPublicKey }
-        override fun signRaw(data: ByteArray): ByteArray {
-            ensure()
-            return Signature.getInstance("NONEwithRSA").run { initSign(ks.getKey(ALIAS, null) as PrivateKey); update(data); sign() }
-        }
-    }
 
     companion object {
         const val PKG = "com.eppletv.launcher"

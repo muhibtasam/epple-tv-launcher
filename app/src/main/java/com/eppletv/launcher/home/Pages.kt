@@ -244,7 +244,7 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
  */
 class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, private val repo: ContentRepository, root: FrameLayout) : FrameClock.Tick {
     val backdrop = Backdrop(ctx, clock)
-    private class Layer(val box: LinearLayout, val eyebrow: TextView, val title: TextView, val logo: ImageView, val meta: TextView, val summary: TextView, val a: Spring)
+    private class Layer(val box: LinearLayout, val eyebrow: TextView, val title: TextView, val logo: ImageView, val meta: MetaRow, val summary: TextView, val a: Spring)
     private var wantLogo: String? = null
     private val textBox = FrameLayout(ctx)
     private val layers: Array<Layer>
@@ -354,7 +354,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         layers[front].a.target = 0f
         front = 1 - front
         val y = layers[front]
-        y.eyebrow.text = eyebrow; y.title.text = title; y.meta.text = meta
+        y.eyebrow.text = eyebrow; y.title.text = title; y.meta.set(meta)
         // The logo replaces the typeset title; it keeps its own proportions inside a 760x200 box (never stretched).
         y.logo.setImageBitmap(logo)
         y.logo.visibility = if (logo != null) View.VISIBLE else View.GONE
@@ -384,7 +384,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         fun shadowed(t: TextView, r: Float) = t.apply { setShadowLayer(l.pxf(r), 0f, l.pxf(2f), 0x99000000.toInt()) }
         val eyebrow = shadowed(TextView(ctx).apply { style(Txt.CAPTION, l.u, 0xD9FFFFFF.toInt()) }, 8f)
         val title = shadowed(TextView(ctx).apply { style(Txt.HERO, l.u) }, 20f)
-        val meta = shadowed(TextView(ctx).apply { style(Txt.META, l.u, 0xE6FFFFFF.toInt()) }, 10f)
+        val meta = MetaRow(ctx, l)
         val summary = shadowed(TextView(ctx).apply { style(Txt.BODY, l.u, 0xD9FFFFFF.toInt()) }, 10f)
         val logo = ImageView(ctx).apply {
             adjustViewBounds = true; maxWidth = l.px(760); maxHeight = l.px(200)
@@ -395,7 +395,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
             addView(eyebrow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(title, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(12) })
             addView(logo, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(18); bottomMargin = l.px(6) })
-            addView(meta, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(16) })
+            addView(meta, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(14) })
             addView(summary, LinearLayout.LayoutParams(l.px(820), WRAP_CONTENT).apply { topMargin = l.px(14) })
         }
         textBox.addView(box, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))

@@ -45,19 +45,24 @@ class Wallpapers(ctx: Context) {
         while (w / (s * 2) >= OUT_W && h / (s * 2) >= OUT_H) s *= 2
         val src = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = s })
             ?: return Result(false, "Couldn't read this picture")
-        // Just large enough to fill 1920x1080 (the screen crops the rest); never upscaled.
-        val k = minOf(1f, maxOf(OUT_W.toFloat() / src.width, OUT_H.toFloat() / src.height))
-        val out = if (k < 1f) Bitmap.createScaledBitmap(src, (src.width * k).toInt().coerceAtLeast(1), (src.height * k).toInt().coerceAtLeast(1), true) else src
+        // Optimised for the screen: the centre 16:9 of the picture (what the screen would show anyway), at most
+        // 1920x1080 and never upscaled, as a fresh JPEG. A 4K photo becomes a few hundred kilobytes.
+        val cw = minOf(src.width.toFloat(), src.height * 16f / 9f); val ch = cw * 9f / 16f
+        val k = minOf(1f, OUT_W / cw)
+        val ow = (cw * k).toInt().coerceAtLeast(1); val oh = (ch * k).toInt().coerceAtLeast(1)
+        val out = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
+        Canvas(out).drawBitmap(src, Matrix().apply { setTranslate(-(src.width - cw) / 2f, -(src.height - ch) / 2f); postScale(k, k) },
+            Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG))
         val name = "w-${System.currentTimeMillis()}-${Integer.toHexString(random.nextInt())}.jpg"
         val tmp = File(dir, "$name.tmp")
         try {
-            tmp.outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+            tmp.outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, QUALITY, it) }
             if (!tmp.renameTo(File(dir, name))) { tmp.delete(); return Result(false, "Couldn't save this picture") }
+            android.util.Log.i("EppleWallpaper", "stored ${w}x$h as ${ow}x$oh, ${File(dir, name).length() / 1024} KB")
         } catch (_: Exception) {
             tmp.delete(); return Result(false, "Couldn't save this picture")
         } finally {
-            if (out !== src) out.recycle()
-            src.recycle()
+            out.recycle(); src.recycle()
         }
         return Result(true, "Added to Home")
     }
@@ -112,6 +117,7 @@ class Wallpapers(ctx: Context) {
 
     companion object {
         const val MAX = 40
+        private const val QUALITY = 85
         private const val OUT_W = 1920
         private const val OUT_H = 1080
         private val TYPES = setOf("image/jpeg", "image/png", "image/webp")

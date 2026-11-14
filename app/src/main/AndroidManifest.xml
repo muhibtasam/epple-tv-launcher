@@ -21,6 +21,11 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
         <intent><action android:name="android.settings.SETTINGS" /></intent>
+        <!-- Control Center > Inputs: the TV app that plays an HDMI or other passthrough input. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" android:host="android.media.tv" />
+        </intent>
         <intent><action android:name="android.settings.WIFI_SETTINGS" /></intent>
         <intent><action android:name="android.settings.DISPLAY_SETTINGS" /></intent>
         <intent><action android:name="android.settings.SOUND_SETTINGS" /></intent>

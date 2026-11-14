@@ -91,7 +91,7 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
     private val eyebrow = TextView(ctx).apply { style(Txt.CAPTION, l.u, 0xD9FFFFFF.toInt()); shadow(this, 8f) }
     private val title = TextView(ctx).apply { style(Txt.HERO, l.u); shadow(this, 20f) }
     private val logo = ImageView(ctx).apply { adjustViewBounds = true; maxWidth = l.px(720); maxHeight = l.px(180); scaleType = ImageView.ScaleType.FIT_START; visibility = GONE }
-    private val meta = TextView(ctx).apply { style(Txt.META, l.u, 0xE6FFFFFF.toInt()); shadow(this, 10f) }
+    private val meta = MetaRow(ctx, l)
     val summary = TextView(ctx).apply { style(Txt.BODY, l.u, 0xD9FFFFFF.toInt()); maxLines = summaryLines; shadow(this, 10f) }
     private val a = Spring(1f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)
     private var shownId: String? = null
@@ -103,7 +103,7 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
         addView(eyebrow, LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         addView(title, LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(10) })
         addView(logo, LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(16); bottomMargin = l.px(4) })
-        addView(meta, LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(14) })
+        addView(meta, LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(12) })
         addView(summary, LayoutParams(l.px(860), WRAP_CONTENT).apply { topMargin = l.px(12) })
     }
 
@@ -113,7 +113,7 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
         val fresh = item.id != shownId
         shownId = item.id
         eyebrow.text = kind; eyebrow.visibility = if (kind.isEmpty()) GONE else VISIBLE
-        title.text = item.title; meta.text = item.meta; summary.text = item.summary
+        title.text = item.title; meta.set(item.meta); summary.text = item.summary
         summary.visibility = if (item.summary.isEmpty()) GONE else VISIBLE
         if (!fresh) return
         logo.setImageBitmap(null); logo.visibility = GONE; title.visibility = VISIBLE
