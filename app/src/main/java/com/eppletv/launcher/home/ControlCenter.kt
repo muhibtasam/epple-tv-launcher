@@ -21,7 +21,7 @@ import com.eppletv.launcher.ui.Type
  */
 internal object Glyphs {
     const val POWER = 0; const val WIFI = 1; const val INPUT = 2; const val VOLUME = 3; const val MOON = 4
-    const val PICTURE = 5; const val BLUETOOTH = 6; const val SEARCH = 7; const val GEAR = 8; const val SLIDERS = 9
+    const val PICTURE = 5; const val BLUETOOTH = 6; const val SEARCH = 7; const val GEAR = 8; const val SLIDERS = 9; const val BELL = 10
     private val p = Path(); private val q = Path(); private val r = RectF()
 
     fun draw(id: Int, c: Canvas, cx: Float, cy: Float, size: Float, color: Int, stroke: Paint, fill: Paint) {
@@ -60,6 +60,11 @@ internal object Glyphs {
                     val m = android.graphics.Matrix(); m.setRotate(i * 45f, 12f, 12f); q.transform(m); p.op(q, Path.Op.UNION)
                 }
                 q.reset(); q.addCircle(12f, 12f, 3f, Path.Direction.CW); p.op(q, Path.Op.DIFFERENCE); c.drawPath(p, fill)
+            }
+            BELL -> {
+                p.moveTo(5.5f, 16.5f); p.lineTo(18.5f, 16.5f)
+                p.moveTo(7f, 16.5f); p.lineTo(7f, 11f); p.cubicTo(7f, 7.6f, 9.2f, 5.4f, 12f, 5.4f); p.cubicTo(14.8f, 5.4f, 17f, 7.6f, 17f, 11f); p.lineTo(17f, 16.5f)
+                c.drawPath(p, stroke); c.drawLine(10.3f, 19.6f, 13.7f, 19.6f, stroke); c.drawLine(12f, 3.6f, 12f, 5.4f, stroke)
             }
             SLIDERS -> {
                 c.drawLine(3.5f, 7f, 20.5f, 7f, stroke); c.drawLine(3.5f, 12f, 20.5f, 12f, stroke); c.drawLine(3.5f, 17f, 20.5f, 17f, stroke)

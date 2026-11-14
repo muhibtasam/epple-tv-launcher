@@ -64,6 +64,8 @@ interface Nav {
     fun switchLauncher(epple: Boolean, done: (() -> Unit)? = null)
     /** Asks the TV to let Epple TV read its listings (Prime Video's rows, Continue Watching). */
     fun askListings()
+    /** Lets Epple TV read other apps' notifications (Settings > Notifications, Control Center). */
+    fun allowNotifications()
 }
 
 /** One section of the launcher. Focus inside a section is explicit and survives leaving and returning. */

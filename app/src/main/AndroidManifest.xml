@@ -65,5 +65,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity-alias>
+        <!-- Other apps' notifications for Epple TV's popup, the dot on the clock and Control Center's list (memory only). -->
+        <service
+            android:name=".system.EppleNotifications"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

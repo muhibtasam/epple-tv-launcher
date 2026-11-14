@@ -440,6 +440,9 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         choice(Prefs.INDIAN, "The mix of Bollywood and regional Indian titles against Hollywood titles in the top row's showcases.")
         row("Content providers", "API keys for TMDB, Watchmode, Trakt and YouTube: enter, test, replace or remove them. Keys are encrypted on this TV and shown only masked.", {
             "${com.eppletv.launcher.content.Credentials.connected()} of 4 connected" }) { nav.openSetup(1, one = true) }
+        row("Notifications", "Shows other apps' notifications in Epple TV: a short popup at the top right (OK opens it, Back dismisses it), " +
+            "a dot on the clock and the list in Control Center. They stay on this TV, in memory only.", {
+            if (com.eppletv.launcher.system.NotificationHub.allowed(nav.ctx)) "Allowed" else "Not allowed" }) { nav.allowNotifications() }
         row("TV listings", "Lets Epple TV read what your apps publish to Android TV: Prime Video's own rows and Continue Watching, as Google TV shows them. Nothing leaves the TV.", {
             if (com.eppletv.launcher.content.TvListings.allowed(nav.ctx)) "Allowed" else "Not allowed" }) { nav.askListings() }
         row("Indian languages", "The Indian languages included in Movies, TV Shows and the top row's showcases. Select to choose.", {

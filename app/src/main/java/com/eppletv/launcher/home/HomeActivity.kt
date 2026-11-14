@@ -1,5 +1,6 @@
 package com.eppletv.launcher.home
 
+import com.eppletv.launcher.system.NotificationHub
 import android.app.Activity
 import android.app.ActivityOptions
 import android.content.ActivityNotFoundException
@@ -207,6 +208,14 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
         empty = TextView(this).apply { setText(R.string.no_apps); style(Txt.ROW, l.u, Colors.TEXT_DIM); visibility = View.GONE }
         root.addView(empty, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
+
+        banner = NotifBanner(this, l, clock, hero.backdrop)
+        root.addView(banner, FrameLayout.LayoutParams(l.px(600), WRAP_CONTENT, Gravity.TOP or Gravity.END).apply { topMargin = l.px(132); rightMargin = l.px(64) })
+        NotificationHub.onChange = { n ->
+            pill.dot = NotificationHub.unread > 0
+            if (n != null && resumed && !setup.active && !saver.showing) banner.show(n)
+            if (n == null) (screens[SETTINGS] as? SettingsScreen)?.show()      // "Allowed" once the TV connects the reader
+        }
 
         panel = MenuPanel(this, l, clock) { restoreFocus() }
         root.addView(panel.dim, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
@@ -735,11 +744,40 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             ControlCenter.Item(Glyphs.MOON, "Sleep Timer") { cycleSleep() },
             ControlCenter.Item(Glyphs.PICTURE, "Screensaver", round = true, action = act { startSaver() }),
             ControlCenter.Item(Glyphs.BLUETOOTH, "Bluetooth & Accessories", round = true, action = act { open(Intent(Settings.ACTION_BLUETOOTH_SETTINGS), "Accessories") }),
-            ControlCenter.Item(Glyphs.SEARCH, "Search", round = true, action = act { goTab(SEARCH) }),
+            ControlCenter.Item(Glyphs.BELL, "Notifications", round = true, action = act { notificationsMenu() }),
             ControlCenter.Item(Glyphs.GEAR, "Epple TV Settings", round = true, action = act { goTab(SETTINGS) }),
             ControlCenter.Item(Glyphs.SLIDERS, "TV Settings", round = true, action = act { open(Intent(Settings.ACTION_SETTINGS), "Settings") }),
         ))
         ccWifi = cc.tiles[1]; ccInputs = cc.tiles[2]; ccVolume = cc.tiles[3]; ccSleep = cc.tiles[4]
+    }
+
+    private lateinit var banner: NotifBanner
+
+    /** Opens a notification as its app intended (its own tap action), else the app itself. */
+    private fun openNote(n: NotificationHub.Note) {
+        NotificationHub.dismiss(n.key)
+        val ok = try { n.intent?.send(); n.intent != null } catch (_: Exception) { false }
+        if (!ok) apps.firstOrNull { it.packageName == n.pkg }?.let { launch(it) } ?: toast(n.app)
+    }
+
+    /** Control Center > Notifications: newest first; OK opens one, Clear All empties Epple TV's list. */
+    private fun notificationsMenu() {
+        if (!NotificationHub.allowed(this)) {
+            menu("Notifications", listOf("Allow Notifications" to { allowNotifications() }, "Not Now" to {})); return
+        }
+        NotificationHub.markRead()
+        val list = NotificationHub.notes
+        if (list.isEmpty()) { toast("No notifications"); return }
+        menu("Notifications", list.take(8).map { n -> "${n.app}: ${n.title}" to { openNote(n) } } + listOf("Clear All" to { NotificationHub.clearAll() }))
+    }
+
+    override fun allowNotifications() {
+        if (NotificationHub.allowed(this)) return
+        content.run({ launcher.allowNotifications { } ?: "" }) { err ->
+            if (!err.isNullOrEmpty()) toast(err)
+            else { android.service.notification.NotificationListenerService.requestRebind(NotificationHub.component(this)); toast("Notifications allowed") }
+            (screens[SETTINGS] as? SettingsScreen)?.show()
+        }
     }
 
     private fun openControlCenter() {
@@ -806,6 +844,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         if (down) { restartIdle() }
         // Any button wakes the screensaver and does nothing else.
         if (saver.showing) { if (down) { saver.stop(); swallowUp = true }; return true }
+        // A notification popup: OK opens it, Back dismisses it; every other button works as usual.
+        if (banner.showing && (k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER || k == KeyEvent.KEYCODE_BACK)) {
+            if (down && event.repeatCount == 0) { val n = banner.note; banner.hide(); if (k != KeyEvent.KEYCODE_BACK && n != null) openNote(n) }
+            return true
+        }
         if (swallowUp) { if (!down) swallowUp = false; return true }
         // Setup uses the platform's focus handling (and the system keyboard for API keys).
         if (setup.active) {

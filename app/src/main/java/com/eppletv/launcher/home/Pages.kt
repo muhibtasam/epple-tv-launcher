@@ -522,35 +522,10 @@ object Brand {
             val i = up.indexOf(name.uppercase()); if (i < 0) continue
             val end = i + name.length
             val face = com.eppletv.launcher.ui.Type.of(800, com.eppletv.launcher.ui.Type.Face.HEAD)
-            // A dark brand colour (Apple TV's #191919) would vanish on the dark artwork: it is set on a white chip.
-            if (Colors.luminance(color) < 0.25f) out.setSpan(ChipSpan(color, face), i, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            else {
-                out.setSpan(android.text.style.ForegroundColorSpan(color), i, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                out.setSpan(android.text.style.TypefaceSpan(face), i, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
+            out.setSpan(android.text.style.ForegroundColorSpan(color), i, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            out.setSpan(android.text.style.TypefaceSpan(face), i, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             break
         }
         return out
-    }
-}
-
-/** The brand name in its own dark colour on a small white chip, for brands whose colour is near black. */
-class ChipSpan(private val color: Int, private val face: android.graphics.Typeface) : android.text.style.ReplacementSpan() {
-    private val r = android.graphics.RectF()
-    private fun pad(p: android.graphics.Paint) = p.textSize * 0.32f
-    override fun getSize(p: android.graphics.Paint, t: CharSequence, s: Int, e: Int, fm: android.graphics.Paint.FontMetricsInt?): Int {
-        val tf = p.typeface; p.typeface = face; val w = p.measureText(t, s, e); p.typeface = tf
-        return (w + pad(p) * 2).toInt()
-    }
-    override fun draw(c: android.graphics.Canvas, t: CharSequence, s: Int, e: Int, x: Float, top: Int, y: Int, bottom: Int, p: android.graphics.Paint) {
-        val tf = p.typeface; val col = p.color; val sh = p.shadowLayerRadius
-        val sc = if (android.os.Build.VERSION.SDK_INT >= 29) p.shadowLayerColor else 0
-        p.typeface = face; val w = p.measureText(t, s, e); val h = p.textSize
-        r.set(x, y - h * 1.02f, x + w + pad(p) * 2, y + h * 0.3f)
-        p.clearShadowLayer(); p.color = Colors.WHITE
-        c.drawRoundRect(r, r.height() / 2, r.height() / 2, p)
-        p.color = color; c.drawText(t, s, e, x + pad(p), y.toFloat(), p)
-        p.typeface = tf; p.color = col
-        if (android.os.Build.VERSION.SDK_INT >= 29 && sh > 0f) p.setShadowLayer(sh, 0f, 0f, sc)
     }
 }

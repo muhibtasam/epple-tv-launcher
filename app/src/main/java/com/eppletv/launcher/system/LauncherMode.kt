@@ -60,11 +60,19 @@ class LauncherMode(ctx: Context) {
         // What Epple TV's rows read from the TV (apps' own rows, Continue Watching): allowed here, so there is no prompt.
         status("Allowing TV listings…")
         adb.shell("pm grant $PKG android.permission.READ_TV_LISTINGS")
+        status("Allowing notifications…")
+        adb.shell("cmd notification allow_listener $LISTENER")
         prefs.edit().putBoolean("on", true).apply()
         null
     }
 
     /** Gives the Home button back to the TV's own launcher. Returns null on success, else why not. */
+    /** Settings > Notifications: lets Epple TV read other apps' notifications (Android's notification access). */
+    fun allowNotifications(status: (String) -> Unit): String? = run(status) { adb ->
+        status("Allowing notifications…")
+        adb.shell("cmd notification allow_listener $LISTENER"); null
+    }
+
     fun useDefault(status: (String) -> Unit): String? = run(status) { adb ->
         val original = prefs.getString("original", null) ?: GOOGLE_HOME
         val list = (recorded() + recordedOnTv(adb)).distinct()
@@ -142,6 +150,7 @@ class LauncherMode(ctx: Context) {
 
     companion object {
         const val PKG = "com.eppletv.launcher"
+        const val LISTENER = "com.eppletv.launcher/com.eppletv.launcher.system.EppleNotifications"
         const val HOME = "$PKG/.HomeEntry"
         const val GOOGLE_HOME = "com.google.android.apps.tv.launcherx/.home.HomeActivity"
         const val GOOGLE_SETUP = "com.google.android.tungsten.setupwraith"

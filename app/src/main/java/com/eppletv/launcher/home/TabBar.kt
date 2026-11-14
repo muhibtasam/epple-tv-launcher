@@ -224,6 +224,10 @@ class ClockPill(ctx: Context, private val l: Layout, private val clock: FrameClo
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val badge = Paint(Paint.ANTI_ALIAS_FLAG)
     private val glyph = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = l.pxf(2.6f); strokeCap = Paint.Cap.ROUND; color = Colors.WHITE }
+    /** Unread notifications: a small white dot on the profile badge. */
+    var dot = false
+        set(v) { if (field != v) { field = v; face.invalidate() } }
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(25f) * Type.scale; typeface = Type.of(600, Type.Face.NUM) }
     private val rect = RectF()
     private val path = Path()
@@ -269,13 +273,21 @@ class ClockPill(ctx: Context, private val l: Layout, private val clock: FrameClo
         if (av != null && avatarPaint.shader != null) {
             val k = d / av.width; am.setScale(k, k); am.postTranslate(cx - d / 2f, cy - d / 2f)
             avatarPaint.shader.setLocalMatrix(am)
-            c.drawCircle(cx, cy, d / 2f, avatarPaint); return
+            c.drawCircle(cx, cy, d / 2f, avatarPaint); drawDot(c, cx, cy, d); return
         }
         c.drawCircle(cx, cy, d / 2f, badge)
         val u = d / 24f
         c.drawCircle(cx, cy - 2.6f * u, 3.6f * u, glyph)
         path.reset(); path.moveTo(cx - 6.6f * u, cy + 7.2f * u)
         path.quadTo(cx, cy - 0.4f * u, cx + 6.6f * u, cy + 7.2f * u); c.drawPath(path, glyph)
+        drawDot(c, cx, cy, d)
+    }
+
+    private fun drawDot(c: Canvas, cx: Float, cy: Float, d: Float) {
+        if (!dot) return
+        val x = cx + d * 0.36f; val y = cy - d * 0.36f; val r = d * 0.16f
+        dotPaint.color = 0xFF111114.toInt(); c.drawCircle(x, y, r + l.pxf(2.5f), dotPaint)
+        dotPaint.color = Colors.WHITE; c.drawCircle(x, y, r, dotPaint)
     }
 
     override fun tick(dt: Float): Boolean {
