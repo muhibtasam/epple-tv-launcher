@@ -49,7 +49,7 @@ internal fun makeShadow(l: Layout): Bitmap {
 class HomePage(ctx: Context, private val l: Layout, private val clock: FrameClock, private val host: PageHost, private val shadow: Bitmap,
                backdrop: Backdrop) : FrameClock.Tick {
     val view = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
-    private val platter = GlassPlatter(ctx, l, backdrop, clock)
+    private val platter = StandLedge(ctx, l, backdrop, clock)
     private val strip = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
     private val dock = ArrayList<Tile>()
     private val grid = ArrayList<Tile>()
@@ -65,9 +65,9 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     fun setApps(pinned: List<AppEntry>, rest: List<AppEntry>) {
         val keep = tile()?.entry?.packageName
         view.removeAllViews(); strip.removeAllViews(); dock.clear(); grid.clear()
-        val p = l.platterPad
-        view.addView(platter, FrameLayout.LayoutParams(l.px(1920) - 2 * (l.left - p), l.tileH + 2 * p).apply { leftMargin = l.left - p; topMargin = l.dockY - p })
+        view.addView(platter, FrameLayout.LayoutParams(MATCH_PARENT, platter.top0 + l.tileH + l.px(150)).apply { topMargin = l.dockY - platter.top0 })
         platter.visibility = if (pinned.isEmpty()) View.INVISIBLE else View.VISIBLE
+        platter.count = minOf(pinned.size, Layout.COLS)
         view.addView(strip, FrameLayout.LayoutParams(MATCH_PARENT, l.tileH).apply { topMargin = l.dockY })
         pinned.forEachIndexed { i, app ->
             val t = Tile(view.context, app, shadow, null, l, clock, host).apply { inDock = true }
@@ -127,11 +127,15 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     fun focusCurrent(): Boolean {
         val t = tile() ?: return false
         place(); t.requestFocus(); host.onPageDepth(r > 0)
-        platter.focusAt(if (r == 0) (l.platterPad + (c - first) * l.pitchX + l.tileW / 2).toFloat() else null)
+        platter.focusAt(if (r == 0) (l.left + (c - first) * l.pitchX + l.tileW / 2).toFloat() else null, Brand.of(t.entry))
         return true
     }
 
     fun atTop() = r == 0 || dock.isEmpty() && r == 1
+    /** The focus is on the first tile of its row (Left from here opens the menu). */
+    fun atLeft() = c == 0
+    /** Focus left the page for the menu or the clock: the stand's light goes out. */
+    fun blur() = platter.focusAt(null, 0)
     fun toTop() { r = if (dock.isEmpty()) 1 else 0; c = c.coerceIn(0, maxOf(0, rowSize(r) - 1)); focusCurrent() }
 
     /** Full-screen artwork mode: the apps slide down out of the way. */
@@ -275,7 +279,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         root.addView(backdrop.top, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         // The scrims (top for the title, bottom for the app rows, top-left corner under the text) are painted into each
         // backdrop image once when it is decoded (see Scrim): as overlay views they cost two translucent full-screen passes a frame.
-        root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(420)).apply { leftMargin = l.left; topMargin = l.px(84) })
+        root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(420)).apply { leftMargin = l.left; topMargin = l.px(170) })
         layers = Array(2) { layer(ctx) }
         // The slider dots sit just above the top row; in full-screen artwork mode they slide down to the bottom edge.
         root.addView(dots, FrameLayout.LayoutParams(MATCH_PARENT, l.px(16)).apply { topMargin = dotsY })
@@ -530,6 +534,10 @@ object Brand {
         if (hsv[2] < 0.85f) { hsv[2] = 0.95f; c = android.graphics.Color.HSVToColor(hsv) }          // bright enough for the dark hero
         return c
     }
+
+    /** An app's own colour for the stand's light: its brand colour, else the one learned from its tile, else white. */
+    fun of(e: com.eppletv.launcher.apps.AppEntry): Int =
+        fixed.entries.firstOrNull { it.key.equals(e.label, true) }?.value ?: learned[e.label] ?: Colors.WHITE
 
     fun eyebrow(text: String): CharSequence {
         val up = text.uppercase()

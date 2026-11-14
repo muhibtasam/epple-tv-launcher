@@ -11,6 +11,7 @@ import org.json.JSONArray
 class UserLibrary(ctx: Context) {
     enum class Kind(val key: String, val max: Int) { CONTINUE("continue", 20), WATCHLIST("watchlist", 100), FAVOURITES("favourites", 100), RECENT("recent", 30) }
 
+    private val app = ctx.applicationContext
     private val prefs = ctx.applicationContext.getSharedPreferences("user_library", Context.MODE_PRIVATE)
     private val cache = HashMap<Kind, ArrayList<ContentItem>>()
     var version = 0; private set           // bumps on every change, so screens know when to rebuild
@@ -22,6 +23,7 @@ class UserLibrary(ctx: Context) {
     /** Adds (or moves to the front) [item]; the oldest entries beyond the list's size are dropped. */
     fun add(l: Kind, item: ContentItem) {
         val a = load(l); a.removeAll { it.id == item.id }; a.add(0, item)
+        if (l == Kind.CONTINUE) Recency.item(app, item.id)
         while (a.size > l.max) a.removeAt(a.size - 1)
         save(l)
     }

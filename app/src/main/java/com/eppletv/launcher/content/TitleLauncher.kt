@@ -118,7 +118,7 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
         // An app's own link from its Android TV row (Prime Video's intent: links): kept inside that app (TvListings.intent).
         if (uri.startsWith("intent:") || "#Intent;" in uri) {
             val i = TvListings.intent(app, uri, pkg) ?: run { Log.i(TAG, "$pkg row link refused"); return false }
-            return try { app.startActivity(i); Log.i(TAG, "opened row title in $pkg"); true } catch (e: Exception) { false }
+            return try { app.startActivity(i); Recency.app(app, pkg); Log.i(TAG, "opened row title in $pkg"); true } catch (e: Exception) { false }
         }
         val p = providers[pkg]
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -126,7 +126,7 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
         p?.extras?.forEach { (k, v) -> intent.putExtra(k, v) }
         val ok = try { pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY).isNotEmpty() } catch (_: RuntimeException) { false }
         if (!ok) { Log.i(TAG, "$pkg does not open ${uri.substringBefore('?')}"); return false }
-        return try { app.startActivity(intent); Log.i(TAG, "opened title in $pkg"); true } catch (e: Exception) { false }
+        return try { app.startActivity(intent); Recency.app(app, pkg); Log.i(TAG, "opened title in $pkg"); true } catch (e: Exception) { false }
     }
 
     fun stop() { if (ioUsed) io.shutdown() }

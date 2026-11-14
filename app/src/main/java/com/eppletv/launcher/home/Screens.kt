@@ -275,8 +275,7 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
     RowSource("Continue Watching", dynamic = true) { cb ->
         // Twice: at once with the apps' own pictures, then again once TMDB posters are found (cached after the first time).
         for (posters in listOf(false, true)) nav.content.run({ ContinueWatching.load(nav.ctx, nav.content.net, posters) }) { tv ->
-            val seen = tv.orEmpty().map { ContinueWatching.norm(it.title) }.toHashSet()
-            cb(tv.orEmpty() + nav.user.items(UserLibrary.Kind.CONTINUE).filter { seen.add(ContinueWatching.norm(it.title)) })
+            cb(ContinueWatching.merge(nav.ctx, tv.orEmpty(), nav.user.items(UserLibrary.Kind.CONTINUE)))
         }
     },
     // What every streaming app with its own Android TV rows recommends (Prime Video, Crunchyroll, Apple TV...), a few each.
@@ -326,6 +325,26 @@ object ContinueWatching {
     private const val PER_APP = 2; private const val MAX = 12
     fun norm(t: String) = t.trim().lowercase(java.util.Locale.ROOT).replace(Regex("\\s+"), " ")
 
+    /**
+     * The apps' rows and the titles opened from Epple TV in one list, the most recent first: a title's own time when
+     * the app gave one (Watch Next) or Epple TV opened it, else when its app was last used, keeping the app's order.
+     */
+    fun merge(ctx: android.content.Context, tv: List<ContentItem>, mine: List<ContentItem>): List<ContentItem> {
+        val R = com.eppletv.launcher.content.Recency
+        val keyed = ArrayList<Pair<ContentItem, Long>>(); val seen = HashSet<String>()
+        val rank = HashMap<String, Int>()
+        for (it in tv) if (seen.add(norm(it.title))) {
+            val k = rank.merge(it.linkPkg ?: "", 1, Int::plus)!! - 1
+            val t = maxOf(engaged[it.id] ?: 0L, R.itemTime(ctx, it.id), R.appTime(ctx, it.linkPkg) - k)
+            keyed += it to t
+        }
+        mine.forEachIndexed { i, it -> if (seen.add(norm(it.title))) keyed += it to maxOf(R.itemTime(ctx, it.id), -1L - i) }
+        val out = keyed.sortedByDescending { it.second }.map { it.first }
+        android.util.Log.i("EppleContinue", out.take(6).joinToString(" | ") { it.title + " (" + (it.linkPkg ?: "").substringAfterLast('.') + ")" })
+        return out
+    }
+    private val engaged = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     fun load(ctx: android.content.Context, net: com.eppletv.launcher.content.Net, posters: Boolean = true): List<ContentItem> {
         if (!com.eppletv.launcher.content.TvListings.allowed(ctx)) return emptyList()
         val all = try { com.eppletv.launcher.content.TvListings.read(ctx) } catch (e: Exception) { return emptyList() }
@@ -338,6 +357,7 @@ object ContinueWatching {
             .sortedByDescending { it.engaged }
         val perApp = HashMap<String, Int>(); val seen = HashSet<String>()
         return rows.filter { seen.add(it.pkg + "|" + norm(it.title)) && (perApp.merge(it.pkg, 1, Int::plus) ?: 0) <= PER_APP }.take(MAX).map { p ->
+            engaged["wn:${p.pkg}:${norm(p.title)}"] = p.engaged
             val pct = p.progress.let { if (it > 0) "${(it * 100).toInt()}% watched" else "" }
             ContentItem("wn:${p.pkg}:${norm(p.title)}", p.title, listOf(app(p.pkg), p.episode?.let { e -> if (e.all(Char::isDigit)) "Episode $e" else e } ?: "", pct).filter { it.isNotEmpty() }.joinToString("  ·  "),
                 com.eppletv.launcher.content.TvListings.cleanArt(p.wide!!).first, p.link, p.pkg, "Continue in ${app(p.pkg)}", p.description ?: "",

@@ -83,7 +83,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private lateinit var page: HomePage
     private lateinit var homeLayer: FrameLayout
     private lateinit var sectionLayer: FrameLayout
-    private lateinit var tabs: TabBar
+    private lateinit var tabs: SideBar
     private lateinit var pill: ClockPill
     private lateinit var panel: MenuPanel
     private lateinit var cc: ControlCenter
@@ -99,7 +99,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override var apps: List<AppEntry> = emptyList(); private set
     private var zone = Zone.TABS                     // Epple TV opens on the Home tab, over a wallpaper
     private var section = 0
-    private var tabIdx = 0                          // 0..5 tabs, 6 = the clock (Control Center)
+    private var tabIdx = 0                          // 0..5 menu entries (by section), 6 = the clock (PILL)
     private val screens = arrayOfNulls<Screen>(7)
     private val details = ArrayList<DetailScreen>()
     private var detailReturn = Zone.SECTION
@@ -111,20 +111,29 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private val dimP = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS)
     private val tabsP = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)
     private val homeP = Spring(1f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS)      // the top row and its artwork text
+    private val railP = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)     // the side menu's closed rail
     private val shell = object : FrameClock.Tick {
         override fun tick(dt: Float): Boolean {
-            dimP.step(dt); tabsP.step(dt); homeP.step(dt)
+            dimP.step(dt); tabsP.step(dt); homeP.step(dt); railP.step(dt)
             hero.backdrop.dim(dimP.value)
-            tabs.alpha = tabsP.value; tabs.translationY = -(1f - tabsP.value) * l.pxf(30f)
-            tabs.visibility = if (tabsP.value > 0.01f) View.VISIBLE else View.INVISIBLE
+            val rail = railP.value                 // sections own the left edge: there the menu shows only when opened
+            tabs.alpha = rail; tabs.translationX = -(1f - rail) * l.pxf(30f)
+            tabs.visibility = if (rail > 0.01f) View.VISIBLE else View.INVISIBLE
             val homeClock = if (section == 0 && zone != Zone.FEED && zone != Zone.DETAIL) (1f - dimP.value * 2f).coerceIn(0f, 1f) else 0f
             pill.alpha = if (::cc.isInitialized && cc.open) 1f else maxOf(tabsP.value, homeClock)
             homeLayer.alpha = homeP.value; homeLayer.translationY = -(1f - homeP.value) * l.pxf(260f)
             homeLayer.visibility = if (homeP.value > 0.01f) View.VISIBLE else View.INVISIBLE
-            return !(dimP.atRest() && tabsP.atRest() && homeP.atRest())
+            return !(dimP.atRest() && tabsP.atRest() && homeP.atRest() && railP.atRest())
         }
     }
-    private fun animateShell() = clock.add(shell)
+    private fun animateShell() { syncSide(); clock.add(shell) }
+
+    /** The menu opens while focus is in it; on Home's top level its closed rail stays in view, elsewhere it hides. */
+    private fun syncSide() {
+        if (!::tabs.isInitialized) return
+        tabs.open = zone == Zone.TABS && tabIdx < TAB_NAMES.size
+        railP.target = if (zone == Zone.TABS || section == 0 && (zone == Zone.CONTENT || zone == Zone.HERO)) 1f else 0f
+    }
 
     // The artwork follows focus after a short pause, so fast navigation doesn't flicker the whole screen.
     private var pending: Tile? = null
@@ -199,8 +208,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         root.addView(sectionLayer, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         feed = HomeFeed(this)
 
-        tabs = TabBar(this, l, clock, TAB_NAMES, TAB_ICONS, hero.backdrop).apply { alpha = 0f; visibility = View.INVISIBLE }
-        root.addView(tabs, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(80), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = l.px(44) })
+        tabs = SideBar(this, l, clock, TAB_NAMES, TAB_ICONS, MENU_ORDER, hero.backdrop).apply { alpha = 0f; visibility = View.INVISIBLE }
+        root.addView(tabs, FrameLayout.LayoutParams(tabs.w1, WRAP_CONTENT, Gravity.TOP or Gravity.START).apply { topMargin = l.px(48); leftMargin = l.px(64) })
 
         // Control Center sits under the clock badge (which stays bright above its dim) and under menus and setup.
         tv = com.eppletv.launcher.system.TvControl(this)
@@ -208,8 +217,10 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         root.addView(cc.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         buildControlCenter()
         pill = ClockPill(this, l, clock, hero.backdrop)
-        pill.setOnClickListener { openControlCenter() }
-        root.addView(pill, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(60), Gravity.TOP or Gravity.END).apply { topMargin = l.px(54); rightMargin = l.px(64) })
+        // OK: Control Center, or on the profile orb Epple TV's settings; holding OK on the orb opens the TV's settings.
+        pill.setOnClickListener { if (pill.part == 1) goTab(SETTINGS) else openControlCenter() }
+        pill.setOnLongClickListener { if (pill.part == 1) { open(Intent(Settings.ACTION_SETTINGS), "TV Settings"); true } else false }
+        root.addView(pill, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(70), Gravity.TOP or Gravity.END).apply { topMargin = l.px(49); rightMargin = l.px(64) })
 
         empty = TextView(this).apply { setText(R.string.no_apps); style(Txt.ROW, l.u, Colors.TEXT_DIM); visibility = View.GONE }
         root.addView(empty, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
@@ -410,10 +421,10 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     private fun enterTabs(i: Int) {
-        zone = Zone.TABS; tabIdx = i; tabsP.target = 1f; animateShell(); focusTab()
+        zone = Zone.TABS; tabIdx = i; tabsP.target = 1f; page.blur(); animateShell(); focusTab()
         if (section == 0 && !hero.resting) { setShelf(false); showWallpaper() }
     }
-    private fun focusTab() { if (tabIdx >= TAB_NAMES.size) pill.requestFocus() else tabs.tabs[tabIdx].requestFocus() }
+    private fun focusTab() { syncSide(); if (tabIdx >= TAB_NAMES.size) pill.requestFocus() else tabs.tabs[tabIdx].requestFocus() }
 
     /** Home's rows: the top row and its artwork text slide away, the rows take the screen. */
     private fun enterFeed() {
@@ -628,7 +639,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     override fun onResume() {
-        super.onResume(); if (::setup.isInitialized) setup.refresh()
+        super.onResume(); com.eppletv.launcher.content.Recency.returned(this)
+        if (::setup.isInitialized) setup.refresh()
         if (::setup.isInitialized && setup.done && !askedListings()) askListings()
         refreshChannels()
     }
@@ -719,7 +731,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     private fun open(intent: Intent, name: String, opts: Bundle? = null): Boolean = try {
-        startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), opts); true
+        startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), opts)
+        com.eppletv.launcher.content.Recency.app(this, intent.component?.packageName ?: intent.`package`); true
     } catch (e: ActivityNotFoundException) {
         toast(getString(R.string.cannot_open, name)); false
     } catch (e: SecurityException) {
@@ -893,18 +906,27 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         dirX = dx; dirY = dy
         when (zone) {
             Zone.CONTENT -> when {
+                dx < 0 && page.atLeft() -> enterTabs(section)
+                dy < 0 && page.atTop() && !hero.hasItems -> enterTabs(PILL)
                 dy > 0 && page.atTop() -> enterFeed()
                 !page.move(dx, dy) -> if (hero.hasItems) enterHero() else enterTabs(0)
             }
-            Zone.HERO -> if (dx != 0) hero.step(dx) else if (dy < 0) enterTabs(0) else enterContent()
-            Zone.TABS -> when {
-                dx != 0 -> {
-                    tabIdx = (tabIdx + dx).coerceIn(0, TAB_NAMES.size); focusTab()
-                    main.removeCallbacks(switchTab); if (tabIdx < TAB_NAMES.size) main.postDelayed(switchTab, 260)
+            Zone.HERO -> if (dx != 0) { if (!hero.step(dx) && dx < 0) enterTabs(section) } else if (dy < 0) enterTabs(PILL) else enterContent()
+            // The clock: Right moves to the profile orb, Left back to Control Center and then to the menu; Down leaves.
+            Zone.TABS -> if (tabIdx >= TAB_NAMES.size) when {
+                dx > 0 -> pill.part = 1
+                dx < 0 -> if (pill.part == 1) pill.part = 0 else { tabIdx = section; focusTab() }
+                dy > 0 -> intoSection()
+            } else when {
+                // The menu: Up and Down move through it (Up past the top reaches the clock), Right goes into the section.
+                dy != 0 -> {
+                    val pos = MENU_ORDER.indexOf(tabIdx) + dy
+                    if (pos < 0) { main.removeCallbacks(switchTab); tabIdx = PILL; focusTab() }
+                    else if (pos < MENU_ORDER.size) { tabIdx = MENU_ORDER[pos]; focusTab(); main.removeCallbacks(switchTab); main.postDelayed(switchTab, 260) }
                 }
-                dy > 0 -> { main.removeCallbacks(switchTab); if (tabIdx < TAB_NAMES.size) showSection(tabIdx); intoSection() }
+                dx > 0 -> { main.removeCallbacks(switchTab); showSection(tabIdx); intoSection() }
             }
-            Zone.FEED -> if (!feed.key(dx, dy)) enterContent()
+            Zone.FEED -> if (!feed.key(dx, dy)) { if (dx < 0) enterTabs(0) else enterContent() }
             // Up out of a section reaches the tab bar; from Settings (not a tab) it lands on the clock, where it opened from.
             Zone.SECTION -> if (screens[section]?.key(dx, dy) == false) enterTabs(if (section < TAB_NAMES.size) section else TAB_NAMES.size)
             Zone.DETAIL -> details.lastOrNull()?.key(dx, dy)
@@ -916,7 +938,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private fun intoSection() {
         if (section == 0) { tabsP.target = 0f; animateShell(); if (hero.hasItems) enterHero() else enterContent(); return }
         zone = Zone.SECTION
-        screens[section]?.focus()
+        screens[section]?.focus(); animateShell()
     }
 
     /** BACK walks up: details -> section -> tab bar -> Home's top row; at the top row it leaves the app. */
@@ -924,7 +946,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         Zone.DETAIL -> { closeDetail(); true }
         Zone.SECTION -> { if (screens[section]?.back() != true) { if (section < TAB_NAMES.size) enterTabs(section) else { showSection(0); enterTabs(0) } }; true }
         Zone.FEED -> { if (!feed.back()) enterContent(); true }
-        Zone.TABS -> if (section != 0) { showSection(0); enterTabs(0); true } else false
+        Zone.TABS -> { main.removeCallbacks(switchTab); if (tabIdx < TAB_NAMES.size) showSection(tabIdx); intoSection(); true }
         Zone.CONTENT -> { if (!page.atTop()) { dirX = 0; dirY = -1; page.toTop() } else enterTabs(0); true }
         Zone.HERO -> { enterContent(); true }
     }
@@ -932,8 +954,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private companion object {
         // Settings is not a tab: it opens from the Epple TV icon in the TV's apps, and from Control Center (SETTINGS).
         // Library was removed: Watchlist and Favourites stay reachable from Home's rows below the top row.
-        val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Apps", "Search")
-        val TAB_ICONS = listOf(TabIcons.HOME, TabIcons.MOVIES, TabIcons.TV, TabIcons.APPS, TabIcons.SEARCH)
+        // Indexed by section; the side menu lists them in MENU_ORDER (Search first, Settings last).
+        val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Apps", "Search", "Settings")
+        val TAB_ICONS = listOf(TabIcons.HOME, TabIcons.MOVIES, TabIcons.TV, TabIcons.APPS, TabIcons.SEARCH, TabIcons.SETTINGS)
+        val MENU_ORDER = listOf(4, 0, 1, 2, 3, 5)
+        const val PILL = 6
         const val APPS = 3
         const val SEARCH = 4
         const val SETTINGS = 5
