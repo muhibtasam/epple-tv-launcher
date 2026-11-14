@@ -294,13 +294,17 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
             val w = pw + (ww - pw) * (1f - kotlin.math.abs(d).coerceIn(0f, 1f))
             c.translationX = x - l.left
             c.shown = w
-            c.visibility = if (x < screen && x + w > -pw) VISIBLE else INVISIBLE
+            // The previous title peeks in on the left as usual, except a title that is only there because the row
+            // wraps: on the first title the left side stays empty (Left still goes round to the last title).
+            val wrapped = d < 0f && i > col
+            c.alpha = if (wrapped) 0f else 1f
+            c.visibility = if (i == col || (!wrapped && x < screen && x + w > -pw)) VISIBLE else INVISIBLE   // an invisible view can't take focus
         }
     }
 
     fun failed(text: String) { loaded = true; status.text = text; status.visibility = VISIBLE }
 
-    fun focus(): Boolean { val c = cards.getOrNull(col) ?: return false; place(); c.requestFocus(); return true }
+    fun focus(): Boolean { val c = cards.getOrNull(col) ?: return false; c.visibility = VISIBLE; place(); c.requestFocus(); return true }
 
     fun move(dx: Int): Boolean {
         if (poster) {

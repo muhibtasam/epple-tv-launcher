@@ -158,7 +158,7 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
         view.addView(info, FrameLayout.LayoutParams(l.px(1300), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(Look.INFO_TOP) })
         view.addView(stack, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         view.addView(empty, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
-        stack.onFocus = { s, c -> info.show(c.item, s.title); nav.art(c.item) }
+        stack.onFocus = { s, c -> info.show(c.item, ""); nav.art(c.item) }
         stack.onRow = { r -> for (i in r..minOf(sources.size - 1, r + 3)) load(i) }
     }
 
@@ -236,7 +236,7 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             version = nav.user.version
             sources.forEachIndexed { i, s -> if (s.dynamic && i in requested) load(i, force = true) }
         }
-        stack.current?.item?.let { info.show(it, stack.current!!.title) }
+        stack.current?.item?.let { info.show(it, "") }
         stack.trim()                                   // artwork for the rows around the focus comes back
     }
 
