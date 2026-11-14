@@ -561,7 +561,12 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         return ri?.activityInfo?.packageName == packageName
     }
 
-    override fun setupFinished(prefsChanged: Boolean, providers: Set<com.eppletv.launcher.content.Credentials.Key>) { applyChanges(prefsChanged, providers) }
+    override fun setupFinished(prefsChanged: Boolean, providers: Set<com.eppletv.launcher.content.Credentials.Key>) {
+        applyChanges(prefsChanged, providers)
+        while (details.isNotEmpty()) sectionLayer.removeView(details.removeAt(details.size - 1).view)
+        if (zone == Zone.FEED) leaveFeed()
+        showSection(0); enterTabs(0)                         // a finished setup lands on Home
+    }
     override fun setupClosed(prefsChanged: Boolean, providers: Set<com.eppletv.launcher.content.Credentials.Key>) { applyChanges(prefsChanged, providers) }
 
     /**

@@ -371,7 +371,12 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
     init {
         view.addView(title, FrameLayout.LayoutParams(l.px(560), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(170) })
         view.addView(about, FrameLayout.LayoutParams(l.px(560), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(290) })
-        view.addView(list, FrameLayout.LayoutParams(l.px(1060), MATCH_PARENT).apply { leftMargin = l.px(760) })
+        // Rows scrolling up stop at the tab bar instead of sliding under its glass: the scrolling list sits in a
+        // still frame that clips everything above the bar's lower edge (focused rows still grow sideways).
+        val frame = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
+        frame.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT).apply { leftMargin = l.px(40); rightMargin = l.px(40) })
+        frame.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ -> v.clipBounds = android.graphics.Rect(0, l.px(136), v.width, v.height) }
+        view.addView(frame, FrameLayout.LayoutParams(l.px(1140), MATCH_PARENT).apply { leftMargin = l.px(720) })
         build()
     }
 
