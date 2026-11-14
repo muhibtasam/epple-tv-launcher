@@ -533,7 +533,8 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
     private val b = ImageView(nav.ctx).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f }
     private val time = TextView(nav.ctx).apply {
         typeface = com.eppletv.launcher.ui.Type.of(300, com.eppletv.launcher.ui.Type.Face.NUM); setTextColor(Colors.WHITE)
-        setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, l.pxf(168f)); letterSpacing = -0.04f; includeFontPadding = false
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, l.pxf(168f)); letterSpacing = -0.02f; includeFontPadding = false
+        isSingleLine = true; ellipsize = null
         setShadowLayer(l.pxf(24f), 0f, 0f, 0x66000000) }
     private val date = TextView(nav.ctx).apply {
         typeface = com.eppletv.launcher.ui.Type.of(500); setTextColor(0xEBFFFFFF.toInt())
@@ -557,7 +558,9 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
         // Soft radial shades under each corner's white text and marks (and a gentle bottom gradient under the clock).
         view.addView(Shade(nav.ctx, l), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         val clock = LinearLayout(nav.ctx).apply { orientation = LinearLayout.VERTICAL }
-        clock.addView(time); clock.addView(date, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(6) })
+        // A fixed, generous width: a wrap-content clock kept the width of the time it first showed ("7:28") and cut a
+        // wider one ("8:01" showed as "8:0").
+        clock.addView(time, LinearLayout.LayoutParams(l.px(900), WRAP_CONTENT)); clock.addView(date, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(6) })
         view.addView(clock, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { leftMargin = l.px(120); bottomMargin = l.px(100) })
         view.addView(wifi, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(56), Gravity.TOP or Gravity.START).apply { leftMargin = l.px(110); topMargin = l.px(80) })
         view.addView(logo, FrameLayout.LayoutParams(l.px(210), l.px(65), Gravity.TOP or Gravity.END).apply { rightMargin = l.px(120); topMargin = l.px(76) })

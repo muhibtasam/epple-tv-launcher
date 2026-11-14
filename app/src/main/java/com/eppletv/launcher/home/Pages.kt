@@ -243,6 +243,8 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
  * Apps without a content source show their own colours and name instead, never invented content.
  */
 class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, private val repo: ContentRepository, root: FrameLayout) : FrameClock.Tick {
+    /** The next title arrives in [ms]: the active dot fills over that time (0: no rotation). */
+    fun rotationTimer(ms: Long) = if (ms > 0) dots.timer(ms) else dots.stopTimer()
     val backdrop = Backdrop(ctx, clock)
     private class Layer(val box: LinearLayout, val eyebrow: TextView, val title: TextView, val logo: ImageView, val meta: MetaRow, val summary: TextView, val a: Spring)
     private var wantLogo: String? = null
@@ -410,11 +412,14 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
  */
 @SuppressLint("ViewConstructor")
 internal class Dots(ctx: Context, private val l: Layout, private val clock: FrameClock) : View(ctx), FrameClock.Tick {
-    // A soft shadow keeps the dim dots visible over bright artwork.
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { setShadowLayer(l.pxf(4f), 0f, l.pxf(1f), 0x73000000) }
-    private val r = RectF()
+    // A soft shadow keeps the dots visible over bright artwork.
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { setShadowLayer(l.pxf(4f), 0f, l.pxf(1f), 0x59000000) }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Colors.WHITE }
+    private val r = RectF(); private val clip = android.graphics.Path()
     private var n = 0; private var i = 0; private var from = 0
     private val t = Spring(1f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
+    /** The active pill fills with white over the time until the next title (0 = no timer: it is simply white). */
+    private var since = 0L; private var span = 0L
     fun set(count: Int, index: Int) {
         if (count == n && index == i) return
         from = if (count == n) i else index
@@ -422,24 +427,38 @@ internal class Dots(ctx: Context, private val l: Layout, private val clock: Fram
         if (from == i) t.snapTo(1f) else { t.snapTo(0f); t.target = 1f; clock.add(this) }
         invalidate()
     }
+    /** The next title comes in [ms] (0: no automatic rotation). */
+    fun timer(ms: Long) { since = android.os.SystemClock.uptimeMillis(); span = ms; invalidate() }
+    fun stopTimer() { span = 0L; invalidate() }
     override fun tick(dt: Float): Boolean { t.step(dt); invalidate(); return !t.atRest() }
     override fun onDraw(c: Canvas) {
         if (n < 2) return
         val shown = minOf(n, MAX)
         val first = (i - shown / 2).coerceIn(0, n - shown)
-        val d = l.pxf(8f); val wide = l.pxf(26f); val gap = l.pxf(10f)
+        val d = l.pxf(9f); val wide = l.pxf(34f); val gap = l.pxf(11f)
         val total = (shown - 1) * (d + gap) + wide
         var x = width / 2f - total / 2f
         val cy = height / 2f
         val k = t.value.coerceIn(0f, 1f)
+        val progress = if (span > 0) ((android.os.SystemClock.uptimeMillis() - since).toFloat() / span).coerceIn(0f, 1f) else 1f
         for (j in first until first + shown) {
             val grow = when (j) { i -> k; from -> 1f - k; else -> 0f }
-            val w = d + (wide - d) * grow
-            p.color = Colors.lerp(0x8CFFFFFF.toInt(), Colors.WHITE, grow)
-            r.set(x, cy - d / 2f, x + w, cy + d / 2f)
-            c.drawRoundRect(r, d / 2f, d / 2f, p)
+            // Dots at an edge with more titles beyond it get smaller, as on tvOS.
+            val fromEnd = minOf(if (first + shown < n) first + shown - 1 - j else 99, if (first > 0) j - first else 99)
+            val s = if (grow > 0f) 1f else when (fromEnd) { 0 -> 0.45f; 1 -> 0.75f; else -> 1f }
+            val dd = d * s
+            val w = dd + (wide - dd) * grow
+            p.color = 0x73FFFFFF
+            r.set(x, cy - dd / 2f, x + w, cy + dd / 2f)
+            c.drawRoundRect(r, dd / 2f, dd / 2f, p)
+            if (j == i) {                                            // the white part of the active pill
+                val fw = w * (if (grow >= 0.99f) progress else 1f).coerceAtLeast(dd / w)
+                c.save(); clip.reset(); clip.addRoundRect(r, dd / 2f, dd / 2f, android.graphics.Path.Direction.CW); c.clipPath(clip)
+                c.drawRect(x, cy - dd / 2f, x + fw, cy + dd / 2f, fill); c.restore()
+            }
             x += w + gap
         }
+        if (span > 0 && progress < 1f) postInvalidateDelayed(50)     // the fill moves at 20 fps: cheap, and smooth at this size
     }
     private companion object { const val MAX = 9 }
 }
@@ -475,7 +494,6 @@ object Brand {
     private val fixed = linkedMapOf(
         "Prime Video" to 0xFF1A98FF.toInt(), "Netflix" to 0xFFE50914.toInt(), "Crunchyroll" to 0xFFF47521.toInt(),
         "YouTube" to 0xFFFF2D2D.toInt(), "Stremio" to 0xFF8F6BFF.toInt(), "tapmad" to 0xFF3BD16F.toInt(),
-        "Apple TV" to 0xFF191919.toInt(),
     )
     @Volatile private var learned: Map<String, Int> = emptyMap()
 

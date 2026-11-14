@@ -250,8 +250,10 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
     }
 
     /** Fills the row; [bind] sets each card up. An empty list shows [emptyText] (or hides the row when null). */
-    fun set(items: List<ContentItem>, emptyText: String? = null, bind: (Card, ContentItem) -> Unit) {
+    fun set(list: List<ContentItem>, emptyText: String? = null, bind: (Card, ContentItem) -> Unit) {
         strip.removeAllViews(); cards.clear()
+        // A loop needs enough cards to fill the screen: a short row repeats its titles (2 titles -> 2,2,2,...).
+        val items = if (poster && list.size in 2 until FILL) List(((FILL + list.size - 1) / list.size) * list.size) { list[it % list.size] } else list
         items.forEachIndexed { i, it ->
             val c = if (poster) PosterCard(context, l, clock) else Card(context, l, clock, l.px(cw), l.px(ch), titled)
             c.item = it; bind(c, it)
@@ -266,6 +268,14 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         col = col.coerceIn(0, max(0, cards.size - 1))
         if (poster) { pt = col.toFloat(); ps.snapTo(pt); layoutPosters() }
         place(); ensureLoaded()
+    }
+
+    /** Back to the first title, animated (the row was left for another one). */
+    fun rewind() {
+        if (cards.isEmpty()) return
+        col = 0; first = 0
+        if (poster) { pt += slot(0, pt); clock.add(this) } else { sx.target = 0f; clock.add(this) }
+        ensureLoaded()
     }
 
     /** Back to the first title, without animation (the section was left). */
@@ -346,6 +356,7 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         if (poster) { ps.step(dt); layoutPosters(); return !ps.atRest() }
         sx.step(dt); strip.translationX = sx.value; return !sx.atRest()
     }
+    private companion object { const val FILL = 10 }
 }
 
 /**
@@ -396,6 +407,7 @@ class ShelfStack(ctx: Context, private val l: Layout, private val clock: FrameCl
         var n = r + dy
         while (n in shelves.indices && !navigable(n)) n += dy
         if (n !in shelves.indices) return dy > 0
+        current?.rewind()                                   // the row left behind goes back to its first title
         r = n; focus(); return true
     }
 

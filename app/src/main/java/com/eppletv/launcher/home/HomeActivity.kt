@@ -147,10 +147,13 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private val rotate = object : Runnable {
         override fun run() {
             if (resumed && !panel.open && section == 0 && (zone == Zone.HERO || zone == Zone.CONTENT && page.atTop())) hero.step(1, wrap = true)
-            if (prefs.rotateMs > 0) main.postDelayed(this, prefs.rotateMs)
+            if (prefs.rotateMs > 0) { main.postDelayed(this, prefs.rotateMs); hero.rotationTimer(prefs.rotateMs) }
         }
     }
-    private fun restartRotation() { main.removeCallbacks(rotate); if (resumed && prefs.rotateMs > 0) main.postDelayed(rotate, prefs.rotateMs) }
+    private fun restartRotation() {
+        main.removeCallbacks(rotate)
+        if (resumed && prefs.rotateMs > 0) { main.postDelayed(rotate, prefs.rotateMs); hero.rotationTimer(prefs.rotateMs) } else hero.rotationTimer(0)
+    }
 
     private val idle = Runnable { if (resumed && !panel.open && !cc.open && !setup.active) saver.start() }
     private fun restartIdle() { main.removeCallbacks(idle); if (resumed && prefs.saverMs > 0) main.postDelayed(idle, prefs.saverMs) }
