@@ -186,6 +186,8 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
     override fun reset() { stack.reset() }
 
     protected fun reload(i: Int) { if (built) load(i, force = true) }
+    /** Rows whose next load starts again at their first title (a refreshed Continue Watching shows its new first). */
+    protected val toFirst = HashSet<Int>()
 
     private fun load(i: Int, force: Boolean = false) {
         if (!force && !requested.add(i)) return
@@ -199,6 +201,7 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             val hadFocus = shelf.hasFocus()                    // a row rebuilt under the focus keeps it
             nav.content.prefetchLogos(items, 4)               // the first titles' logos are ready when the row is reached
             shelf.set(items, src.emptyText) { c, it -> c.bind(it.title, it.meta.split("  ·  ").take(2).joinToString(" · ")); wire(c) }
+            if (toFirst.remove(i)) shelf.reset()
             stack.relayout()
             if (hadFocus) stack.focus()
             updateEmpty()
@@ -299,7 +302,9 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
     }
     /** The TV's Watch Next list changes outside Epple TV: it is read again every time Home's rows open. */
     private var shownOnce = false
-    override fun show() { super.show(); if (shownOnce) reload(0); shownOnce = true }
+    override fun show() { super.show(); if (shownOnce) { toFirst += 0; reload(0) }; shownOnce = true }
+    /** Back from a title or app: only Continue Watching is read again (its order changed) and starts at its new first. */
+    fun refreshContinue() { toFirst += 0; reload(0) }
 
     override fun extraMenu(it: ContentItem) =
         if (nav.user.contains(UserLibrary.Kind.CONTINUE, it.id)) listOf("Remove from Continue Watching" to { nav.user.remove(UserLibrary.Kind.CONTINUE, it.id) }) else emptyList()
@@ -315,22 +320,26 @@ object ContinueWatching {
     fun norm(t: String) = t.trim().lowercase(java.util.Locale.ROOT).replace(Regex("\\s+"), " ")
 
     /**
-     * The apps' rows and the titles opened from Epple TV in one list, the most recent first: a title's own time when
-     * the app gave one (Watch Next) or Epple TV opened it, else when its app was last used, keeping the app's order.
+     * The apps' rows and the titles opened from Epple TV in one list, the most recent first. Each title's time is the
+     * newest of: when the TV's Watch Next says it was watched, and when it was last watched from Epple TV (by app and
+     * name, see Recency). Titles with neither follow their app's last use, in the app's own order, behind any title
+     * of that app that has its own time; titles never watched from here keep the list's order at the end.
      */
     fun merge(ctx: android.content.Context, tv: List<ContentItem>, mine: List<ContentItem>): List<ContentItem> {
         val R = com.eppletv.launcher.content.Recency
         val keyed = ArrayList<Pair<ContentItem, Long>>(); val seen = HashSet<String>()
         val rank = HashMap<String, Int>()
         for (it in tv) if (seen.add(norm(it.title))) {
-            val k = rank.merge(it.linkPkg ?: "", 1, Int::plus)!! - 1
-            val t = maxOf(engaged[it.id] ?: 0L, R.itemTime(ctx, it.id), R.appTime(ctx, it.linkPkg) - k)
-            keyed += it to t
+            val k = rank.merge(it.linkPkg ?: "", 1, Int::plus)!!
+            val own = maxOf(engaged[it.id] ?: 0L, R.titleTime(ctx, it.linkPkg, it.title))
+            keyed += it to (if (own > 0) own else R.appTime(ctx, it.linkPkg) - 1000L * k)
         }
-        mine.forEachIndexed { i, it -> if (seen.add(norm(it.title))) keyed += it to maxOf(R.itemTime(ctx, it.id), -1L - i) }
-        val out = keyed.sortedByDescending { it.second }.map { it.first }
-        android.util.Log.i("EppleContinue", out.take(6).joinToString(" | ") { it.title + " (" + (it.linkPkg ?: "").substringAfterLast('.') + ")" })
-        return out
+        mine.forEachIndexed { i, it -> if (seen.add(norm(it.title))) keyed += it to R.titleTime(ctx, it.linkPkg, it.title).let { t -> if (t > 0) t else -1L - i } }
+        val sorted = keyed.sortedByDescending { it.second }
+        val fmt = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.ROOT)
+        android.util.Log.i("EppleContinue", "order: " + sorted.take(8).mapIndexed { i, (it, t) ->
+            "#$i ${it.title} (${(it.linkPkg ?: "").substringAfterLast('.')}) ${if (t > 0) fmt.format(java.util.Date(t)) else "-"}" }.joinToString(" | "))
+        return sorted.map { it.first }
     }
     private val engaged = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
@@ -344,6 +353,8 @@ object ContinueWatching {
             it.wide != null && com.eppletv.launcher.content.TvListings.linkAllowed(it.link, it.pkg) &&
             (pm.getLeanbackLaunchIntentForPackage(it.pkg) ?: pm.getLaunchIntentForPackage(it.pkg)) != null }
             .sortedByDescending { it.engaged }
+        // Rows without times (an app's own Continue Watching channel) list the newest first: a new first title was just watched.
+        rows.filter { !it.watchNext }.groupBy { it.pkg }.forEach { (pkg, l) -> com.eppletv.launcher.content.Recency.front(ctx, pkg, l.first().title) }
         val perApp = HashMap<String, Int>(); val seen = HashSet<String>()
         return rows.filter { seen.add(it.pkg + "|" + norm(it.title)) && (perApp.merge(it.pkg, 1, Int::plus) ?: 0) <= PER_APP }.take(MAX).map { p ->
             engaged["wn:${p.pkg}:${norm(p.title)}"] = p.engaged

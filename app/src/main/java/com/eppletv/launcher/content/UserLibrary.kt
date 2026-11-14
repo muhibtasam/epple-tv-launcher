@@ -23,7 +23,6 @@ class UserLibrary(ctx: Context) {
     /** Adds (or moves to the front) [item]; the oldest entries beyond the list's size are dropped. */
     fun add(l: Kind, item: ContentItem) {
         val a = load(l); a.removeAll { it.id == item.id }; a.add(0, item)
-        if (l == Kind.CONTINUE) Recency.item(app, item.id)
         while (a.size > l.max) a.removeAt(a.size - 1)
         save(l)
     }

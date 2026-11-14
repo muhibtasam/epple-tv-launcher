@@ -660,7 +660,9 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     override fun onResume() {
-        super.onResume(); com.eppletv.launcher.content.Recency.returned(this)
+        super.onResume()
+        // Back from something opened from here: what was watched moves to the front of Continue Watching (that row only).
+        if (com.eppletv.launcher.content.Recency.returned(this) != null && ::feed.isInitialized) feed.refreshContinue()
         if (::setup.isInitialized) setup.refresh()
         if (::setup.isInitialized && setup.done && !askedListings()) askListings()
         refreshChannels()
@@ -757,7 +759,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     private fun open(intent: Intent, name: String, opts: Bundle? = null): Boolean = try {
         startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), opts)
-        com.eppletv.launcher.content.Recency.app(this, intent.component?.packageName ?: intent.`package`); true
+        com.eppletv.launcher.content.Recency.opened(this, intent.component?.packageName ?: intent.`package`, null); true
     } catch (e: ActivityNotFoundException) {
         toast(getString(R.string.cannot_open, name)); false
     } catch (e: SecurityException) {

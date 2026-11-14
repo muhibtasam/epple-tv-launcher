@@ -75,6 +75,7 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
     fun open(item: ContentItem?, appPkg: String, openApp: () -> Unit) {
         if (busy) return
         if (item == null) return openApp()
+        Recency.opened(app, appPkg, item.title)                // what was opened, for Continue Watching's order
         // 1. The item carries its own link (YouTube, Tapmad's YouTube videos, Stremio).
         item.linkUri?.let { uri -> return if (start(item.linkPkg ?: appPkg, uri)) Unit else openApp() }
         // 2. A TMDB title on a service Watchmode knows: look its link up (cached).
@@ -118,7 +119,7 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
         // An app's own link from its Android TV row (Prime Video's intent: links): kept inside that app (TvListings.intent).
         if (uri.startsWith("intent:") || "#Intent;" in uri) {
             val i = TvListings.intent(app, uri, pkg) ?: run { Log.i(TAG, "$pkg row link refused"); return false }
-            return try { app.startActivity(i); Recency.app(app, pkg); Log.i(TAG, "opened row title in $pkg"); true } catch (e: Exception) { false }
+            return try { app.startActivity(i); Log.i(TAG, "opened row title in $pkg"); true } catch (e: Exception) { false }
         }
         val p = providers[pkg]
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -126,7 +127,7 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
         p?.extras?.forEach { (k, v) -> intent.putExtra(k, v) }
         val ok = try { pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY).isNotEmpty() } catch (_: RuntimeException) { false }
         if (!ok) { Log.i(TAG, "$pkg does not open ${uri.substringBefore('?')}"); return false }
-        return try { app.startActivity(intent); Recency.app(app, pkg); Log.i(TAG, "opened title in $pkg"); true } catch (e: Exception) { false }
+        return try { app.startActivity(intent); Log.i(TAG, "opened title in $pkg"); true } catch (e: Exception) { false }
     }
 
     fun stop() { if (ioUsed) io.shutdown() }
