@@ -27,16 +27,20 @@ object Sources {
     val region: String get() = override.ifEmpty { BuildConfig.CONTENT_REGION }.ifEmpty { Locale.getDefault().country }.ifEmpty { "US" }.uppercase(Locale.US)
 
     /** [debugCinemetaFor]: debug builds only, lets an emulator without Stremio exercise the content pipeline. */
-    fun all(debugCinemetaFor: String? = null): List<ContentSource> = listOf(
-        Cinemeta(setOfNotNull(Apps.STREMIO, debugCinemetaFor)),
-        Showcase(
-            mapOf(
-                Apps.NETFLIX to Service("Netflix", watchmode = "203", tmdb = "8"),
-                Apps.PRIME to Service("Prime Video", watchmode = "26", tmdb = "119|9"),
-                Apps.CRUNCHYROLL to Service("Crunchyroll", watchmode = "80,79", tmdb = "283", indian = false),
-            ),
-            Keys(), { region },
+    private val showcase = Showcase(
+        mapOf(
+            Apps.NETFLIX to Service("Netflix", watchmode = "203", tmdb = "8"),
+            Apps.PRIME to Service("Prime Video", watchmode = "26", tmdb = "119|9"),
+            Apps.CRUNCHYROLL to Service("Crunchyroll", watchmode = "80,79", tmdb = "283", indian = false),
         ),
+        Keys(), { region },
+    )
+
+    fun all(ctx: android.content.Context, debugCinemetaFor: String? = null): List<ContentSource> = listOf(
+        Cinemeta(setOfNotNull(Apps.STREMIO, debugCinemetaFor)),
+        NetflixTop10(showcase, Keys(), { region }),
+        AppChannels(ctx, mapOf(Apps.PRIME to "Prime Video")),           // Prime's own rows, once TV listings may be read
+        showcase,
         YouTube({ Credentials.get(Credentials.Key.YOUTUBE) }, { region }),
         YouTubeChannel(Apps.TAPMAD, "tapmad", TAPMAD_UPLOADS) { Credentials.get(Credentials.Key.YOUTUBE) },
     )
@@ -159,23 +163,44 @@ class Showcase(private val services: Map<String, Service>, private val keys: Key
         for ((k, p) in picks) {
             if (out.size == POOL) break
             val o = known[k] ?: try { tmdb(net, "${p.type}-${p.id}", 7 * 24 * HOUR, "${p.type}/${p.id}") } catch (e: Exception) { continue }
-            val backdrop = o.optString("backdrop_path"); if (backdrop.isEmpty() || backdrop == "null") continue
-            val movie = p.type == "movie"
-            val g = o.optJSONArray("genres")?.let { a -> (0 until a.length()).map { a.getJSONObject(it).optString("name") } }
-                ?: o.optJSONArray("genre_ids")?.let { a -> (0 until a.length()).mapNotNull { genres[a.getInt(it)] } } ?: emptyList()
-            val vote = o.optDouble("vote_average", 0.0)
-            val date = o.optString(if (movie) "release_date" else "first_air_date")
-            val lang = o.optString("original_language")
+            val date = o.optString(if (p.type == "movie") "release_date" else "first_air_date")
             val trend = trending[k]
             val kind = when { p.isNew -> "New on ${svc.name}"; trend != null -> "Trending on ${svc.name}"; else -> "Popular on ${svc.name}" }
-            out.add(ContentItem(k, o.optString(if (movie) "title" else "name"),
-                join(year(date), if (movie) "Movie" else "Series", if (lang != "en") languageName(lang) else "",
-                    g.take(2).joinToString(", "), if (vote > 0) "★ %.1f".format(Locale.US, vote) else ""),
-                "https://image.tmdb.org/t/p/original$backdrop", null, null, kind, o.optString("overview"),
-                weight = weight(o.optDouble("popularity", 0.0), date, trend), origin = if (lang in INDIAN) "in" else "intl",
-                posterUrl = o.optString("poster_path").let { if (it.isEmpty() || it == "null") "" else "https://image.tmdb.org/t/p/w342$it" }))
+            build(o, p.type, kind, weight(o.optDouble("popularity", 0.0), date, trend), genres)?.let { out.add(it) }
         }
         return out
+    }
+
+    /** One TMDB title as a showcase item (null without a backdrop). */
+    private fun build(o: JSONObject, type: String, kind: String, weight: Double, genres: Map<Int, String>): ContentItem? {
+        val backdrop = o.optString("backdrop_path"); if (backdrop.isEmpty() || backdrop == "null") return null
+        val movie = type == "movie"
+        val g = o.optJSONArray("genres")?.let { a -> (0 until a.length()).map { a.getJSONObject(it).optString("name") } }
+            ?: o.optJSONArray("genre_ids")?.let { a -> (0 until a.length()).mapNotNull { genres[a.getInt(it)] } } ?: emptyList()
+        val vote = o.optDouble("vote_average", 0.0)
+        val date = o.optString(if (movie) "release_date" else "first_air_date")
+        val lang = o.optString("original_language")
+        return ContentItem("$type:${o.optInt("id")}", o.optString(if (movie) "title" else "name"),
+            join(year(date), if (movie) "Movie" else "Series", if (lang != "en") languageName(lang) else "",
+                g.take(2).joinToString(", "), if (vote > 0) "★ %.1f".format(Locale.US, vote) else ""),
+            "https://image.tmdb.org/t/p/original$backdrop", null, null, kind, o.optString("overview"),
+            weight = weight, origin = if (lang in INDIAN) "in" else "intl",
+            posterUrl = o.optString("poster_path").let { if (it.isEmpty() || it == "null") "" else "https://image.tmdb.org/t/p/w342$it" })
+    }
+
+    /**
+     * A title found on TMDB by its exact name (Netflix's Top 10 gives names only): the most popular result whose title
+     * matches, else the first result. Cached for a month: the same week's names are looked up once.
+     */
+    fun find(net: Net, type: String, name: String, kind: String, weight: Double): ContentItem? {
+        val q = java.net.URLEncoder.encode(name, "UTF-8")
+        val res = tmdb(net, "find-$type-${name.lowercase(Locale.ROOT).hashCode()}", 30 * 24 * HOUR, "search/$type?query=$q&include_adult=false")
+            .optJSONArray("results") ?: return null
+        val all = (0 until res.length()).map { res.getJSONObject(it) }
+        val norm = { t: String -> t.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "") }
+        val pick = all.filter { norm(it.optString(if (type == "movie") "title" else "name")) == norm(name) }
+            .maxByOrNull { it.optDouble("popularity", 0.0) } ?: all.firstOrNull() ?: return null
+        return build(pick, type, kind, weight, genreNames(net))
     }
 
     /** 0.15..1: popularity (log scale) 45%, release recency (two years) 25%, trending 15%, plus a floor so nothing is excluded. */
@@ -292,4 +317,59 @@ private fun youtubeItems(items: JSONArray, kind: String, idOf: (JSONObject) -> S
         if (out.size == 10) break
     }
     return out
+}
+
+/**
+ * Netflix on Home. Netflix publishes nothing to other launchers, so its titles are Netflix's own official weekly Top 10
+ * for the country (Netflix's public all-weeks-countries data, trimmed to the latest week by the VYRO project's weekly job
+ * and served from its site), matched to TMDB by name for artwork and details, then the [Showcase]'s new and popular
+ * titles on Netflix. Each opens at the title inside Netflix through [TitleLauncher] (Watchmode's Netflix id).
+ * A country Netflix doesn't rank falls back to the global (ZZ) list when present, else to the showcase alone.
+ */
+class NetflixTop10(private val showcase: Showcase, private val keys: Keys, private val region_: () -> String) : ContentSource {
+    override val key = "netflix-top10-1"
+    override val ordered = true                                   // Top 10 by rank, then new on Netflix
+    override val uses = setOf(Credentials.Key.TMDB, Credentials.Key.WATCHMODE, Credentials.Key.TRAKT)
+    override val ready get() = keys.tmdb.isNotEmpty()
+    override fun handles(pkg: String) = pkg == Apps.NETFLIX
+
+    class Title(val name: String, val movie: Boolean, val rank: Int)
+
+    override fun load(net: Net, pkg: String): List<ContentItem> {
+        val top = try {
+            val tsv = net.cached("netflix-top10", 12 * HOUR, URL)
+            top10(tsv, region_()).ifEmpty { top10(tsv, "ZZ") }
+        } catch (e: Exception) { Log.w(TAG, "top 10: ${e.javaClass.simpleName} ${e.message}"); emptyList() }
+        val out = ArrayList<ContentItem>()
+        val country = Locale("", region_()).getDisplayCountry(Locale.ENGLISH).ifEmpty { region_() }
+        for (t in top) try {
+            showcase.find(net, if (t.movie) "movie" else "tv", t.name, "#${t.rank} in $country on Netflix", 1.0 - (t.rank - 1) * 0.04)?.let { out.add(it) }
+        } catch (e: Exception) { Log.w(TAG, "find ${t.name}: ${e.javaClass.simpleName}") }
+        val seen = out.map { it.id }.toHashSet()
+        val rest = try { showcase.load(net, pkg) } catch (e: Exception) { if (out.isEmpty()) throw e else emptyList() }
+        // After the Top 10: new on Netflix first, then the popular ones, weighted below every Top 10 title.
+        rest.filter { seen.add(it.id) }.sortedByDescending { it.kind.startsWith("New on") }
+            .forEachIndexed { i, it -> out.add(it.reweighted(0.55 - i * 0.01)) }
+        return out
+    }
+
+    companion object {
+        private const val TAG = "EppleNetflix"
+        const val URL = "https://muhibtasam.github.io/vyro/netflix-top10.tsv"
+
+        /** The country's latest week (country_name, country_iso2, week, category, weekly_rank, show_title): movies and shows by rank, interleaved. */
+        fun top10(tsv: String, iso2: String): List<Title> {
+            val rows = tsv.lineSequence().map { it.split('\t') }
+                .filter { it.size >= 6 && it[1].trim().equals(iso2, true) && Regex("\\d{4}-\\d{2}-\\d{2}").matches(it[2].trim()) }.toList()
+            val latest = rows.maxOfOrNull { it[2].trim() } ?: return emptyList()
+            val titles = rows.filter { it[2].trim() == latest }.mapNotNull { f ->
+                val rank = f[4].trim().toIntOrNull() ?: return@mapNotNull null
+                val cat = f[3].trim().lowercase(Locale.ROOT)
+                val movie = when { cat.startsWith("film") -> true; cat.startsWith("tv") -> false; else -> return@mapNotNull null }
+                f[5].trim().takeIf { it.isNotEmpty() }?.let { Title(it, movie, rank) }
+            }
+            val movies = titles.filter { it.movie }.sortedBy { it.rank }; val shows = titles.filter { !it.movie }.sortedBy { it.rank }
+            return (0 until maxOf(movies.size, shows.size)).flatMap { listOfNotNull(movies.getOrNull(it), shows.getOrNull(it)) }
+        }
+    }
 }

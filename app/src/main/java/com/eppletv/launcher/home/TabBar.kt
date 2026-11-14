@@ -158,7 +158,7 @@ class TabGlass(ctx: Context, private val l: Layout, private val backdrop: Backdr
     private val tint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rect = RectF(); private val m = Matrix(); private val loc = IntArray(2)
     private var overlay: Bitmap? = null
-    private var overlayClear: Boolean? = null
+    private var overlayKey: Int? = null
     private val radius get() = if (corner < 0f) height / 2f else corner
 
     init { backdrop.listeners.add { invalidate() }; GlassStyle.register(this) }
@@ -168,17 +168,17 @@ class TabGlass(ctx: Context, private val l: Layout, private val backdrop: Backdr
         overlay?.recycle(); overlay = null
     }
 
-    /** The shared glass material (see [GlassStyle]): frost unless Clear is chosen, the tint, then the edge light. */
+    /** The shared glass material (see [GlassStyle]): frost at the slider's strength, the tint, then the edge light. */
     override fun onDraw(c: Canvas) {
         if (width <= 0 || height <= 0) return
-        if (overlay == null || overlayClear != GlassStyle.clear) { overlay?.recycle(); overlay = GlassStyle.overlay(l, width, height, radius); overlayClear = GlassStyle.clear }
+        if (overlay == null || overlayKey != GlassStyle.key) { overlay?.recycle(); overlay = GlassStyle.overlay(l, width, height, radius); overlayKey = GlassStyle.key }
         val b = backdrop.currentBitmap
         val sw = rootView.width.toFloat(); val sh = rootView.height.toFloat()
         if (b != null && sw > 0f && !GlassStyle.clear) {
             getLocationInWindow(loc)
             val sh2 = Frost.shader(b)
             m.setScale(sw / 240f, sh / 135f); m.postTranslate(-loc[0].toFloat(), -loc[1].toFloat())
-            sh2.setLocalMatrix(m); frost.shader = sh2
+            sh2.setLocalMatrix(m); frost.shader = sh2; frost.alpha = GlassStyle.frostAlpha
             c.drawRoundRect(rect, radius, radius, frost)
         }
         tint.color = GlassStyle.tint

@@ -159,7 +159,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
-        GlassStyle.clear = prefs.get(Prefs.GLASS) == 1
+        GlassStyle.amount = prefs.glass / 100f
         wallpapers = Wallpapers(this)
         profile = Profile(this)
         launcher = com.eppletv.launcher.system.LauncherMode(this)
@@ -172,7 +172,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         l = Layout.forWindow(dm.widthPixels, dm.heightPixels)
         library = Library(this)
         user = UserLibrary(this)
-        content = ContentRepository(this, Sources.all(if (BuildConfig.DEBUG) intent.getStringExtra("cinemetaFor") else null)) { b -> Scrim.paint(b); Frost.prepare(b) }
+        content = ContentRepository(this, Sources.all(this, if (BuildConfig.DEBUG) intent.getStringExtra("cinemetaFor") else null)) { b -> Scrim.paint(b); Frost.prepare(b) }
         content.indianMode = prefs.get(Prefs.INDIAN)
         catalog = Catalog(content.net, { com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.TMDB) }) { Sources.region }
         titles = TitleLauncher(this, content.net, { com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.WATCHMODE) }) { Sources.region }
@@ -239,7 +239,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         apps = list
         refresh(null)
         empty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
-        (screens[4] as? AppsScreen)?.rebuild()
+        (screens[APPS] as? AppsScreen)?.rebuild()
     }
 
     /** Rebuilds the top row from the library; optionally moves focus to [focusPkg]. */
@@ -365,7 +365,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         })
         menu("Profile Picture", items)
     }
-    override fun wallpapersAdded() { nextWallpaper(newest = true); (screens[6] as? SettingsScreen)?.show() }
+    override fun wallpapersAdded() { nextWallpaper(newest = true); (screens[SETTINGS] as? SettingsScreen)?.show() }
 
     // ---- focus and zones ----
 
@@ -436,9 +436,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private fun create(i: Int): Screen = when (i) {
         1 -> BrowseScreen(this, catalog.movieRows().map { Rows.catalog(this, it) })
         2 -> BrowseScreen(this, catalog.tvRows().map { Rows.catalog(this, it) })
-        3 -> LibraryScreen(this)
-        4 -> AppsScreen(this)
-        5 -> SearchScreen(this)
+        APPS -> AppsScreen(this)
+        SEARCH -> SearchScreen(this)
         else -> SettingsScreen(this) { c -> onSetting(c) }
     }
 
@@ -446,7 +445,6 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         when (c) {
             Prefs.CLOCK -> updateTime()
             Prefs.ROTATE -> restartRotation()
-            Prefs.GLASS -> GlassStyle.clear = prefs.get(Prefs.GLASS) == 1
             Prefs.SAVER -> restartIdle()
             Prefs.INDIAN -> { content.indianMode = prefs.get(Prefs.INDIAN); content.resetPicks(); content.warm(library.pinned(apps).map { it.packageName }) }
             else -> if (c.restart) restartUi()
@@ -554,7 +552,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     override fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-    override fun appsChanged() { refresh(null); (screens[4] as? AppsScreen)?.rebuild(force = true) }
+    override fun appsChanged() { refresh(null); (screens[APPS] as? AppsScreen)?.rebuild(force = true) }
     override fun restartUi() { recreate() }
     override fun startSaver() { main.postDelayed({ saver.start() }, 300) }
     override fun tileShadow(): Bitmap = shadowBmp
@@ -610,7 +608,36 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         if (requestCode == REQ_HOME) setup.refresh()
     }
 
-    override fun onResume() { super.onResume(); if (::setup.isInitialized) setup.refresh() }
+    override fun onResume() {
+        super.onResume(); if (::setup.isInitialized) setup.refresh()
+        if (::setup.isInitialized && setup.done && !askedListings()) askListings()
+    }
+
+    /**
+     * Android TV's own lists (Prime Video's rows, Watch Next) need READ_TV_LISTINGS, a normal runtime permission: the
+     * TV asks once, after setup; Settings > Content > TV listings asks again or explains how to allow it.
+     */
+    private fun askedListings() = getSharedPreferences("perm", MODE_PRIVATE).getBoolean("listings", false)
+    override fun askListings() {
+        if (com.eppletv.launcher.content.TvListings.allowed(this)) return
+        getSharedPreferences("perm", MODE_PRIVATE).edit().putBoolean("listings", true).apply()
+        if (askedListingsBefore && !shouldShowRequestPermissionRationale(com.eppletv.launcher.content.TvListings.PERMISSION)) {
+            toast("Allow it in TV Settings > Apps > Epple TV > Permissions")
+            try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))) } catch (_: Exception) {}
+            return
+        }
+        askedListingsBefore = true
+        requestPermissions(arrayOf(com.eppletv.launcher.content.TvListings.PERMISSION), REQ_LISTINGS)
+    }
+    private var askedListingsBefore = false
+
+    override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(code, perms, results)
+        if (code != REQ_LISTINGS) return
+        val ok = results.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (ok) refresh(null)                                 // Prime Video's own rows take over from the showcase
+        (screens[SETTINGS] as? SettingsScreen)?.show()
+    }
 
     /** The Home button while Epple TV is the Home screen: back to Home's top row. */
     override fun onNewIntent(intent: Intent) {
@@ -696,7 +723,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             ControlCenter.Item(Glyphs.MOON, "Sleep Timer") { cycleSleep() },
             ControlCenter.Item(Glyphs.PICTURE, "Screensaver", round = true, action = act { startSaver() }),
             ControlCenter.Item(Glyphs.BLUETOOTH, "Bluetooth & Accessories", round = true, action = act { open(Intent(Settings.ACTION_BLUETOOTH_SETTINGS), "Accessories") }),
-            ControlCenter.Item(Glyphs.SEARCH, "Search", round = true, action = act { goTab(5) }),
+            ControlCenter.Item(Glyphs.SEARCH, "Search", round = true, action = act { goTab(SEARCH) }),
             ControlCenter.Item(Glyphs.GEAR, "Epple TV Settings", round = true, action = act { goTab(SETTINGS) }),
             ControlCenter.Item(Glyphs.SLIDERS, "TV Settings", round = true, action = act { open(Intent(Settings.ACTION_SETTINGS), "Settings") }),
         ))
@@ -796,7 +823,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             return true
         }
         if (k == KeyEvent.KEYCODE_MENU || k == KeyEvent.KEYCODE_SETTINGS) { if (down && event.repeatCount == 0) openControlCenter(); return true }
-        if (k == KeyEvent.KEYCODE_SEARCH) { if (down && event.repeatCount == 0) goTab(5); return true }
+        if (k == KeyEvent.KEYCODE_SEARCH) { if (down && event.repeatCount == 0) goTab(SEARCH); return true }
         if (k == KeyEvent.KEYCODE_BACK) {
             if (down && event.repeatCount == 0) backHandled = handleBack()
             return if (backHandled) true else super.dispatchKeyEvent(event)
@@ -843,9 +870,13 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     private companion object {
         // Settings is not a tab: it opens from the Epple TV icon in the TV's apps, and from Control Center (SETTINGS).
-        val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Library", "Apps", "Search")
-        val TAB_ICONS = listOf(TabIcons.HOME, TabIcons.MOVIES, TabIcons.TV, TabIcons.LIBRARY, TabIcons.APPS, TabIcons.SEARCH)
-        const val SETTINGS = 6
+        // Library was removed: Watchlist and Favourites stay reachable from Home's rows below the top row.
+        val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Apps", "Search")
+        val TAB_ICONS = listOf(TabIcons.HOME, TabIcons.MOVIES, TabIcons.TV, TabIcons.APPS, TabIcons.SEARCH)
+        const val APPS = 3
+        const val SEARCH = 4
+        const val SETTINGS = 5
+        private const val REQ_LISTINGS = 41
         val SLEEP_STEPS = listOf(15L, 30L, 60L, 90L)
         const val REQ_HOME = 41
     }

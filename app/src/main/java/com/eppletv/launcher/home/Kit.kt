@@ -478,7 +478,7 @@ class Keyboard(ctx: Context, private val l: Layout, clock: FrameClock, private v
 
 /** A settings row: label at the start and its current value at the end, both inverting to ink on focus. */
 @SuppressLint("ViewConstructor")
-class ValuePill(ctx: Context, private val l: Layout, label: String, clock: FrameClock) :
+open class ValuePill(ctx: Context, private val l: Layout, label: String, clock: FrameClock) :
     Pill(ctx, label, l.pxf(29f), l.pxf(22f), l.px(30), clock, Colors.FILL, Colors.WHITE, 0.02f, startAligned = true) {
     var value: String = ""
         set(v) { field = v; invalidate() }

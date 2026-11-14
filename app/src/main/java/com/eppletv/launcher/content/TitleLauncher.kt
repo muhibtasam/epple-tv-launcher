@@ -112,6 +112,11 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
 
     /** Starts [uri] in [pkg] only if that installed package declares an activity for it. */
     private fun start(pkg: String, uri: String): Boolean {
+        // An app's own link from its Android TV row (Prime Video's intent: links): kept inside that app (TvListings.intent).
+        if (uri.startsWith("intent:") || "#Intent;" in uri) {
+            val i = TvListings.intent(app, uri, pkg) ?: run { Log.i(TAG, "$pkg row link refused"); return false }
+            return try { app.startActivity(i); Log.i(TAG, "opened row title in $pkg"); true } catch (e: Exception) { false }
+        }
         val p = providers[pkg]
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (p?.freshTask == true) intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)

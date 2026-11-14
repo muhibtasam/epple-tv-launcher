@@ -21,27 +21,36 @@ import java.util.WeakHashMap
 
 /**
  * The one glass material used by the tab bar, the top row's platter, the clock badge and Control Center, so they always
- * match. Settings > Glass chooses Frosted (the artwork behind, blurred, under a dark tint) or Clear (no blur: a light
- * tint and brighter edges, like Apple's clear glass, and one textured draw fewer per surface).
+ * match. Settings > Glass is a slider from 0 (clear: no blur, a light tint and bright edges, like Apple's clear glass)
+ * to 100 (frosted: the artwork behind, blurred, under a darker tint). The blur is the shared 240x135 frost texture drawn
+ * at the slider's opacity, so every setting costs the same single textured draw (none at 0).
  */
 object GlassStyle {
     private val views = java.util.Collections.newSetFromMap(WeakHashMap<View, Boolean>())
-    var clear = false
-        set(v) { if (field != v) { field = v; views.toList().forEach { it.invalidate() } } }
+    /** 0..1: how frosted. */
+    var amount = 1f
+        set(v) { val c = v.coerceIn(0f, 1f); if (field != c) { field = c; views.toList().forEach { it.invalidate() } } }
     fun register(v: View) { views.add(v) }
-    val tint: Int get() = if (clear) 0x380E1014 else 0x660E1014
+    /** Pre-rendered edges are rebuilt only when this changes (21 steps). */
+    val key: Int get() = Math.round(amount * 20)
+    val clear get() = amount < 0.01f
+    val frostAlpha get() = (255 * amount).toInt()
+    val tint: Int get() = ((0x38 + (0x66 - 0x38) * amount).toInt() shl 24) or 0x0E1014
 
-    /** Edge light and inner highlight, pre-rendered once per size and style (drawn live they cost this GPU dearly). */
+    private fun mix(a: Int, b: Int, t: Float) = com.eppletv.launcher.ui.Colors.lerp(a, b, t)
+
+    /** Edge light and inner highlight, pre-rendered once per size and step (drawn live they cost this GPU dearly). */
     fun overlay(l: Layout, w: Int, h: Int, radius: Float): Bitmap {
+        val t = 1f - amount                                    // 1 = clear: brighter, thicker edges
         val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(b); val r = RectF(0f, 0f, w.toFloat(), h.toFloat()); val hf = h.toFloat()
         c.drawRoundRect(r, radius, radius, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            shader = LinearGradient(0f, 0f, 0f, hf, intArrayOf(if (clear) 0x2EFFFFFF else 0x1AFFFFFF, 0x05FFFFFF, 0x00FFFFFF), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP) })
-        val sw = l.pxf(if (clear) 2f else 1.6f).coerceAtLeast(1f)
+            shader = LinearGradient(0f, 0f, 0f, hf, intArrayOf(mix(0x1AFFFFFF, 0x2EFFFFFF, t), 0x05FFFFFF, 0x00FFFFFF), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP) })
+        val sw = l.pxf(1.6f + 0.4f * t).coerceAtLeast(1f)
         r.inset(sw / 2f, sw / 2f)
         c.drawRoundRect(r, radius - sw / 2f, radius - sw / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE; strokeWidth = sw
-            shader = LinearGradient(0f, 0f, 0f, hf, if (clear) intArrayOf(0xA6FFFFFF.toInt(), 0x26FFFFFF, 0x4DFFFFFF) else intArrayOf(0x73FFFFFF, 0x1AFFFFFF, 0x33FFFFFF),
+            shader = LinearGradient(0f, 0f, 0f, hf, intArrayOf(mix(0x73FFFFFF, 0xA6FFFFFF.toInt(), t), mix(0x1AFFFFFF, 0x26FFFFFF, t), mix(0x33FFFFFF, 0x4DFFFFFF, t)),
                 null, Shader.TileMode.CLAMP) })
         b.prepareToDraw()
         return b
@@ -78,7 +87,7 @@ class GlassPlatter(ctx: Context, private val l: Layout, private val backdrop: Ba
     private val textures = WeakHashMap<Bitmap, BitmapShader>()
 
     init { backdrop.listeners.add { invalidate() }; GlassStyle.register(this) }
-    private var rimClear: Boolean? = null
+    private var rimKey: Int? = null
 
     /** The page moved vertically: the glass must re-sample what is behind it. */
     fun moved() = invalidate()
@@ -109,7 +118,7 @@ class GlassPlatter(ctx: Context, private val l: Layout, private val backdrop: Ba
             floatArrayOf(0f, 0.25f, 0.8f, 1f), Shader.TileMode.CLAMP)
         if (w <= 0 || h <= 0) return
         rimBmp?.recycle()
-        rimBmp = GlassStyle.overlay(l, w, h, radius); rimClear = GlassStyle.clear
+        rimBmp = GlassStyle.overlay(l, w, h, radius); rimKey = GlassStyle.key
         // Glint: a white rim line, revealed only under a radial light that follows focus.
         val mask = Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8)
         Canvas(mask).drawRoundRect(r, radius, radius, Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = l.pxf(3f) })
@@ -122,7 +131,7 @@ class GlassPlatter(ctx: Context, private val l: Layout, private val backdrop: Ba
 
     override fun onDraw(c: Canvas) {
         val sw = rootView.width.toFloat(); val sh = rootView.height.toFloat()
-        if (rimClear != GlassStyle.clear && width > 0) { rimBmp?.recycle(); rimBmp = GlassStyle.overlay(l, width, height, radius); rimClear = GlassStyle.clear }
+        if (rimKey != GlassStyle.key && width > 0) { rimBmp?.recycle(); rimBmp = GlassStyle.overlay(l, width, height, radius); rimKey = GlassStyle.key }
         tint.color = GlassStyle.tint
         // Frosted body, the same as the tab bar's: the current artwork's shared 240x135 frost texture, screen-aligned,
         // under a light tint. One textured draw plus one flat fill (the per-layer lens body stays off: see FROST).
@@ -131,7 +140,7 @@ class GlassPlatter(ctx: Context, private val l: Layout, private val backdrop: Ba
             getLocationInWindow(loc)
             val fs = Frost.shader(b)
             m.setScale(sw / 240f, sh / 135f); m.postTranslate(-loc[0].toFloat(), -loc[1].toFloat())
-            fs.setLocalMatrix(m); bodyPaint.shader = fs; bodyPaint.alpha = 255
+            fs.setLocalMatrix(m); bodyPaint.shader = fs; bodyPaint.alpha = GlassStyle.frostAlpha
             c.drawRoundRect(rb, radius, radius, bodyPaint)
         }
         c.drawRoundRect(rb, radius, radius, tint)

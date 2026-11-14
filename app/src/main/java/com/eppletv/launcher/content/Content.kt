@@ -29,6 +29,7 @@ class ContentItem(
     val logoUrl: String = "",    // transparent title logo when the source supplies one directly
     val posterUrl: String = "",  // portrait poster (2:3) for rows; empty = the landscape art, cropped
 ) {
+    fun reweighted(w: Double) = ContentItem(id, title, meta, imageUrl, linkUri, linkPkg, kind, summary, w, origin, logoUrl, posterUrl)
     fun intent(): Intent? = linkUri?.let {
         Intent(Intent.ACTION_VIEW, Uri.parse(it)).setPackage(linkPkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
@@ -52,6 +53,8 @@ interface ContentSource {
     fun load(net: Net, pkg: String): List<ContentItem>   // worker thread; throws on failure; may return a larger pool to pick from
     /** Worker thread. URL of a transparent title logo for [item], or null. */
     fun logo(net: Net, item: ContentItem): String? = item.logoUrl.ifEmpty { null }
+    /** The pool is already in the order to show (a chart, an app's own row): no shuffling, just the first ones. */
+    val ordered: Boolean get() = false
 }
 
 /**
@@ -159,7 +162,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
             val result = out ?: emptyList()
             main.post {
                 if ((epochs[src.key] ?: 0) != epoch) return@post          // the key changed meanwhile: its waiters were answered
-                val picked = if (result.isEmpty()) result else curate(key, result)
+                val picked = if (result.isEmpty()) result else if (src.ordered) result.take(SHOW) else curate(key, result)
                 if (picked.isEmpty()) failedAt[key] = System.currentTimeMillis() else lists[key] = picked
                 listWaiters.remove(key)?.forEach { it(picked) }
             }

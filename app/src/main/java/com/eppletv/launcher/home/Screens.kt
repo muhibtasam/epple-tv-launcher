@@ -62,6 +62,8 @@ interface Nav {
     /** Making Epple TV the TV's launcher, and giving it back (Settings > Launcher). */
     val launcher: com.eppletv.launcher.system.LauncherMode
     fun switchLauncher(epple: Boolean, done: (() -> Unit)? = null)
+    /** Asks the TV to let Epple TV read its listings (Prime Video's rows, Continue Watching). */
+    fun askListings()
 }
 
 /** One section of the launcher. Focus inside a section is explicit and survives leaving and returning. */
@@ -178,6 +180,8 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
     /** Leaving the section: every row goes back to its first title and the first row comes back to the top. */
     override fun reset() { stack.reset() }
 
+    protected fun reload(i: Int) { if (built) load(i, force = true) }
+
     private fun load(i: Int, force: Boolean = false) {
         if (!force && !requested.add(i)) return
         val src = sources[i]; val shelf = stack.shelves[i]
@@ -187,14 +191,19 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             val seen = HashSet<String>()
             for (j in 0 until i) stack.shelves[j].cards.forEach { c -> c.item?.id?.let { seen.add(it) } }
             val items = list.filter { it.id !in seen }
+            val hadFocus = shelf.hasFocus()                    // a row rebuilt under the focus keeps it
             shelf.set(items, src.emptyText) { c, it -> c.bind(it.title, it.meta.split("  ·  ").take(2).joinToString(" · ")); wire(c) }
             stack.relayout()
+            if (hadFocus) stack.focus()
             updateEmpty()
             // An empty (hidden) row must not stall lazy loading: fetch the next one now.
             if (shelf.visibility == View.GONE) (i + 1 until sources.size).firstOrNull { it !in requested }?.let { load(it) }
             // The first row to arrive gives this section its artwork if nothing is focused here yet.
             if (active && !view.hasFocus() && i == stack.firstNavigable()) items.firstOrNull()?.let { nav.art(it, immediate = true) }
-            if (stack.current == null || stack.r == i || !stack.shelves[stack.r].let { it.visibility == View.VISIBLE && it.cards.isNotEmpty() }) {
+            // The first row arriving after a lower one (Continue Watching reads the TV's lists) still takes focus,
+            // as long as the user hasn't moved yet.
+            if (i < stack.r && !moved && items.isNotEmpty() && view.hasFocus()) { stack.r = i; stack.focus() }
+            else if (stack.current == null || stack.r == i || !stack.shelves[stack.r].let { it.visibility == View.VISIBLE && it.cards.isNotEmpty() }) {
                 if (view.hasFocus() || focusWanted) { focusWanted = false; stack.focus() }
             }
         }
@@ -229,7 +238,7 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
     override fun featured(): ContentItem? = stack.current?.item ?: stack.shelves.getOrNull(stack.firstNavigable())?.item
 
     override fun show() {
-        active = true
+        active = true; moved = false
         if (!built) build()
         // Rows built from the user's own lists are rebuilt when those lists changed.
         if (version != nav.user.version) {
@@ -242,7 +251,8 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
 
     override fun focus(): Boolean { val ok = stack.focus(); if (!ok) { focusWanted = true; view.requestFocus() }; return ok }
     override fun hide() { active = false; stack.releaseAll() }      // a hidden section holds no artwork
-    override fun key(dx: Int, dy: Int): Boolean = stack.key(dx, dy)
+    private var moved = false
+    override fun key(dx: Int, dy: Int): Boolean { moved = true; return stack.key(dx, dy) }
     override fun back(): Boolean = if (!stack.atFirst()) { stack.r = stack.firstNavigable(); stack.focus(); true } else false
 }
 
@@ -255,7 +265,13 @@ object Rows {
 
 /** Home's rows under the top row: Continue Watching, Recently Added, Trending, For You and the Watchlist. */
 class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
-    Rows.user(nav, "Continue Watching", UserLibrary.Kind.CONTINUE),
+    // What you left half-way in any app (the TV's own Watch Next list, as Google TV shows it), then titles opened from Epple TV.
+    RowSource("Continue Watching", dynamic = true) { cb ->
+        nav.content.run({ ContinueWatching.load(nav.ctx) }) { tv ->
+            val seen = tv.orEmpty().map { ContinueWatching.norm(it.title) }.toHashSet()
+            cb(tv.orEmpty() + nav.user.items(UserLibrary.Kind.CONTINUE).filter { seen.add(ContinueWatching.norm(it.title)) })
+        }
+    },
     RowSource("Recently Added", dynamic = true) { cb ->
         // New releases on the user's own services (Watchmode "New on" lists already loaded for the top row).
         cb(nav.content.loadedItems().filter { it.kind.startsWith("New on") }.distinctBy { it.id }.take(20))
@@ -278,6 +294,38 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
             if (stack.current?.title == "Continue Watching" && pkg != null) nav.play(it, pkg, it.kind.removePrefix("Continue in ")) else nav.details(it)
         }
     }
+    /** The TV's Watch Next list changes outside Epple TV: it is read again every time Home's rows open. */
+    private var shownOnce = false
+    override fun show() { super.show(); if (shownOnce) reload(0); shownOnce = true }
+
     override fun extraMenu(it: ContentItem) =
         if (nav.user.contains(UserLibrary.Kind.CONTINUE, it.id)) listOf("Remove from Continue Watching" to { nav.user.remove(UserLibrary.Kind.CONTINUE, it.id) }) else emptyList()
+}
+
+/**
+ * Continue Watching from the TV itself: the system Watch Next list (where Prime Video, YouTube and others note what you
+ * left half-way) plus apps' own "Continue Watching" channels (Stremio), newest first, at most two per app so one show
+ * doesn't fill the row. Opening one goes back into that app at that title (its own link).
+ */
+object ContinueWatching {
+    private const val PER_APP = 2; private const val MAX = 12
+    fun norm(t: String) = t.trim().lowercase(java.util.Locale.ROOT).replace(Regex("\\s+"), " ")
+
+    fun load(ctx: android.content.Context): List<ContentItem> {
+        if (!com.eppletv.launcher.content.TvListings.allowed(ctx)) return emptyList()
+        val all = try { com.eppletv.launcher.content.TvListings.read(ctx) } catch (e: Exception) { return emptyList() }
+        val pm = ctx.packageManager
+        val label = HashMap<String, String>()
+        fun app(pkg: String) = label.getOrPut(pkg) { try { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { pkg } }
+        val rows = all.filter { (it.watchNext || com.eppletv.launcher.content.TvListings.isContinueChannel(it.channel)) &&
+            it.art?.startsWith("https://") == true && com.eppletv.launcher.content.TvListings.linkAllowed(it.link, it.pkg) &&
+            (pm.getLeanbackLaunchIntentForPackage(it.pkg) ?: pm.getLaunchIntentForPackage(it.pkg)) != null }
+            .sortedByDescending { it.engaged }
+        val perApp = HashMap<String, Int>(); val seen = HashSet<String>()
+        return rows.filter { seen.add(it.pkg + "|" + norm(it.title)) && (perApp.merge(it.pkg, 1, Int::plus) ?: 0) <= PER_APP }.take(MAX).map { p ->
+            val pct = p.progress.let { if (it > 0) "${(it * 100).toInt()}% watched" else "" }
+            ContentItem("wn:${p.pkg}:${norm(p.title)}", p.title, listOf(app(p.pkg), p.episode?.let { e -> if (e.all(Char::isDigit)) "Episode $e" else e } ?: "", pct).filter { it.isNotEmpty() }.joinToString("  ·  "),
+                com.eppletv.launcher.content.TvListings.cleanArt(p.art!!).first, p.link, p.pkg, "Continue in ${app(p.pkg)}", p.description ?: "")
+        }
+    }
 }

@@ -177,20 +177,6 @@ class DetailScreen(nav: Nav, private val item: ContentItem) : Screen(nav), Frame
     }
 }
 
-// ------------------------------------------------------------------------------------------------ Library
-
-class LibraryScreen(nav: Nav) : BrowseScreen(nav, listOf(
-    Rows.user(nav, "Continue Watching", UserLibrary.Kind.CONTINUE),
-    Rows.user(nav, "Watchlist", UserLibrary.Kind.WATCHLIST),
-    Rows.user(nav, "Favourites", UserLibrary.Kind.FAVOURITES),
-    Rows.user(nav, "Recently Viewed", UserLibrary.Kind.RECENT),
-), emptyAll = "Your library is empty.\nOpen any movie or series and add it to your Watchlist or Favourites.") {
-    override fun extraMenu(it: ContentItem): List<Pair<String, () -> Unit>> {
-        val kind = when (stack.current?.title) { "Continue Watching" -> UserLibrary.Kind.CONTINUE; "Recently Viewed" -> UserLibrary.Kind.RECENT; else -> null }
-        return if (kind == null) emptyList() else listOf("Remove from ${stack.current?.title}" to { nav.user.remove(kind, it.id); show() })
-    }
-}
-
 // ------------------------------------------------------------------------------------------------ Apps
 
 /**
@@ -369,7 +355,7 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
     private val title = TextView(nav.ctx).apply { style(Txt.HERO, l.u); text = "Settings" }
     private val about = TextView(nav.ctx).apply { style(Txt.BODY, l.u, Colors.TEXT_DIM); maxLines = 6 }
     private val list = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
-    private class Row(val pill: ValuePill, val help: String, val value: () -> String, val act: () -> Unit)
+    private class Row(val pill: ValuePill, val help: String, val value: () -> String, val act: () -> Unit) { var slide: ((Int) -> Unit)? = null }
     private val rows = ArrayList<Row>()
     private var i = 0
     private val sy = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
@@ -412,6 +398,14 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         list.addView(p, FrameLayout.LayoutParams(MATCH_PARENT, l.px(80)).apply { topMargin = y })
         rowY[r] = y; y += l.px(92); rows.add(r)
     }
+    /** A 0-100 slider row: Left and Right change it in steps of 5 and apply at once. */
+    private fun slider(label: String, help: String, get: () -> Int, set: (Int) -> Unit) {
+        val p = SliderPill(nav.ctx, l, label, nav.clock).apply { level = get() }
+        val r = Row(p, help, { "" }, {})
+        r.slide = { d -> val v = (get() + d * 5).coerceIn(0, 100); set(v); p.level = v }
+        list.addView(p, FrameLayout.LayoutParams(MATCH_PARENT, l.px(80)).apply { topMargin = y })
+        rowY[r] = y; y += l.px(92); rows.add(r)
+    }
     private fun choice(c: Prefs.Choice, help: String) = row(c.label, help + if (c.restart) "\n\nEpple TV restarts its screens to apply this." else "",
         { c.options[nav.prefs.get(c)] }) { nav.prefs.put(c, (nav.prefs.get(c) + 1) % c.options.size); onChanged(c) }
 
@@ -431,7 +425,8 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         header("Appearance")
         choice(Prefs.CLOCK, "How the time is shown in the corner and in Control Center.")
         choice(Prefs.ROTATE, "How often the artwork behind the top row moves to the next title.")
-        choice(Prefs.GLASS, "The material of the tab bar, the top row, the clock and Control Center. Frosted blurs what is behind; Clear lets it show through, with brighter edges.")
+        slider("Glass", "The material of the tab bar, the top row, the clock and Control Center. Press Left or Right: 0 is clear glass, " +
+            "letting what is behind show through with bright edges; 100 is fully frosted.", { nav.prefs.glass }) { v -> nav.prefs.glass = v; GlassStyle.amount = v / 100f }
         row("Wallpapers", "Your own pictures behind Home while the Home tab is selected; a different one each time Home opens. " +
             "Add them from your phone, or copy them from a computer with scripts/wallpapers.sh. Streaming apps show their own titles when you move to them.", {
             nav.wallpapers.count().let { if (it == 0) "None yet" else if (it == 1) "1 picture" else "$it pictures" } }) { wallpaperMenu() }
@@ -445,6 +440,8 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         choice(Prefs.INDIAN, "The mix of Bollywood and regional Indian titles against Hollywood titles in the top row's showcases.")
         row("Content providers", "API keys for TMDB, Watchmode, Trakt and YouTube: enter, test, replace or remove them. Keys are encrypted on this TV and shown only masked.", {
             "${com.eppletv.launcher.content.Credentials.connected()} of 4 connected" }) { nav.openSetup(1, one = true) }
+        row("TV listings", "Lets Epple TV read what your apps publish to Android TV: Prime Video's own rows and Continue Watching, as Google TV shows them. Nothing leaves the TV.", {
+            if (com.eppletv.launcher.content.TvListings.allowed(nav.ctx)) "Allowed" else "Not allowed" }) { nav.askListings() }
         row("Indian languages", "The Indian languages included in Movies, TV Shows and the top row's showcases. Select to choose.", {
             nav.prefs.langs.size.let { if (it == 0) "None" else "$it selected" } }) { nav.openSetup(2, one = true) }
         header("Apps")
@@ -496,7 +493,7 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
     override fun focus(): Boolean { rows.getOrNull(i)?.pill?.requestFocus(); place(); return true }
     override fun key(dx: Int, dy: Int): Boolean {
         if (picker.active) return picker.key(dx, dy)
-        if (dy == 0) return true
+        if (dy == 0) { if (dx != 0) rows.getOrNull(i)?.slide?.invoke(dx); return true }
         val n = i + dy
         if (n < 0) return false
         if (n >= rows.size) return true
@@ -746,5 +743,31 @@ fun fadeTop(list: android.view.ViewGroup, l: Layout, line: Int = l.px(150), fade
     for (k in 0 until list.childCount) {
         val v = list.getChildAt(k)
         v.alpha = ((v.top + dy - line) / fade).coerceIn(0f, 1f)
+    }
+}
+
+/** A settings row with a 0-100 slider drawn on its right: track, filled part and knob, with the number beside it. */
+@android.annotation.SuppressLint("ViewConstructor")
+class SliderPill(ctx: android.content.Context, private val l: Layout, label: String, clock: FrameClock) : ValuePill(ctx, l, label, clock) {
+    var level = 0
+        set(v) { field = v.coerceIn(0, 100); invalidate() }
+    private val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val num = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = l.pxf(27f) * com.eppletv.launcher.ui.Type.scale; typeface = com.eppletv.launcher.ui.Type.of(600, com.eppletv.launcher.ui.Type.Face.NUM)
+        textAlign = android.graphics.Paint.Align.RIGHT }
+    private val r = android.graphics.RectF()
+    override fun onDraw(c: android.graphics.Canvas) {
+        super.onDraw(c)
+        val col = currentTextColor
+        val right = width - l.pxf(30f); val tw = l.pxf(260f); val th = l.pxf(6f); val cy = height / 2f
+        val left = right - tw
+        p.color = col; p.alpha = 60
+        r.set(left, cy - th / 2, right, cy + th / 2); c.drawRoundRect(r, th / 2, th / 2, p)
+        val x = left + tw * level / 100f
+        p.alpha = 255
+        r.set(left, cy - th / 2, x, cy + th / 2); c.drawRoundRect(r, th / 2, th / 2, p)
+        c.drawCircle(x, cy, l.pxf(11f), p)
+        num.color = col; num.alpha = 200
+        c.drawText("$level", left - l.pxf(24f), cy - (num.descent() + num.ascent()) / 2f, num)
     }
 }

@@ -18,7 +18,6 @@ class Prefs(ctx: Context) {
         val REGION = Choice("region", "Content region", listOf("Automatic", "Pakistan", "India", "United States", "United Kingdom"), 0, restart = true)
         val INDIAN = Choice("indian", "Indian titles", listOf("Balanced", "More Indian", "More Hollywood", "Hollywood only"), 0)
         val SAVER = Choice("saver", "Start screensaver after", listOf("Off", "2 minutes", "5 minutes", "10 minutes", "15 minutes", "30 minutes"), 2)
-        val GLASS = Choice("glass", "Glass", listOf("Frosted", "Clear"), 0)
         val SAVER_STYLE = Choice("saver_style", "Screensaver motion", listOf("Slow pan", "Still"), 0)
         private val REGION_CODES = listOf("", "PK", "IN", "US", "GB")
         private val SAVER_MIN = listOf(0, 2, 5, 10, 15, 30)
@@ -34,6 +33,10 @@ class Prefs(ctx: Context) {
     val rotateMs get() = ROTATE_MS[get(ROTATE)]
     val textScale get() = TEXT_SCALE[get(TEXT)]
     val boldText get() = get(WEIGHT) == 1
+    /** Settings > Glass: 0 (clear) to 100 (frosted), in steps of 5. The earlier Clear choice becomes 0. */
+    var glass: Int
+        get() = p.getInt("glass_amount", if (p.getInt("glass", 0) == 1) 0 else 100).coerceIn(0, 100)
+        set(v) = p.edit().putInt("glass_amount", v.coerceIn(0, 100)).apply()
     /** Indian languages included in discovery (empty = Hollywood only). */
     var langs: List<String>
         get() = p.getString("langs", null)?.split(',')?.filter { it.isNotEmpty() } ?: com.eppletv.launcher.content.Catalog.INDIAN
