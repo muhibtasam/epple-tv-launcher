@@ -19,6 +19,19 @@ class PairingSessionTest {
 
     private fun pairPhone(): Pairing.Started = s.pair(s.token, phone) as Pairing.Started
 
+    @Test fun photosHaveTheirOwnCapAndShareTheNonceChain() {
+        val p = pairPhone(); s.allow()
+        var n = s.status(p.secret, phone)!!.second!!
+        repeat(PairingSession.MAX_PHOTOS) {
+            assertEquals(Gate.OK, s.claimSave(p.secret, phone, n, photo = true))
+            if (it < PairingSession.MAX_PHOTOS - 1) assertEquals(Gate.STALE, s.claimSave(p.secret, phone, n, photo = true))
+            n = s.nextNonce()!!
+        }
+        assertEquals(Gate.TOO_MANY, s.claimSave(p.secret, phone, n, photo = true))
+        assertEquals(Gate.OK, s.claimSave(p.secret, phone, n))         // key saves are counted separately
+        assertEquals(Gate.FORBIDDEN, s.claimSave(p.secret, other, s.nextNonce(), photo = true))
+    }
+
     @Test fun tokenIsRandomAndLongEnough() {
         assertTrue(s.token.length >= 22)
         assertNotEquals(s.token, PairingSession().token)

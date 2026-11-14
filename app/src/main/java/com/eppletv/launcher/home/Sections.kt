@@ -378,7 +378,7 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
     private var y = 0
     private fun header(t: String) {
         val v = TextView(nav.ctx).apply { style(Txt.CAPTION, l.u, Colors.TEXT_DIM); text = t }
-        y += if (y == 0) l.px(150) else l.px(36)
+        y += if (y == 0) l.px(190) else l.px(36)          // the first header clears the tab bar
         list.addView(v, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.px(30); topMargin = y })
         y += l.px(46)
     }
@@ -398,6 +398,9 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         header("Appearance")
         choice(Prefs.CLOCK, "How the time is shown in the corner and in Control Center.")
         choice(Prefs.ROTATE, "How often the artwork behind the top row moves to the next title.")
+        row("Wallpapers", "Your own pictures behind Home while the Home tab is selected; a different one each time Home opens. " +
+            "Add them from your phone, or copy them from a computer with scripts/wallpapers.sh. Streaming apps show their own titles when you move to them.", {
+            nav.wallpapers.count().let { if (it == 0) "None yet" else if (it == 1) "1 picture" else "$it pictures" } }) { wallpaperMenu() }
         header("Typography")
         choice(Prefs.TEXT, "Makes every label, title and description larger for easier reading from the sofa.")
         choice(Prefs.WEIGHT, "Uses a heavier weight of the Inter typeface everywhere.")
@@ -430,6 +433,19 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         row("Run setup again", "Walks through the first-launch setup: providers, what you watch and the Home screen.", { "" }) { nav.openSetup(0, one = false) }
         row("Data attribution", "This product uses the TMDB API but is not endorsed or certified by TMDB.", { "TMDB" }) {}
         refreshValues()
+    }
+
+    private fun wallpaperMenu() {
+        val n = nav.wallpapers.count()
+        val items = ArrayList<Pair<String, () -> Unit>>()
+        items.add("Add from Phone" to { nav.openPhone() })
+        if (n > 1) items.add("Show Another Now" to { nav.nextWallpaper(); nav.toast("Wallpaper changed") })
+        if (n > 0) items.add("Remove All Pictures" to {
+            nav.menu("Remove all $n pictures from this TV?", listOf(
+                "Remove All" to { nav.wallpapers.removeAll(); nav.nextWallpaper(); refreshValues(); nav.toast("Pictures removed") },
+                "Cancel" to {}))
+        })
+        nav.menu("Wallpapers", items)
     }
 
     private fun refreshValues() { rows.forEach { it.pill.value = it.value() }; rows.getOrNull(i)?.let { about.text = it.help } }

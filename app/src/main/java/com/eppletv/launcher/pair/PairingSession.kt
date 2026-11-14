@@ -42,6 +42,7 @@ class PairingSession(
     private var nonce: String? = null
     private var lastActive = created
     private var saves = 0
+    private var photos = 0
     var listener: (() -> Unit)? = null
 
     val isLive: Boolean get() { tick(); return state == State.WAITING || state == State.CONFIRMING || state == State.PAIRED }
@@ -102,15 +103,16 @@ class PairingSession(
     }
 
     /** Claims the current nonce for one save. A second request with the same nonce gets STALE. */
-    @Synchronized fun claimSave(s: String?, address: String, n: String?): Gate {
+    /** [photo]: a wallpaper upload, counted against [MAX_PHOTOS] instead of [MAX_SAVES]. */
+    @Synchronized fun claimSave(s: String?, address: String, n: String?, photo: Boolean = false): Gate {
         tick()
         if (!authorised(s, address)) return Gate.FORBIDDEN
         if (state != State.PAIRED) return Gate.GONE
-        if (saves >= MAX_SAVES) return Gate.TOO_MANY
+        if (if (photo) photos >= MAX_PHOTOS else saves >= MAX_SAVES) return Gate.TOO_MANY
         val current = nonce
         if (current == null || n == null || !same(n, current)) return Gate.STALE
         nonce = null
-        saves++
+        if (photo) photos++ else saves++
         lastActive = now()
         return Gate.OK
     }
@@ -164,5 +166,6 @@ class PairingSession(
         const val PAIR_WINDOW_MS = 5 * 60_000L
         const val IDLE_MS = 10 * 60_000L
         const val MAX_SAVES = 10
+        const val MAX_PHOTOS = 30
     }
 }

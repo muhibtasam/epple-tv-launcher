@@ -50,6 +50,11 @@ interface Nav {
     fun tileShadow(): Bitmap
     /** Setup at [step]; [one] = only that step (from Settings), otherwise the whole flow again. */
     fun openSetup(step: Int, one: Boolean)
+    /** Home's own pictures, and the phone screen that adds them. */
+    val wallpapers: Wallpapers
+    fun openPhone()
+    /** Shows another wallpaper now ([newest]: the most recently added one). */
+    fun nextWallpaper(newest: Boolean = false)
 }
 
 /** One section of the launcher. Focus inside a section is explicit and survives leaving and returning. */

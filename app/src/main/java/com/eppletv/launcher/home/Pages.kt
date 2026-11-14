@@ -22,6 +22,7 @@ import com.eppletv.launcher.content.ContentRepository
 import com.eppletv.launcher.motion.FrameClock
 import com.eppletv.launcher.motion.Motion
 import com.eppletv.launcher.motion.Spring
+import com.eppletv.launcher.ui.Colors
 import com.eppletv.launcher.ui.Txt
 import com.eppletv.launcher.ui.style
 
@@ -203,8 +204,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
     private var wantLogo: String? = null
     private val textBox = FrameLayout(ctx)
     private val layers: Array<Layer>
-    private val dots = Dots(ctx, l)
-    private val hint = Chevron(ctx, l)
+    private val dots = Dots(ctx, l, clock)
     private var front = 0
     private var shown: String? = null
     private var entry: AppEntry? = null
@@ -214,6 +214,11 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
     private val textVis = Spring(1f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)
     private val shelf = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)
     private var deep = false
+
+    private val dotsY = l.dockY - l.platterPad - l.px(40)
+    /** Showing the Home wallpaper: no title, no dots, no carousel. */
+    var resting = false
+        private set
 
     val item: ContentItem? get() = items.getOrNull(index)
     val hasItems get() = items.isNotEmpty()
@@ -226,9 +231,9 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         // backdrop image once when it is decoded (see Scrim): as overlay views they cost two translucent full-screen passes a frame.
         root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(420)).apply { leftMargin = l.left; topMargin = l.px(84) })
         layers = Array(2) { layer(ctx) }
-        root.addView(hint, FrameLayout.LayoutParams(l.px(44), l.px(16), Gravity.CENTER_HORIZONTAL).apply { topMargin = l.dockY - l.platterPad - l.px(34) })
-        root.addView(dots, FrameLayout.LayoutParams(MATCH_PARENT, l.px(12)).apply { topMargin = l.px(1010) })
-        dots.alpha = 0f; hint.alpha = 0f
+        // The slider dots sit just above the top row; in full-screen artwork mode they slide down to the bottom edge.
+        root.addView(dots, FrameLayout.LayoutParams(MATCH_PARENT, l.px(16)).apply { topMargin = dotsY })
+        dots.alpha = 0f
     }
 
     /** Shows [items] for a top-row app (empty = the app's own colours and name). */
@@ -236,8 +241,8 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
     fun bind(e: AppEntry, list: List<ContentItem>, restart: Boolean = false) {
         val sameApp = entry?.packageName == e.packageName
         if (sameApp && list === items && !deep && !(restart && index != 0)) return
-        val wasDeep = deep
-        entry = e; deep = false
+        val wasDeep = deep || resting
+        entry = e; deep = false; resting = false
         if (!sameApp || list !== items || restart) { items = list; index = 0 }
         textVis.target = if (quietOn) 0f else 1f
         show(fresh = !sameApp || wasDeep)
@@ -258,12 +263,22 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         return true
     }
 
+    /** Home's own picture (a wallpaper): only the image, with no title text, dots or carousel. */
+    fun rest(b: Bitmap) {
+        resting = true; deep = false; entry = null; items = emptyList(); index = 0
+        want = null; wantLogo = null; shown = null
+        dots.set(0, 0)
+        layers.forEach { it.a.target = 0f }
+        backdrop.show(b)
+        textVis.target = 0f; clock.add(this)
+    }
+
     /** Shows the current title's artwork again (returning to Home from another tab). */
     fun reshow() { if (entry != null && !deep) show(fresh = true) }
 
     private var quietOn = false
     /** Another section is in front: the title text fades out, the artwork stays as the shared backdrop. */
-    fun quiet(on: Boolean) { quietOn = on; textVis.target = if (on || deep) 0f else 1f; clock.add(this) }
+    fun quiet(on: Boolean) { quietOn = on; textVis.target = if (on || deep || resting) 0f else 1f; clock.add(this) }
     fun shelf(on: Boolean) { shelf.target = if (on) 1f else 0f; clock.add(this) }
 
     private fun show(fresh: Boolean) {
@@ -316,8 +331,8 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         }
         textVis.step(dt); shelf.step(dt)
         textBox.alpha = textVis.value
-        dots.alpha = shelf.value * textVis.value
-        hint.alpha = (if (items.isNotEmpty()) 0.75f else 0f) * (1f - shelf.value) * textVis.value
+        dots.alpha = (if (items.size > 1) 1f else 0f) * textVis.value
+        dots.translationY = shelf.value * (l.px(1010) - dotsY)
         return moving || !textVis.atRest() || !shelf.atRest()
     }
 
@@ -344,44 +359,65 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
     }
 }
 
-/** Page indicator for full-screen artwork mode. */
+/**
+ * Slider page indicator: small dots, the current one stretched into a short white capsule. Moving to another title
+ * slides the capsule's width from the old dot to the new one (one spring). At most [MAX] dots are drawn; a longer
+ * carousel shows a window of them around the current title.
+ */
 @SuppressLint("ViewConstructor")
-private class Dots(ctx: Context, private val l: Layout) : View(ctx) {
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var n = 0; private var i = 0
-    fun set(count: Int, index: Int) { if (count != n || index != i) { n = count; i = index; invalidate() } }
+internal class Dots(ctx: Context, private val l: Layout, private val clock: FrameClock) : View(ctx), FrameClock.Tick {
+    // A soft shadow keeps the dim dots visible over bright artwork.
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { setShadowLayer(l.pxf(4f), 0f, l.pxf(1f), 0x73000000) }
+    private val r = RectF()
+    private var n = 0; private var i = 0; private var from = 0
+    private val t = Spring(1f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
+    fun set(count: Int, index: Int) {
+        if (count == n && index == i) return
+        from = if (count == n) i else index
+        n = count; i = index
+        if (from == i) t.snapTo(1f) else { t.snapTo(0f); t.target = 1f; clock.add(this) }
+        invalidate()
+    }
+    override fun tick(dt: Float): Boolean { t.step(dt); invalidate(); return !t.atRest() }
     override fun onDraw(c: Canvas) {
         if (n < 2) return
-        val gap = l.pxf(22f); val x0 = width / 2f - gap * (n - 1) / 2f
-        for (k in 0 until n) { p.color = if (k == i) 0xFFFFFFFF.toInt() else 0x66FFFFFF; c.drawCircle(x0 + k * gap, height / 2f, l.pxf(if (k == i) 5f else 4f), p) }
+        val shown = minOf(n, MAX)
+        val first = (i - shown / 2).coerceIn(0, n - shown)
+        val d = l.pxf(8f); val wide = l.pxf(26f); val gap = l.pxf(10f)
+        val total = (shown - 1) * (d + gap) + wide
+        var x = width / 2f - total / 2f
+        val cy = height / 2f
+        val k = t.value.coerceIn(0f, 1f)
+        for (j in first until first + shown) {
+            val grow = when (j) { i -> k; from -> 1f - k; else -> 0f }
+            val w = d + (wide - d) * grow
+            p.color = Colors.lerp(0x8CFFFFFF.toInt(), Colors.WHITE, grow)
+            r.set(x, cy - d / 2f, x + w, cy + d / 2f)
+            c.drawRoundRect(r, d / 2f, d / 2f, p)
+            x += w + gap
+        }
     }
-}
-
-/** Small upward chevron above the top row: more of this content is one press up. */
-@SuppressLint("ViewConstructor")
-private class Chevron(ctx: Context, l: Layout) : View(ctx) {
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = l.pxf(4f); strokeCap = Paint.Cap.ROUND }
-    override fun onDraw(c: Canvas) {
-        val w = width.toFloat(); val h = height.toFloat(); val m = p.strokeWidth
-        c.drawLine(m, h - m, w / 2f, m, p); c.drawLine(w / 2f, m, w - m, h - m, p)
-    }
+    private companion object { const val MAX = 9 }
 }
 
 /**
  * The hero scrim, painted into a backdrop bitmap of any size (it scales with the image, which fills the screen):
- * a top-to-bottom darkening for the title and the app rows, plus a radial darkening from the top-left corner,
- * limited to the 1250x760 (of 1920x1080) corner it covered as a view.
+ * a top-to-bottom darkening for the title and the app rows, plus an elliptical darkening from the top-left corner
+ * under the title text. The ellipse is drawn over the whole image and fades to nothing well inside it, so it never
+ * ends in an edge (it used to be clipped to a rectangle, which showed as a dark band across the artwork).
  */
 object Scrim {
-    private val linear = intArrayOf(0x8C000000.toInt(), 0x0D000000, 0xA6000000.toInt())
-    private val radial = intArrayOf(0x99000000.toInt(), 0x4D000000, 0x00000000)
+    private val linear = intArrayOf(0x8C000000.toInt(), 0x40000000, 0x0D000000, 0x14000000, 0x59000000, 0xA6000000.toInt())
+    private val linearAt = floatArrayOf(0f, 0.18f, 0.42f, 0.6f, 0.8f, 1f)
+    private val radial = intArrayOf(0x99000000.toInt(), 0x80000000.toInt(), 0x4D000000, 0x1F000000, 0x08000000, 0x00000000)
+    private val radialAt = floatArrayOf(0f, 0.2f, 0.45f, 0.7f, 0.88f, 1f)
     fun paint(b: Bitmap) {
         if (!b.isMutable) return
         val w = b.width.toFloat(); val h = b.height.toFloat(); val c = Canvas(b)
-        c.drawRect(0f, 0f, w, h, Paint().apply { isDither = true; shader = android.graphics.LinearGradient(0f, 0f, 0f, h, linear, null, android.graphics.Shader.TileMode.CLAMP) })
-        val k = w / 1920f
-        c.drawRect(0f, 0f, 1250f * k, 760f * h / 1080f, Paint().apply { isDither = true
-            shader = android.graphics.RadialGradient(0f, 0f, 1150f * k, radial, null, android.graphics.Shader.TileMode.CLAMP)
-        })
+        c.drawRect(0f, 0f, w, h, Paint().apply { isDither = true; shader = android.graphics.LinearGradient(0f, 0f, 0f, h, linear, linearAt, android.graphics.Shader.TileMode.CLAMP) })
+        // A circle of radius w*0.78, squashed to an ellipse 0.78w x 0.86h; transparent at its rim and beyond.
+        val g = android.graphics.RadialGradient(0f, 0f, w * 0.78f, radial, radialAt, android.graphics.Shader.TileMode.CLAMP)
+        g.setLocalMatrix(android.graphics.Matrix().apply { setScale(1f, (h * 0.86f) / (w * 0.78f)) })
+        c.drawRect(0f, 0f, w, h, Paint().apply { isDither = true; shader = g })
     }
 }

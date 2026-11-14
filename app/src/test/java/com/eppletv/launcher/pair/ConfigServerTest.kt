@@ -23,8 +23,10 @@ class ConfigServerTest {
             saved += fields
             return fields.keys.map { ConfigServer.Result(it, true, "Connected") }
         }
+        override fun photo(bytes: ByteArray): ConfigServer.Result { photos += String(bytes); return ConfigServer.Result("photo", true, "Added to Home") }
         override fun stopped(error: Throwable?) { stopped.countDown() }
     }
+    private val photos = mutableListOf<String>()
     private val loopback = InetAddress.getByName("127.0.0.1")
     private val server = ConfigServer(session, loopback, handler).also { it.start() }
     private val host get() = "127.0.0.1:${server.port}"
@@ -65,6 +67,42 @@ class ConfigServerTest {
         val st = http("GET", "/s/state", mapOf("X-Epple-Session" to secret))!!
         assertEquals("paired", field(st.body, "state"))
         return secret to field(st.body, "nonce")!!
+    }
+
+    private val jpeg = mapOf("Content-Type" to "image/jpeg")
+
+    @Test fun photoFlowUsesNonceOnce() {
+        val (secret, nonce) = paired()
+        val h = jpeg + ("X-Epple-Session" to secret) + ("X-Epple-Nonce" to nonce)
+        val r = http("POST", "/s/photo", h, "fakejpeg")!!
+        assertEquals(200, r.status)
+        assertEquals(listOf("fakejpeg"), photos)
+        assertTrue(r.body.contains("\"field\":\"photo\",\"ok\":true"))
+        assertNotNull(field(r.body, "nonce"))
+        assertEquals(409, http("POST", "/s/photo", h, "again")!!.status)
+        assertEquals(1, photos.size)
+    }
+
+    @Test fun photoNeedsJpegTypeAndSecret() {
+        val (secret, nonce) = paired()
+        assertEquals(415, http("POST", "/s/photo", mapOf("X-Epple-Session" to secret, "X-Epple-Nonce" to nonce, "Content-Type" to "image/png"), "x")!!.status)
+        assertEquals(403, http("POST", "/s/photo", jpeg + ("X-Epple-Nonce" to nonce), "x")!!.status)
+        assertTrue(photos.isEmpty())
+    }
+
+    @Test fun largeBodyOnlyForPairedPhone() {
+        val (secret, nonce) = paired()
+        // Without the secret a picture-sized body is refused before it is read.
+        assertEquals(400, http("POST", "/s/photo", jpeg + ("X-Epple-Nonce" to nonce), "", length = 100_000)!!.status)
+        val big = "a".repeat(200_000)
+        assertEquals(200, http("POST", "/s/photo", jpeg + ("X-Epple-Session" to secret) + ("X-Epple-Nonce" to nonce), big)!!.status)
+        assertEquals(200_000, photos.single().length)
+        // Never more than MAX_PHOTO, even for the paired phone.
+        assertEquals(400, http("POST", "/s/photo", jpeg + ("X-Epple-Session" to secret), "", length = ConfigServer.MAX_PHOTO + 1)!!.status)
+    }
+
+    @Test fun rootAfterReplaceStateIsGone() {
+        assertEquals(410, http("GET", "/")!!.status)
     }
 
     @Test fun linkUsesBoundAddressPortAndToken() {

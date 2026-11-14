@@ -69,6 +69,9 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override lateinit var catalog: Catalog; private set
     override lateinit var user: UserLibrary; private set
     override lateinit var prefs: Prefs; private set
+    override lateinit var wallpapers: Wallpapers; private set
+    private var wallBmp: Bitmap? = null
+    private var wallGen = 0
     private lateinit var repo: AppRepository
     private lateinit var titles: TitleLauncher
     private lateinit var hero: Hero
@@ -87,7 +90,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private lateinit var neutral: Bitmap
 
     override var apps: List<AppEntry> = emptyList(); private set
-    private var zone = Zone.CONTENT
+    private var zone = Zone.TABS                     // Epple TV opens on the Home tab, over a wallpaper
     private var section = 0
     private var tabIdx = 0                          // 0..6 tabs, 7 = the clock (Control Center)
     private val screens = arrayOfNulls<Screen>(7)
@@ -126,9 +129,13 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         if (!t.inDock) { hero.field(e); return@Runnable }
         val restart = switched; switched = false
         if (restart) restartRotation()
+        // Only a streaming app with titles shows posters; any other app (and one still loading) keeps the wallpaper.
         var answered = false
-        content.items(e.packageName) { items -> answered = true; if (pending === t) hero.bind(e, items, restart) }
-        if (!answered) hero.bind(e, emptyList(), restart)
+        content.items(e.packageName) { items ->
+            answered = true
+            if (pending === t && section == 0 && zone != Zone.TABS) { if (items.isEmpty()) showWallpaper() else hero.bind(e, items, restart) }
+        }
+        if (!answered) showWallpaper()
     }
 
     private val rotate = object : Runnable {
@@ -147,6 +154,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
+        wallpapers = Wallpapers(this)
         Type.init(this); Type.scale = prefs.textScale; Type.boldDelta = if (prefs.boldText) 150 else 0
         Sources.override = prefs.regionCode
         Sources.indianLangs = prefs.langs
@@ -177,7 +185,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         feed = HomeFeed(this)
 
         tabs = TabBar(this, l, clock, TAB_NAMES, TAB_ICONS, hero.backdrop).apply { alpha = 0f; visibility = View.INVISIBLE }
-        root.addView(tabs, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(76), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = l.px(48) })
+        root.addView(tabs, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(108), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = l.px(36) })
 
         pill = Pill(this, "", l.pxf(Txt.META.px), l.pxf(30f), l.px(28), clock, Colors.GLASS, Colors.WHITE, 0.06f)
         pill.setOnClickListener { openControlCenter() }
@@ -200,6 +208,9 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         setup.view.background = android.graphics.drawable.BitmapDrawable(resources, neutral).apply { isFilterBitmap = true }
 
         setContentView(root)
+        // Home tab selected, its wallpaper behind: posters appear only once a streaming app is focused.
+        tabsP.target = 1f; animateShell()
+        showWallpaper(); nextWallpaper()
         val repeat = if (BuildConfig.DEBUG) intent.getIntExtra("repeat", 1) else 1
         val artScale = l.px(300) / l.tileW.toFloat()     // art is rendered larger than the tile, so it stays sharp when focused
         repo = AppRepository(this, l.px(300), l.px(169), { onApps(it) }, repeat,
@@ -261,6 +272,30 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         pill.text = timeText; pill.contentDescription = getString(R.string.cc_label, timeText)
     }
 
+    // ---- Home wallpaper ----
+
+    /** Home's resting picture: the current wallpaper, or the neutral field until one exists. */
+    private fun showWallpaper() { hero.rest(wallBmp ?: neutral) }
+
+    /** What Home shows behind its rows: the wallpaper on the tab bar, else the focused top-row app's titles. */
+    private fun homeArt() {
+        if (zone == Zone.TABS || pending == null) { showWallpaper(); return }
+        main.removeCallbacks(applyPending); applyPending.run(); hero.reshow()
+    }
+
+    /** Loads another wallpaper off the main thread (taking in any copied from a computer first) and shows it on Home. */
+    override fun nextWallpaper(newest: Boolean) {
+        val gen = ++wallGen
+        content.run({ wallpapers.importDropped(); val f = if (newest) wallpapers.newest() else wallpapers.pick(); f?.let { wallpapers.load(it) } ?: neutral }) { b ->
+            if (gen != wallGen) return@run
+            wallBmp = if (b === neutral) null else b         // the previous one is left to the GC: a backdrop layer may still hold it
+            if (section == 0 && hero.resting) showWallpaper()
+        }
+    }
+
+    override fun openPhone() { setup.startPhone() }
+    override fun wallpapersAdded() { nextWallpaper(newest = true); (screens[6] as? SettingsScreen)?.show() }
+
     // ---- focus and zones ----
 
     private fun restoreFocus() {
@@ -286,6 +321,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     private fun enterTabs(i: Int) {
         zone = Zone.TABS; tabIdx = i; tabsP.target = 1f; animateShell(); focusTab()
+        if (section == 0 && !hero.resting) { setShelf(false); showWallpaper() }
     }
     private fun focusTab() { if (tabIdx >= TAB_NAMES.size) pill.requestFocus() else tabs.tabs[tabIdx].requestFocus() }
 
@@ -300,7 +336,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private fun leaveFeed() {
         homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE; feed.hide()
         artGen++; main.removeCallbacks(artRun)
-        main.removeCallbacks(applyPending); applyPending.run(); hero.reshow()          // the top row's artwork comes back
+        homeArt()                                       // the top row's artwork comes back
         animateShell()
     }
 
@@ -312,7 +348,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         artGen++; main.removeCallbacks(artRun)              // nothing requested for the previous tab may land now
         if (i == 0) {
             homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE
-            main.removeCallbacks(applyPending); applyPending.run(); hero.reshow()
+            homeArt()
         } else {
             homeP.target = 0f; hero.quiet(true); feed.view.visibility = View.GONE
             val s = screens[i] ?: create(i).also { screens[i] = it; sectionLayer.addView(it.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)) }
@@ -368,7 +404,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         when (zone) {
             Zone.FEED -> { feed.view.visibility = View.VISIBLE; dimP.target = 0.25f; feed.show(); tabArt(feed) }
             Zone.SECTION, Zone.TABS -> screens[section]?.let { it.view.visibility = View.VISIBLE; dimP.target = if (it.wantsArt) 0.2f else 0.55f; it.show(); tabArt(it); if (zone == Zone.TABS) tabsP.target = 1f }
-            else -> { homeP.target = 1f; hero.quiet(false); artGen++; main.removeCallbacks(applyPending); applyPending.run(); hero.reshow() }
+            else -> { homeP.target = 1f; hero.quiet(false); artGen++; homeArt() }
         }
         if (zone == Zone.SECTION) tabsP.target = 1f
         animateShell(); restoreFocus()
@@ -488,7 +524,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             if (panel.open) panel.hide()
             while (details.isNotEmpty()) sectionLayer.removeView(details.removeAt(details.size - 1).view)
             if (zone == Zone.FEED) leaveFeed()
-            showSection(0); enterContent()
+            showSection(0); enterTabs(0); nextWallpaper()
         }
     }
 
@@ -635,8 +671,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         Zone.DETAIL -> { closeDetail(); true }
         Zone.SECTION -> { if (screens[section]?.back() != true) enterTabs(section); true }
         Zone.FEED -> { if (!feed.back()) enterContent(); true }
-        Zone.TABS -> { if (section != 0) { showSection(0); enterContent() } else enterContent(); true }
-        Zone.CONTENT -> if (!page.atTop()) { dirX = 0; dirY = -1; page.toTop(); true } else false
+        Zone.TABS -> if (section != 0) { showSection(0); enterTabs(0); true } else false
+        Zone.CONTENT -> { if (!page.atTop()) { dirX = 0; dirY = -1; page.toTop() } else enterTabs(0); true }
         Zone.HERO -> { enterContent(); true }
     }
 

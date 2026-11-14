@@ -96,9 +96,9 @@ internal object TabIcons {
 }
 
 /**
- * One tab. At rest it shows only its icon; the tab of the open section gets a soft glass capsule behind its icon;
- * the focused tab becomes a white capsule with icon and label. Every tab has the same fixed slot, so focus changes
- * never move the other tabs, and the label always fits.
+ * One tab, in the style of a streaming app's floating tab bar: its icon above its label, always both. The tab of the
+ * open section sits on a soft capsule in full white; the focused tab gets a brighter capsule and grows slightly.
+ * Every tab has the same fixed slot, so focus changes never move the other tabs.
  */
 @SuppressLint("ViewConstructor")
 class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock, val label: String, private val icon: Int) : View(ctx), FrameClock.Tick {
@@ -106,17 +106,16 @@ class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock
     private val s = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 3f)
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
-    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(26f) * Type.scale; typeface = Type.of(600) }
-    val iconSize = l.pxf(30f)
-    val pad = l.pxf(18f)
-    val gap = l.pxf(12f)
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(21f) * Type.scale; typeface = Type.of(600); textAlign = Paint.Align.CENTER }
+    private val iconSize = l.pxf(32f)
+    private val pad = l.pxf(20f)
     private val rect = RectF()
     var selectedState = false
         set(v) { if (field != v) { field = v; s.target = if (v) 1f else 0f; clock.add(this) } }
 
     init { isFocusable = true; contentDescription = label }
 
-    fun contentWidth() = pad * 2 + iconSize + gap + text.measureText(label)
+    fun contentWidth() = maxOf(text.measureText(label) + pad * 2, l.pxf(118f))
 
     override fun onFocusChanged(gain: Boolean, direction: Int, prev: android.graphics.Rect?) {
         super.onFocusChanged(gain, direction, prev)
@@ -124,28 +123,22 @@ class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock
     }
 
     override fun onDraw(c: Canvas) {
-        val fv = f.value; val sv = s.value
+        val fv = f.value.coerceIn(0f, 1f); val sv = s.value.coerceIn(0f, 1f)
         val h = height.toFloat(); val w = width.toFloat()
-        val inset = l.pxf(4f)
-        val full = contentWidth().coerceAtMost(w - 2 * inset)
-        val small = h - 2 * inset
-        val cw = small + (full - small) * fv
-        rect.set(w / 2f - cw / 2f, inset, w / 2f + cw / 2f, h - inset)
-        val bg = Colors.lerp(Colors.lerp(0x00FFFFFF, 0x30FFFFFF, sv), Colors.WHITE, fv)
-        if ((bg ushr 24) > 0) { fill.color = bg; c.drawRoundRect(rect, rect.height() / 2f, rect.height() / 2f, fill) }
-        val ink = Colors.lerp(Colors.lerp(0xB3FFFFFF.toInt(), Colors.WHITE, sv), Colors.INK, fv)
-        val iconX = w / 2f + (rect.left + pad + iconSize / 2f - w / 2f) * fv
+        val inset = l.pxf(5f)
+        rect.set(inset, inset, w - inset, h - inset)
+        val bg = Colors.lerp(Colors.lerp(0x00FFFFFF, 0x24FFFFFF, sv), 0x45FFFFFF, fv)
+        if ((bg ushr 24) > 0) { fill.color = bg; val rad = rect.height() * 0.32f; c.drawRoundRect(rect, rad, rad, fill) }
+        val ink = Colors.lerp(0x9EFFFFFF.toInt(), Colors.WHITE, maxOf(sv, fv))
         stroke.color = ink
-        TabIcons.draw(icon, c, iconX, h / 2f, iconSize, stroke)
-        if (fv > 0.02f) {
-            text.color = ink; text.alpha = (255 * ((fv - 0.3f) / 0.7f).coerceIn(0f, 1f)).toInt()
-            c.drawText(label, iconX + iconSize / 2f + gap, h / 2f - (text.descent() + text.ascent()) / 2f, text)
-        }
+        TabIcons.draw(icon, c, w / 2f, h * 0.39f, iconSize, stroke)
+        text.color = ink
+        c.drawText(label, w / 2f, h * 0.80f, text)
     }
 
     override fun tick(dt: Float): Boolean {
         f.step(dt); s.step(dt)
-        val sc = 1f + 0.04f * f.value; scaleX = sc; scaleY = sc
+        val sc = 1f + 0.06f * f.value; scaleX = sc; scaleY = sc
         invalidate()
         return !(f.atRest() && s.atRest())
     }
@@ -197,7 +190,7 @@ class TabGlass(ctx: Context, private val l: Layout, private val backdrop: Backdr
     }
 }
 
-/** The tab bar: tab items in fixed slots on a glass capsule, centred at the top. */
+/** The tab bar: a compact floating glass capsule, centred at the top, with the tabs in fixed slots. */
 @SuppressLint("ViewConstructor")
 class TabBar(ctx: Context, l: Layout, clock: FrameClock, labels: List<String>, icons: List<Int>, backdrop: Backdrop) : FrameLayout(ctx) {
     val tabs = labels.mapIndexed { i, s -> TabItem(ctx, l, clock, s, icons[i]) }
@@ -207,11 +200,14 @@ class TabBar(ctx: Context, l: Layout, clock: FrameClock, labels: List<String>, i
 
     init {
         clipChildren = false; clipToPadding = false
-        val slot = tabs.maxOf { it.contentWidth() }.toInt() + l.px(8)
-        val p = l.px(8)
-        addView(TabGlass(ctx, l, backdrop), LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        tabs.forEach { t -> row.addView(t, LinearLayout.LayoutParams(slot, l.px(60))) }
-        addView(row, LayoutParams(slot * tabs.size + 2 * p, MATCH_PARENT).apply { gravity = Gravity.CENTER })
+        val slot = tabs.maxOf { it.contentWidth() }.toInt()
+        val p = l.px(14)
+        val width = slot * tabs.size + 2 * p
+        // Both children get the bar's real width: a MATCH_PARENT glass inside a WRAP_CONTENT bar would measure
+        // itself to the whole screen and stretch the bar edge to edge.
+        addView(TabGlass(ctx, l, backdrop), LayoutParams(width, MATCH_PARENT).apply { gravity = Gravity.CENTER })
+        tabs.forEach { t -> row.addView(t, LinearLayout.LayoutParams(slot, l.px(96))) }
+        addView(row, LayoutParams(width, MATCH_PARENT).apply { gravity = Gravity.CENTER })
         row.setPadding(p, 0, p, 0)
         selected = 0
     }

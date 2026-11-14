@@ -33,6 +33,8 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         fun requestDefaultHome(): Boolean
         fun setupFinished(changedKeys: Boolean)
         fun setupClosed(changedKeys: Boolean)
+        /** Pictures were added to the Home wallpapers from the phone. */
+        fun wallpapersAdded()
     }
 
     private val l = nav.l
@@ -61,8 +63,10 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     // Phone setup (QR code): the panel redraws on every phase change; a 1 s tick updates only the countdown.
     private var phoneMode = false
+    /** Opened straight to the phone screen (Settings > Wallpapers): leaving it closes setup. */
+    private var phoneOnly = false
     private val phone by lazy {
-        PhoneLink(ctx, nav.content.net) { if (phoneMode) render() }.apply {
+        PhoneLink(ctx, nav.content.net, nav.wallpapers) { if (phoneMode) render() }.apply {
             onSaved = { s -> if (s.check.ok) { checks[s.key] = s.check; changedKeys = true } }
         }
     }
@@ -94,11 +98,18 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         render()
     }
 
+    /** Opens only the phone screen (from Settings), with a fresh code. */
+    fun startPhone() {
+        single = true; phoneOnly = true; changedKeys = false; editing = null; step = 1
+        view.visibility = View.VISIBLE; block(true)
+        phoneMode = true; render(); phone.start()
+    }
+
     fun resetForRerun() { state.edit().putBoolean("done", false).putInt("step", 0).apply() }
 
     /** BACK: closes the key editor, then goes to the previous step. On the first step it does nothing (setup must finish). */
     fun back(): Boolean {
-        if (phoneMode) { leavePhone(); render(); return true }
+        if (phoneMode) { leavePhone(); if (phoneOnly) close() else render(); return true }
         if (editing != null) { editing = null; render(); return true }
         if (single) { close(); return true }
         if (step > 0) { go(step - 1) }
@@ -110,7 +121,15 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     private fun go(n: Int) { step = n; if (!single) state.edit().putInt("step", n).apply(); render() }
 
-    private fun close() { leavePhone(); view.visibility = View.GONE; block(false); host.setupClosed(changedKeys) }
+    private fun close() {
+        leavePhone(); phoneOnly = false
+        view.visibility = View.GONE; block(false)
+        photosSeen()
+        host.setupClosed(changedKeys)
+    }
+
+    /** Tells Home once about pictures added from the phone since setup opened. */
+    private fun photosSeen() { if (phone.photosTotal > 0) { phone.photosTotal = 0; host.wallpapersAdded() } }
 
     /** The TV left the foreground: stop listening; the user starts a new code when they return. */
     fun pause() { if (phoneMode) { leavePhone(); render() } }
@@ -127,6 +146,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         leavePhone()
         state.edit().putBoolean("done", true).putInt("step", 4).apply()
         view.visibility = View.GONE; block(false)
+        photosSeen()
         host.setupFinished(changedKeys)
     }
 
@@ -217,9 +237,9 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     /** Phone setup: the QR code on the left, what is happening on the right. Returns the view to focus. */
     private fun renderPhone(): View? {
-        title.text = "Set Up with Your Phone"
+        title.text = if (phoneOnly) "Add from Your Phone" else "Set Up with Your Phone"
         body.text = "Scan the code with your phone's camera. Your phone must be on the same Wi-Fi as this TV. " +
-            "Keys you enter on your phone go straight to this TV over your home network."
+            "On your phone you can enter provider keys and add pictures for the Home screen; they go straight to this TV over your home network."
         val p = phone.phase
         val green = 0xFF7CE38B.toInt(); val orange = 0xFFFFB86B.toInt(); val red = 0xFFFF8A80.toInt()
         val side = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
@@ -231,9 +251,9 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             val q = phone.qr
             if (q != null && showQr) setImageDrawable(android.graphics.drawable.BitmapDrawable(resources, qrBitmap(q, box)).apply { isFilterBitmap = false })
         }
-        side.addView(image, LinearLayout.LayoutParams(box, box))
+        if (showQr) side.addView(image, LinearLayout.LayoutParams(box, box))       // a used or ended code leaves no empty box
         val info = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        side.addView(info, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { leftMargin = l.px(48) })
+        side.addView(info, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { if (showQr) leftMargin = l.px(48) })
         fun line(text: String, color: Int = Colors.TEXT_DIM, size: Txt = Txt.META) = TextView(ctx).apply {
             style(size, l.u, color); isSingleLine = false; maxLines = 4; this.text = text
             info.addView(this, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { if (info.childCount > 0) topMargin = l.px(14) })
@@ -259,8 +279,10 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             }
             PhoneLink.Phase.PAIRED -> {
                 line("✓  Phone connected", green, Txt.TITLE)
-                line("Enter your keys on the phone and tap Save. Each key is tested before it is stored.")
+                line("Enter keys or choose pictures on the phone. Each key is tested before it is stored.")
                 for (s in phone.saved) line(if (s.check.ok) "✓  ${s.key.label}: connected and saved" else "✕  ${s.key.label}: ${s.check.message}", if (s.check.ok) green else red)
+                if (phone.photos > 0) line("✓  ${phone.photos} ${if (phone.photos == 1) "picture" else "pictures"} added to Home", green)
+                phone.photoError?.let { line("✕  Picture: $it", red) }
             }
             PhoneLink.Phase.DENIED -> line("Connection refused. Choose New Code to try again.", orange)
             PhoneLink.Phase.EXPIRED -> line("This code has ended. Choose New Code to get a fresh one.", orange)
@@ -271,7 +293,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             val again = button("New Code") { phone.start() }
             if (p != PhoneLink.Phase.PAIRED && p != PhoneLink.Phase.WAITING) focus = again
         }
-        val done = button(if (p == PhoneLink.Phase.PAIRED) "Done" else "Back") { leavePhone(); render() }
+        val done = button(if (p == PhoneLink.Phase.PAIRED) "Done" else "Back") { leavePhone(); if (phoneOnly) close() else render() }
         if (focus == null) focus = done
         view.keepScreenOn = phone.live || p == PhoneLink.Phase.STARTING
         view.removeCallbacks(tick)

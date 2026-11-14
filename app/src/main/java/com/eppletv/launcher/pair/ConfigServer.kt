@@ -31,6 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger
  *   POST /p/{token}/pair   ask to pair; returns the 4-digit code and a session secret
  *   GET  /s/state          paired phone polls; header X-Epple-Session
  *   POST /s/save           form body with nonce and keys; header X-Epple-Session
+ *   POST /s/photo          one JPEG for the Home wallpapers; headers X-Epple-Session and X-Epple-Nonce.
+ *                          The larger body limit applies only after the session secret checks out.
  */
 class ConfigServer(
     private val session: PairingSession,
@@ -42,6 +44,8 @@ class ConfigServer(
         fun page(cspNonce: String): String
         /** Validates and stores the submitted values; returns one result per field it handled. */
         fun save(fields: Map<String, String>): List<Result>
+        /** Validates and stores one picture (JPEG bytes, at most [MAX_PHOTO]). */
+        fun photo(bytes: ByteArray): Result = Result("photo", false, "Not supported")
         /** Called once when the server stops, with the reason if it failed. */
         fun stopped(error: Throwable?) {}
     }
@@ -106,8 +110,9 @@ class ConfigServer(
         try {
             c.soTimeout = READ_TIMEOUT_MS
             val deadline = System.nanoTime() + TOTAL_TIMEOUT_MS * 1_000_000L
-            val req = read(c.getInputStream(), deadline)
-            val reply = if (req == null) Reply(400, text("Bad request")) else route(req, c.inetAddress.hostAddress ?: "")
+            val from = c.inetAddress.hostAddress ?: ""
+            val req = read(c.getInputStream(), deadline, from)
+            val reply = if (req == null) Reply(400, text("Bad request")) else route(req, from)
             write(c, reply)
         } catch (_: Exception) {
             // Timeouts, resets and malformed input end the connection; nothing is logged.
@@ -127,6 +132,8 @@ class ConfigServer(
         if (origin != null && origin != this.origin) return Reply(403, text("Wrong origin"))
         val p = r.path.substringBefore('?')
         return when {
+            // The page removes the token from the address bar, so a reload lands here.
+            p == "/" -> if (r.method == "GET") Reply(410, html(GONE_PAGE)) else Reply(405, text("Method not allowed"))
             p.startsWith("/p/") && !p.endsWith("/pair") -> {
                 if (r.method != "GET") return Reply(405, text("Method not allowed"))
                 val t = p.removePrefix("/p/")
@@ -154,26 +161,40 @@ class ConfigServer(
                 if (r.method != "POST") return Reply(405, text("Method not allowed"))
                 if (r.headers["content-type"]?.substringBefore(';')?.trim() != FORM) return Reply(415, json("""{"error":"type"}"""))
                 val fields = parseForm(String(r.body, Charsets.UTF_8)) ?: return Reply(400, json("""{"error":"form"}"""))
-                when (session.claimSave(r.headers["x-epple-session"], from, fields["nonce"])) {
-                    PairingSession.Gate.FORBIDDEN -> Reply(403, json("""{"error":"forbidden"}"""))
-                    PairingSession.Gate.GONE -> Reply(410, json("""{"error":"gone"}"""))
-                    PairingSession.Gate.STALE -> Reply(409, json("""{"error":"stale"}"""))
-                    PairingSession.Gate.TOO_MANY -> Reply(429, json("""{"error":"limit"}"""))
-                    PairingSession.Gate.OK -> {
-                        val results = try { handler.save(fields - "nonce") } catch (_: Exception) { emptyList() }
-                        val next = session.nextNonce()
-                        val list = results.joinToString(",") {
-                            """{"field":${quote(it.field)},"ok":${it.ok},"message":${quote(it.message)}}"""
-                        }
-                        Reply(200, json("""{"results":[$list],"nonce":${next?.let { quote(it) } ?: "null"}}"""))
-                    }
+                gated(session.claimSave(r.headers["x-epple-session"], from, fields["nonce"])) {
+                    try { handler.save(fields - "nonce") } catch (_: Exception) { emptyList() }
+                }
+            }
+            p == "/s/photo" -> {
+                if (r.method != "POST") return Reply(405, text("Method not allowed"))
+                if (r.headers["content-type"]?.substringBefore(';')?.trim() != JPEG) return Reply(415, json("""{"error":"type"}"""))
+                if (r.body.isEmpty()) return Reply(400, json("""{"error":"empty"}"""))
+                gated(session.claimSave(r.headers["x-epple-session"], from, r.headers["x-epple-nonce"], photo = true)) {
+                    listOf(try { handler.photo(r.body) } catch (_: Exception) { Result("photo", false, "Couldn't save this picture") })
                 }
             }
             else -> Reply(404, text("Not found"))
         }
     }
 
-    private fun read(input: InputStream, deadline: Long): Request? {
+    /** The reply for a claimed save: runs [work] only when the gate is OK, then hands the phone its next nonce. */
+    private fun gated(g: PairingSession.Gate, work: () -> List<Result>): Reply = when (g) {
+        PairingSession.Gate.FORBIDDEN -> Reply(403, json("""{"error":"forbidden"}"""))
+        PairingSession.Gate.GONE -> Reply(410, json("""{"error":"gone"}"""))
+        PairingSession.Gate.STALE -> Reply(409, json("""{"error":"stale"}"""))
+        PairingSession.Gate.TOO_MANY -> Reply(429, json("""{"error":"limit"}"""))
+        PairingSession.Gate.OK -> {
+            val results = work()
+            val next = session.nextNonce()
+            val list = results.joinToString(",") {
+                """{"field":${quote(it.field)},"ok":${it.ok},"message":${quote(it.message)}}"""
+            }
+            Reply(200, json("""{"results":[$list],"nonce":${next?.let { quote(it) } ?: "null"}}"""))
+        }
+    }
+
+    private fun read(input: InputStream, start: Long, from: String): Request? {
+        var deadline = start
         val head = ByteArrayOutputStream()
         var matched = 0
         while (matched < 4) {
@@ -199,8 +220,11 @@ class ConfigServer(
             headers[l.substring(0, i).trim().lowercase()] = l.substring(i + 1).trim()
         }
         if (headers.containsKey("transfer-encoding")) return null
+        // Only the paired phone may send a picture-sized body, and it gets more time for it.
+        val photo = parts[0] == "POST" && parts[1] == "/s/photo" && session.status(headers["x-epple-session"], from) != null
+        if (photo) deadline += PHOTO_EXTRA_MS * 1_000_000L
         val length = headers["content-length"]?.toIntOrNull() ?: 0
-        if (length < 0 || length > MAX_BODY) return null
+        if (length < 0 || length > (if (photo) MAX_PHOTO else MAX_BODY)) return null
         val body = ByteArray(length)
         var got = 0
         while (got < length) {
@@ -230,7 +254,7 @@ class ConfigServer(
 
     private fun csp(nonce: String) =
         "default-src 'none'; script-src 'nonce-$nonce'; style-src 'nonce-$nonce'; connect-src 'self'; " +
-            "img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+            "img-src data: blob:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
 
     private fun randomId(): String {
         val b = ByteArray(16)
@@ -249,9 +273,12 @@ class ConfigServer(
         const val MAX_REQUESTS = 400
         const val MAX_HEAD = 8 * 1024
         const val MAX_BODY = 4 * 1024
+        const val MAX_PHOTO = 6 * 1024 * 1024
+        const val PHOTO_EXTRA_MS = 45_000L
         const val READ_TIMEOUT_MS = 10_000
         const val TOTAL_TIMEOUT_MS = 15_000L
         private const val FORM = "application/x-www-form-urlencoded"
+        private const val JPEG = "image/jpeg"
 
         private val GONE_PAGE = """<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
             |<title>Epple TV</title><h1>This code has ended</h1>
