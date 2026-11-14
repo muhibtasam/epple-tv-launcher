@@ -141,7 +141,7 @@ class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock
 
     override fun tick(dt: Float): Boolean {
         f.step(dt); s.step(dt)
-        val sc = 1f + 0.06f * f.value; scaleX = sc; scaleY = sc
+        // No focus scaling: the pill keeps the same 8 px inset from the bar's edge on every side (concentric corners).
         invalidate()
         return !(f.atRest() && s.atRest())
     }

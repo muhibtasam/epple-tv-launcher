@@ -60,6 +60,9 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
                 "crunchyroll://${if (it.groupValues[1] == "watch") "episode" else "series"}/${it.groupValues[2]}"
             }
         }),
+        Provider(Apps.APPLE_TV, Regex("^apple tv\\+?$", RegexOption.IGNORE_CASE), { u ->
+            Regex("https://tv\\.apple\\.com/[^?#]+").find(u)?.value                     // the app declares tv.apple.com links
+        }, freshTask = true),
         Provider(Apps.YOUTUBE, null, { it }),
         Provider(Apps.STREMIO, null, { it }),
         Provider(Apps.TAPMAD, null, { null }),

@@ -267,10 +267,18 @@ object Rows {
 class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
     // What you left half-way in any app (the TV's own Watch Next list, as Google TV shows it), then titles opened from Epple TV.
     RowSource("Continue Watching", dynamic = true) { cb ->
-        nav.content.run({ ContinueWatching.load(nav.ctx) }) { tv ->
+        nav.content.run({ ContinueWatching.load(nav.ctx, nav.content.net) }) { tv ->
             val seen = tv.orEmpty().map { ContinueWatching.norm(it.title) }.toHashSet()
             cb(tv.orEmpty() + nav.user.items(UserLibrary.Kind.CONTINUE).filter { seen.add(ContinueWatching.norm(it.title)) })
         }
+    },
+    // What every streaming app with its own Android TV rows recommends (Prime Video, Crunchyroll, Apple TV...), a few each.
+    RowSource("From Your Apps", dynamic = true) { cb ->
+        val ch = com.eppletv.launcher.content.Sources.channels(nav.ctx)
+        nav.content.run({
+            val per = ch.available.map { pkg -> try { ch.load(nav.content.net, pkg).take(5) } catch (_: Exception) { emptyList() } }
+            (0 until (per.maxOfOrNull { it.size } ?: 0)).flatMap { i -> per.mapNotNull { it.getOrNull(i) } }
+        }) { cb(it.orEmpty()) }
     },
     RowSource("Recently Added", dynamic = true) { cb ->
         // New releases on the user's own services (Watchmode "New on" lists already loaded for the top row).
@@ -311,21 +319,24 @@ object ContinueWatching {
     private const val PER_APP = 2; private const val MAX = 12
     fun norm(t: String) = t.trim().lowercase(java.util.Locale.ROOT).replace(Regex("\\s+"), " ")
 
-    fun load(ctx: android.content.Context): List<ContentItem> {
+    fun load(ctx: android.content.Context, net: com.eppletv.launcher.content.Net): List<ContentItem> {
         if (!com.eppletv.launcher.content.TvListings.allowed(ctx)) return emptyList()
         val all = try { com.eppletv.launcher.content.TvListings.read(ctx) } catch (e: Exception) { return emptyList() }
         val pm = ctx.packageManager
         val label = HashMap<String, String>()
         fun app(pkg: String) = label.getOrPut(pkg) { try { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { pkg } }
         val rows = all.filter { (it.watchNext || com.eppletv.launcher.content.TvListings.isContinueChannel(it.channel)) &&
-            it.art?.startsWith("https://") == true && com.eppletv.launcher.content.TvListings.linkAllowed(it.link, it.pkg) &&
+            it.wide != null && com.eppletv.launcher.content.TvListings.linkAllowed(it.link, it.pkg) &&
             (pm.getLeanbackLaunchIntentForPackage(it.pkg) ?: pm.getLaunchIntentForPackage(it.pkg)) != null }
             .sortedByDescending { it.engaged }
         val perApp = HashMap<String, Int>(); val seen = HashSet<String>()
         return rows.filter { seen.add(it.pkg + "|" + norm(it.title)) && (perApp.merge(it.pkg, 1, Int::plus) ?: 0) <= PER_APP }.take(MAX).map { p ->
             val pct = p.progress.let { if (it > 0) "${(it * 100).toInt()}% watched" else "" }
             ContentItem("wn:${p.pkg}:${norm(p.title)}", p.title, listOf(app(p.pkg), p.episode?.let { e -> if (e.all(Char::isDigit)) "Episode $e" else e } ?: "", pct).filter { it.isNotEmpty() }.joinToString("  ·  "),
-                com.eppletv.launcher.content.TvListings.cleanArt(p.art!!).first, p.link, p.pkg, "Continue in ${app(p.pkg)}", p.description ?: "")
+                com.eppletv.launcher.content.TvListings.cleanArt(p.wide!!).first, p.link, p.pkg, "Continue in ${app(p.pkg)}", p.description ?: "",
+                // Portrait art for the row's narrow cards: the app's own when it published one, else TMDB's poster by name.
+                posterUrl = p.tall?.let { com.eppletv.launcher.content.TvListings.cleanArt(it).first }
+                    ?: (try { com.eppletv.launcher.content.Sources.posterFor(net, p.title, p.isMovie) } catch (_: Exception) { null }) ?: "")
         }
     }
 }

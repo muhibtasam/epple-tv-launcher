@@ -15,6 +15,7 @@ object Apps {
     const val YOUTUBE = "com.google.android.youtube.tv"
     const val STREMIO = "com.stremio.one"
     const val TAPMAD = "com.pitelevision.tapmadtv"
+    const val APPLE_TV = "com.apple.atve.androidtv.appletv"
     val DEFAULT_PINS = listOf(NETFLIX, PRIME, CRUNCHYROLL, YOUTUBE, STREMIO, TAPMAD)
 }
 
@@ -32,6 +33,7 @@ object Sources {
             Apps.NETFLIX to Service("Netflix", watchmode = "203", tmdb = "8"),
             Apps.PRIME to Service("Prime Video", watchmode = "26", tmdb = "119|9"),
             Apps.CRUNCHYROLL to Service("Crunchyroll", watchmode = "80,79", tmdb = "283", indian = false),
+            Apps.APPLE_TV to Service("Apple TV", watchmode = "371", tmdb = "350", indian = false),
         ),
         Keys(), { region },
     )
@@ -39,11 +41,24 @@ object Sources {
     fun all(ctx: android.content.Context, debugCinemetaFor: String? = null): List<ContentSource> = listOf(
         Cinemeta(setOfNotNull(Apps.STREMIO, debugCinemetaFor)),
         NetflixTop10(showcase, Keys(), { region }),
-        AppChannels(ctx, mapOf(Apps.PRIME to "Prime Video")),           // Prime's own rows, once TV listings may be read
-        showcase,
         YouTube({ Credentials.get(Credentials.Key.YOUTUBE) }, { region }),
         YouTubeChannel(Apps.TAPMAD, "tapmad", TAPMAD_UPLOADS) { Credentials.get(Credentials.Key.YOUTUBE) },
+        channels(ctx),                                               // any app's own rows, once TV listings may be read
+        showcase,
     )
+
+    private var channels: AppChannels? = null
+    /** The one [AppChannels]: Home asks it which apps have rows every time it comes to the front. */
+    fun channels(ctx: android.content.Context) = channels ?: AppChannels(ctx.applicationContext) { net, title, movie -> posterFor(net, title, movie) }.also { channels = it }
+
+    /** A portrait poster from TMDB for a title known only by name (an app's row, Watch Next). Null without TMDB. */
+    fun posterFor(net: Net, title: String, movie: Boolean): String? {
+        if (!usesTmdb) return null
+        val name = title.replace(Regex("\\s*[-:–]\\s*(Season|Series)\\s*\\d+.*$", RegexOption.IGNORE_CASE), "").trim()
+        return (showcase.find(net, if (movie) "movie" else "tv", name, "", 0.0) ?: if (movie) null else showcase.find(net, "movie", name, "", 0.0))
+            ?.posterUrl?.ifEmpty { null }
+    }
+
     val usesTmdb get() = Credentials.hasAny(Credentials.Key.TMDB)
 
     /** Uploads playlist of tapmad's official YouTube channel (@tapmadofficial, UCPHOf3lVS8bUSwR1h55EO6g). */

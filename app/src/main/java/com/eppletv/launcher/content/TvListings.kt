@@ -21,21 +21,32 @@ object TvListings {
         val pkg: String, val channel: String?, val title: String, val art: String?, val poster: String?, val link: String?,
         val type: Int, val watchNext: Boolean, val episode: String?, val description: String?, val year: String?,
         val position: Long = 0, val duration: Long = 0, val engaged: Long = 0,
+        val thumb: String? = null, val thumbRatio: Int = -1, val posterRatio: Int = -1,
     ) {
+        /** The landscape picture for a wide card: one published as 16:9, 3:2 or 4:3, else one with no stated ratio. https only. */
+        val wide: String? get() = listOf(thumb to thumbRatio, poster to posterRatio).let { l ->
+            l.firstOrNull { (u, r) -> u?.startsWith("https://") == true && r in WIDE }?.first
+                ?: l.firstOrNull { (u, r) -> u?.startsWith("https://") == true && r < 0 }?.first }
+        /** The portrait picture (2:3 or movie poster), when the app published one. */
+        val tall: String? get() = listOf(poster to posterRatio, thumb to thumbRatio)
+            .firstOrNull { (u, r) -> u?.startsWith("https://") == true && r in TALL }?.first
         /** 0..1, or -1 when there is no position worth showing. */
         val progress: Float get() = if (duration <= 0 || position < 1000 || position >= duration) -1f else position.toFloat() / duration
         val isMovie get() = type == TvContract.PreviewPrograms.TYPE_MOVIE
     }
 
     fun allowed(c: Context) = c.checkSelfPermission(PERMISSION) == PackageManager.PERMISSION_GRANTED
+    private val WIDE = setOf(0, 1, 2)          // TvContract aspect ratios 16:9, 3:2, 4:3
+    private val TALL = setOf(4, 5)             // 2:3 and movie poster
 
     private val CONTINUE_NAMES = setOf("continue watching", "seguir viendo", "continuar viendo", "continuar assistindo", "continue assistindo")
     fun isContinueChannel(name: String?) = name != null && name.trim().lowercase(Locale.ROOT) in CONTINUE_NAMES
 
     private val PROGRAM = arrayOf("package_name", "channel_id", "title", "type", "poster_art_uri", "thumbnail_uri", "intent_uri",
-        "short_description", "release_date", "episode_display_number", "browsable")
+        "short_description", "release_date", "episode_display_number", "browsable", "poster_art_aspect_ratio", "thumbnail_aspect_ratio")
     private val WATCH_NEXT = arrayOf("package_name", "title", "type", "poster_art_uri", "thumbnail_uri", "intent_uri", "short_description",
-        "release_date", "episode_display_number", "last_playback_position_millis", "duration_millis", "last_engagement_time_utc_millis", "browsable")
+        "release_date", "episode_display_number", "last_playback_position_millis", "duration_millis", "last_engagement_time_utc_millis", "browsable",
+        "poster_art_aspect_ratio", "thumbnail_aspect_ratio")
 
     /** Everything readable. Throws when the provider can't be read (callers keep what they had). */
     fun read(c: Context, watchNext: Boolean = true, previews: Boolean = true): List<Program> {
@@ -53,15 +64,18 @@ object TvListings {
             val ch = r["channel_id"]?.toLongOrNull()?.let { channels[it] }
             val pkg = r["package_name"] ?: ch?.first ?: return@rows
             out += Program(pkg, ch?.second, r["title"] ?: return@rows, r["thumbnail_uri"] ?: r["poster_art_uri"], r["poster_art_uri"],
-                r["intent_uri"], r["type"]?.toIntOrNull() ?: -1, false, r["episode_display_number"], r["short_description"], year(r["release_date"]))
+                r["intent_uri"], r["type"]?.toIntOrNull() ?: -1, false, r["episode_display_number"], r["short_description"], year(r["release_date"]),
+                thumb = r["thumbnail_uri"], thumbRatio = r["thumbnail_aspect_ratio"]?.toIntOrNull() ?: -1, posterRatio = r["poster_art_aspect_ratio"]?.toIntOrNull() ?: -1)
         }
         if (watchNext) rows(c, TvContract.WatchNextPrograms.CONTENT_URI, WATCH_NEXT) { r ->
             if (r["browsable"] == "0") return@rows
             out += Program(r["package_name"] ?: return@rows, "Watch Next", r["title"] ?: return@rows, r["thumbnail_uri"] ?: r["poster_art_uri"],
                 r["poster_art_uri"], r["intent_uri"], r["type"]?.toIntOrNull() ?: -1, true, r["episode_display_number"], r["short_description"],
-                year(r["release_date"]), num(r["last_playback_position_millis"]), num(r["duration_millis"]), num(r["last_engagement_time_utc_millis"]))
+                year(r["release_date"]), num(r["last_playback_position_millis"]), num(r["duration_millis"]), num(r["last_engagement_time_utc_millis"]),
+                thumb = r["thumbnail_uri"], thumbRatio = r["thumbnail_aspect_ratio"]?.toIntOrNull() ?: -1, posterRatio = r["poster_art_aspect_ratio"]?.toIntOrNull() ?: -1)
         }
-        Log.i(TAG, "read ${out.size} programs from ${out.map { it.pkg }.distinct().size} apps")
+        Log.i(TAG, "read ${out.size} programs: " + out.groupBy { it.pkg }.entries.joinToString { (p, l) ->
+            "${p.substringAfterLast('.')} ${l.count { !it.watchNext }}+${l.count { it.watchNext }} [${l.mapNotNull { it.channel }.distinct().joinToString("/")}]" })
         return out
     }
 
@@ -127,25 +141,46 @@ object TvListings {
 }
 
 /**
- * An app's own home-screen rows (Prime Video's, as Google TV shows them): titles, artwork without the drawn-in badge,
- * the badge as the eyebrow ("New movie on Prime Video") and the app's own link to the title. Ready only once the
- * TV allows Epple TV to read TV listings; until then the [Showcase] serves the app.
+ * An app's own home-screen rows, as Google TV shows them, for any streaming app that publishes them (Prime Video,
+ * Crunchyroll, Apple TV once it has been opened and signed in, ...): titles, the landscape and portrait artwork the app
+ * published (Prime's drawn-in badge removed and used as the eyebrow, "New movie on Prime Video") and the app's own
+ * link to the title. Which apps have rows is read again every time Epple TV comes to the front ([refresh]), so a newly
+ * installed and signed-in service starts recommending with no setup. Music, YouTube (its own source) and the TV maker's
+ * promotion rows are left out. Ready only once the TV lets Epple TV read its listings.
  */
-class AppChannels(private val ctx: Context, private val names: Map<String, String>) : ContentSource {
-    override val key = "channels1"
+class AppChannels(private val ctx: Context, private val posterFor: (Net, String, Boolean) -> String?) : ContentSource {
+    override val key = "channels2"
     override val ordered = true                                   // the app's own order
     override val ready get() = TvListings.allowed(ctx)
-    override fun handles(pkg: String) = pkg in names
+    override fun handles(pkg: String) = pkg in available
+
+    private val prefs = ctx.getSharedPreferences("channels", Context.MODE_PRIVATE)
+    @Volatile var available: Set<String> = prefs.getStringSet("apps", emptySet())!!.toSet(); private set
+
+    /** Worker thread. Reads again which apps publish rows; true when that changed. */
+    fun refresh(): Boolean {
+        if (!TvListings.allowed(ctx)) return false
+        val rows = try { TvListings.read(ctx, watchNext = false) } catch (_: Exception) { return false }
+        val now = rows.filter { usable(it) }.groupBy { it.pkg }.filter { it.value.size >= 3 }.keys
+        if (now == available) return false
+        available = now; prefs.edit().putStringSet("apps", now).apply()
+        return true
+    }
+
+    private fun usable(p: TvListings.Program) = !EXCLUDED.containsMatchIn(p.pkg) && !TvListings.isContinueChannel(p.channel) &&
+        p.wide != null && TvListings.linkAllowed(p.link, p.pkg)
+
+    fun appName(pkg: String) = try { ctx.packageManager.let { pm -> pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } } catch (_: Exception) { pkg }
+
     override fun load(net: Net, pkg: String): List<ContentItem> {
-        val name = names.getValue(pkg)
+        val name = appName(pkg)
         val seen = HashSet<String>()
         val rows = TvListings.read(ctx, watchNext = false).filter { p ->
-            p.pkg == pkg && !TvListings.isContinueChannel(p.channel) && p.art?.startsWith("https://") == true &&
-                TvListings.linkAllowed(p.link, pkg) && seen.add(p.title.lowercase(Locale.ROOT).replace(Regex("\\s+"), " "))
+            p.pkg == pkg && usable(p) && seen.add(p.title.lowercase(Locale.ROOT).replace(Regex("\\s+"), " "))
         }
         return rows.mapIndexed { i, p ->
-            val (art, badge) = TvListings.cleanArt(p.art!!)
-            val poster = p.poster?.takeIf { it.startsWith("https://") && it != p.art }?.let { TvListings.cleanArt(it).first } ?: ""
+            val (art, badge) = TvListings.cleanArt(p.wide!!)
+            val poster = p.tall?.let { TvListings.cleanArt(it).first } ?: (try { posterFor(net, p.title, p.isMovie) } catch (_: Exception) { null }) ?: ""
             val kind = when {
                 badge.isEmpty() -> "On $name"
                 badge.startsWith("TOP 10") -> "Top 10 on $name"
@@ -155,5 +190,10 @@ class AppChannels(private val ctx: Context, private val names: Map<String, Strin
             ContentItem("app:$pkg:${p.title}", p.title, listOfNotNull(p.year, type.ifEmpty { null }).joinToString("  ·  "), art,
                 p.link, pkg, kind, p.description ?: "", weight = 1.0 - i * 0.02, origin = "app", posterUrl = poster)
         }
+    }
+
+    private companion object {
+        /** Not video recommendations: music, YouTube (served by the YouTube source), the TV maker's and system rows. */
+        val EXCLUDED = Regex("spotify|music|youtube|\\.tcl\\.|partnercustomizer|launcher|google\\.android\\.tv")
     }
 }

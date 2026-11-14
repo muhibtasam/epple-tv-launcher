@@ -611,6 +611,13 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override fun onResume() {
         super.onResume(); if (::setup.isInitialized) setup.refresh()
         if (::setup.isInitialized && setup.done && !askedListings()) askListings()
+        refreshChannels()
+    }
+
+    /** Which apps publish their own rows is read again on every return: a newly signed-in service starts recommending. */
+    private fun refreshChannels() {
+        val ch = com.eppletv.launcher.content.Sources.channels(this)
+        content.run({ ch.refresh() }) { changed -> if (changed == true) refresh(null) }
     }
 
     /**
@@ -635,7 +642,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         super.onRequestPermissionsResult(code, perms, results)
         if (code != REQ_LISTINGS) return
         val ok = results.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (ok) refresh(null)                                 // Prime Video's own rows take over from the showcase
+        if (ok) refreshChannels()                             // apps' own rows take over from the showcase
         (screens[SETTINGS] as? SettingsScreen)?.show()
     }
 
