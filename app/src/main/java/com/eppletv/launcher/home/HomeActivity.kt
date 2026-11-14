@@ -171,7 +171,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         l = Layout.forWindow(dm.widthPixels, dm.heightPixels)
         library = Library(this)
         user = UserLibrary(this)
-        content = ContentRepository(this, Sources.all(if (BuildConfig.DEBUG) intent.getStringExtra("cinemetaFor") else null), Scrim::paint)
+        content = ContentRepository(this, Sources.all(if (BuildConfig.DEBUG) intent.getStringExtra("cinemetaFor") else null)) { b -> Scrim.paint(b); Frost.prepare(b) }
         content.indianMode = prefs.get(Prefs.INDIAN)
         catalog = Catalog(content.net, { com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.TMDB) }) { Sources.region }
         titles = TitleLauncher(this, content.net, { com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.WATCHMODE) }) { Sources.region }
@@ -231,7 +231,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         val artScale = l.px(300) / l.tileW.toFloat()     // art is rendered larger than the tile, so it stays sharp when focused
         repo = AppRepository(this, l.px(300), l.px(169), { onApps(it) }, repeat,
             decorate = { c, w, h -> paintTileSurface(c, w, h, l.corner * artScale, l.pxf(2f).coerceAtLeast(1f) * artScale) },
-            backdropFilter = Scrim::paint)
+            backdropFilter = { b -> Scrim.paint(b); Frost.prepare(b) })
         repo.start()
     }
 

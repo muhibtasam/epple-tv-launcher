@@ -111,6 +111,7 @@ class Wallpapers(ctx: Context) {
         Canvas(out).drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG))
         src.recycle()
         Scrim.paint(out)
+        Frost.prepare(out)                                  // the glass textures, here on the worker
         out.prepareToDraw()
         return out
     }

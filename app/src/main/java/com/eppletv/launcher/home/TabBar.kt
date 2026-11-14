@@ -27,8 +27,13 @@ import java.util.WeakHashMap
 
 /** Frosted copy of a backdrop image for glass surfaces: 240x135, saturated, lifted and box-blurred; one per image. */
 internal object Frost {
-    private val cache = WeakHashMap<Bitmap, BitmapShader>()
-    fun shader(src: Bitmap): BitmapShader = cache.getOrPut(src) { BitmapShader(texture(src), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP) }
+    private val cache = java.util.Collections.synchronizedMap(WeakHashMap<Bitmap, BitmapShader>())
+    fun shader(src: Bitmap): BitmapShader = cache[src] ?: prepare(src)
+    /**
+     * Builds the frost for [src] (about 20-40 ms on the TV's CPU). Called on the worker that decodes each backdrop,
+     * so the main thread only looks it up: building it there was a frame drop every time the artwork changed.
+     */
+    fun prepare(src: Bitmap): BitmapShader = cache[src] ?: BitmapShader(texture(src), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).also { cache[src] = it }
 
     private fun texture(src: Bitmap): Bitmap {
         val w = 240; val h = 135
