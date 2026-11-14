@@ -39,7 +39,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     private val l = nav.l
     private val ctx = nav.ctx
     private val state = ctx.getSharedPreferences("setup", Context.MODE_PRIVATE)
-    val view = FrameLayout(ctx).apply { setBackgroundColor(0xF7050608.toInt()); visibility = View.GONE; isClickable = true }
+    val view = FrameLayout(ctx).apply { setBackgroundColor(Mono.BLACK); visibility = View.GONE; isClickable = true }
     /** Views behind setup: they cannot take focus while setup is open (OK must never reach the top row behind it). */
     var behind: List<View> = emptyList()
         set(v) { field = v; block(active) }
@@ -50,7 +50,10 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     private val body = TextView(ctx).apply { style(Txt.BODY, l.u, 0xD9FFFFFF.toInt()); maxLines = 5 }
     private val content = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
     private val buttons = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
-    private val brand = TextView(ctx).apply { style(Txt.CLOCK, l.u, 0x26FFFFFF); text = "Epple TV" }
+    private val logo = android.widget.ImageView(ctx).apply { setImageResource(com.eppletv.launcher.R.drawable.logo_wordmark); scaleType = android.widget.ImageView.ScaleType.FIT_START }
+    /** The mark, very large and faint, bleeding off the right edge: the setup screens' only decoration. */
+    private val watermark = android.widget.ImageView(ctx).apply { setImageResource(com.eppletv.launcher.R.drawable.logo_mark); alpha = 0.045f; scaleType = android.widget.ImageView.ScaleType.FIT_CENTER }
+    private val steps = StepBar(ctx, l)
 
     private var step = 0
     private var single = false
@@ -83,13 +86,27 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     }
 
     init {
-        column.addView(stepLabel)
+        val head = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(steps, LinearLayout.LayoutParams(l.px(5 * 44 + 4 * 8), l.px(6)).apply { rightMargin = l.px(22) })
+        head.addView(stepLabel)
+        column.addView(head)
         column.addView(title, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(14) })
         column.addView(body, LinearLayout.LayoutParams(l.px(1100), WRAP_CONTENT).apply { topMargin = l.px(18) })
         column.addView(content, LinearLayout.LayoutParams(l.px(1100), WRAP_CONTENT).apply { topMargin = l.px(34) })
         column.addView(buttons, LinearLayout.LayoutParams(WRAP_CONTENT, l.px(72)).apply { topMargin = l.px(40) })
-        view.addView(column, FrameLayout.LayoutParams(l.px(1300), WRAP_CONTENT).apply { leftMargin = l.px(160); topMargin = l.px(150) })
-        view.addView(brand, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply { rightMargin = l.px(100); bottomMargin = l.px(70) })
+        view.addView(watermark, FrameLayout.LayoutParams(l.px(1240), l.px(1240), Gravity.CENTER_VERTICAL or Gravity.END).apply { rightMargin = -l.px(500) })
+        view.addView(logo, FrameLayout.LayoutParams(l.px(194), l.px(60)).apply { leftMargin = l.px(160); topMargin = l.px(70) })
+        // Steps taller than the screen (five provider rows, a key editor) scroll instead of pushing their buttons off
+        // the bottom: the scroller follows focus. Its padding leaves room for focused controls to grow without clipping.
+        val pad = l.px(30)
+        column.setPadding(pad, pad, pad, l.px(70))
+        val scroller = android.widget.ScrollView(ctx).apply {
+            isVerticalScrollBarEnabled = false; isFillViewport = false; overScrollMode = View.OVER_SCROLL_NEVER
+            clipToPadding = false; isFocusable = false; descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
+            setFadingEdgeLength(l.px(60)); isVerticalFadingEdgeEnabled = true
+        }
+        scroller.addView(column, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        view.addView(scroller, FrameLayout.LayoutParams(l.px(1300) + 2 * pad, MATCH_PARENT).apply { leftMargin = l.px(160) - pad; topMargin = l.px(170) })
     }
 
     /** Opens setup at the saved step (first launch) or at [at]; [one] = just that step, from Settings. */
@@ -168,7 +185,9 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     // ---- rendering ----
 
     private fun button(label: String, primary: Boolean = false, action: () -> Unit): Pill {
-        val p = Pill(ctx, label, l.pxf(27f), l.pxf(36f), l.px(40), nav.clock, if (primary) 0x40FFFFFF else Colors.FILL, Colors.WHITE, 0.06f)
+        // Monochrome: the primary action is outlined in white, the others are quiet grey; focus fills either with white.
+        val p = Pill(ctx, label, l.pxf(27f), l.pxf(36f), l.px(40), nav.clock, if (primary) 0x00FFFFFF else Colors.FILL, Colors.WHITE, 0.06f,
+            strokePx = if (primary) l.px(2).coerceAtLeast(2) else 0)
         p.setOnClickListener { action() }
         buttons.addView(p, LinearLayout.LayoutParams(WRAP_CONTENT, l.px(72)).apply { if (buttons.childCount > 0) leftMargin = l.px(18) })
         return p
@@ -187,7 +206,9 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     private fun render() {
         content.removeAllViews(); buttons.removeAllViews()
+        (column.parent as? android.widget.ScrollView)?.scrollTo(0, 0)          // each screen starts at its top
         stepLabel.text = if (single) "SETTINGS" else "STEP ${step + 1} OF 5"
+        steps.visibility = if (single) View.GONE else View.VISIBLE; steps.set(step)
         var first: View? = null
         countdown = null
         if (phoneMode) { first = renderPhone() } else if (editing != null) { first = renderEditor(editing!!) } else when (step) {
@@ -231,11 +252,11 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
                 body.text = if (isHome) "Epple TV is your launcher. The Home button on your remote brings you here."
                     else "Epple TV can be the TV's launcher, so the Home button opens it. To do that it turns off the Google TV home screen " +
                         "(it stays installed) and asks the TV to allow debugging once. You can switch back any time in Epple TV's settings."
-                note(if (isHome) "✓  Epple TV is the launcher" else "Current launcher: the TV's own", if (isHome) 0xFF7CE38B.toInt() else Colors.TEXT_DIM)
+                note(if (isHome) "✓  Epple TV is the launcher" else "Current launcher: the TV's own", if (isHome) Mono.OK else Colors.TEXT_DIM)
                 if (!isHome) first = button("Use Epple TV as Launcher", primary = true) {
-                    val line = note("Starting…", 0xFFFFB86B.toInt())
+                    val line = note("Starting…", Mono.WARN)
                     nav.content.run({ nav.launcher.useEpple { m -> view.post { line.text = m } } ?: "" }) { err ->
-                        if (err.isNullOrEmpty()) render() else { line.setTextColor(0xFFFF8A80.toInt()); line.text = err }
+                        if (err.isNullOrEmpty()) render() else { line.setTextColor(Mono.ERROR); line.text = err }
                     }
                 }
                 button("Back") { go(2) }
@@ -261,7 +282,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         body.text = "Scan the code with your phone's camera. Your phone must be on the same Wi-Fi as this TV. " +
             "On your phone you can enter provider keys, add pictures for the Home screen and set your profile picture; they go straight to this TV over your home network."
         val p = phone.phase
-        val green = 0xFF7CE38B.toInt(); val orange = 0xFFFFB86B.toInt(); val red = 0xFFFF8A80.toInt()
+        val green = Mono.OK; val orange = Mono.WARN; val red = Mono.ERROR
         val side = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
         val box = l.px(420)
         val showQr = p == PhoneLink.Phase.WAITING || p == PhoneLink.Phase.CONFIRMING
@@ -283,8 +304,8 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         when (p) {
             PhoneLink.Phase.IDLE -> line("Choose New Code to show a code.")
             PhoneLink.Phase.STARTING -> line("Starting…")
-            PhoneLink.Phase.NO_NETWORK -> line("This TV isn't on a Wi-Fi or Ethernet network. Connect it, then choose New Code.", orange)
-            PhoneLink.Phase.FAILED -> line("Phone setup couldn't start on this network. Choose New Code to try again.", orange)
+            PhoneLink.Phase.NO_NETWORK -> line("!  This TV isn't on a Wi-Fi or Ethernet network. Connect it, then choose New Code.", orange)
+            PhoneLink.Phase.FAILED -> line("!  Phone setup couldn't start on this network. Choose New Code to try again.", orange)
             PhoneLink.Phase.WAITING -> {
                 line("Waiting for your phone…", Colors.WHITE, Txt.TITLE)
                 line("Make sure your phone uses the same Wi-Fi network as this TV, not mobile data.")
@@ -306,9 +327,9 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
                 if (phone.photos > 0) line("✓  ${phone.photos} ${if (phone.photos == 1) "picture" else "pictures"} added to Home", green)
                 phone.photoError?.let { line("✕  Picture: $it", red) }
             }
-            PhoneLink.Phase.DENIED -> line("Connection refused. Choose New Code to try again.", orange)
-            PhoneLink.Phase.EXPIRED -> line("This code has ended. Choose New Code to get a fresh one.", orange)
-            PhoneLink.Phase.LOST -> line("The network connection was lost. Check the Wi-Fi, then choose New Code.", orange)
+            PhoneLink.Phase.DENIED -> line("!  Connection refused. Choose New Code to try again.", orange)
+            PhoneLink.Phase.EXPIRED -> line("!  This code has ended. Choose New Code to get a fresh one.", orange)
+            PhoneLink.Phase.LOST -> line("!  The network connection was lost. Check the Wi-Fi, then choose New Code.", orange)
             PhoneLink.Phase.DONE -> line("Phone setup finished.", green)
         }
         if (p != PhoneLink.Phase.CONFIRMING) {
@@ -396,7 +417,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             setPadding(l.px(28), 0, l.px(28), 0)
         }
         content.addView(field, LinearLayout.LayoutParams(MATCH_PARENT, l.px(84)))
-        val result = note(checks[k]?.let { if (it.ok) "✓  Connected" else "✕  ${it.message}" } ?: "", if (checks[k]?.ok == true) 0xFF7CE38B.toInt() else 0xFFFF8A80.toInt())
+        val result = note(checks[k]?.let { if (it.ok) "✓  Connected" else "✕  ${it.message}" } ?: "", if (checks[k]?.ok == true) Mono.OK else Mono.ERROR)
         fun test(value: String, save: Boolean) {
             result.setTextColor(Colors.TEXT_DIM); result.text = "Testing…"
             nav.content.run({ Credentials.validate(nav.content.net, k, value) }) { c ->
@@ -405,13 +426,13 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
                 if (!save || check.ok) checks[k] = check
                 if (check.ok && save) { Credentials.set(k, value); changedProviders += k }
                 if (editing == k) {
-                    result.setTextColor(if (check.ok) 0xFF7CE38B.toInt() else 0xFFFF8A80.toInt())
+                    result.setTextColor(if (check.ok) Mono.OK else Mono.ERROR)
                     result.text = if (check.ok) (if (save) "✓  Connected and saved" else "✓  Connected") else "✕  ${check.message}" + if (save) ". Not saved" else ""
                 }
             }
         }
         field.setOnEditorActionListener { _, _, _ -> if (field.text.isNotBlank()) test(field.text.toString(), save = true); true }
-        button("Save & Test", primary = true) { if (field.text.isNotBlank()) test(field.text.toString(), save = true) else { result.text = "Enter a key first"; result.setTextColor(0xFFFFB86B.toInt()) } }
+        button("Save & Test", primary = true) { if (field.text.isNotBlank()) test(field.text.toString(), save = true) else { result.text = "Enter a key first"; result.setTextColor(Mono.WARN) } }
         if (Credentials.hasAny(k)) button("Test Current Key") { test(Credentials.get(k), save = false) }
         if (Credentials.isSaved(k)) button("Remove") { Credentials.clear(k); checks.remove(k); changedProviders += k; result.setTextColor(Colors.TEXT_DIM); result.text = "Removed. " + if (k.built.isNotEmpty()) "The built-in key is used again." else "" }
         button("Back") { editing = null; render() }
@@ -429,4 +450,26 @@ private object FullMask : android.text.method.TransformationMethod {
     }
     override fun getTransformation(source: CharSequence, view: View): CharSequence = Masked(source)
     override fun onFocusChanged(view: View, sourceText: CharSequence, focused: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {}
+}
+
+/** Status colours for the black-and-white theme: told apart by brightness and by the ✓ / ✕ / ! marks, not by hue. */
+object Mono {
+    const val BLACK = 0xFF000000.toInt()
+    const val OK = 0xFFFFFFFF.toInt()
+    const val WARN = 0xD9FFFFFF.toInt()
+    const val ERROR = 0xFFFFFFFF.toInt()
+}
+
+/** Five short bars: the steps of setup, finished and current ones white, the rest faint. */
+@android.annotation.SuppressLint("ViewConstructor")
+class StepBar(ctx: Context, private val l: Layout) : View(ctx) {
+    private var at = 0
+    private val on = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Colors.WHITE }
+    private val off = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0x38FFFFFF }
+    private val r = android.graphics.RectF()
+    fun set(step: Int) { at = step; invalidate() }
+    override fun onDraw(c: android.graphics.Canvas) {
+        val gap = l.pxf(8f); val w = (width - gap * 4) / 5f; val h = height.toFloat()
+        for (i in 0 until 5) { r.set(i * (w + gap), 0f, i * (w + gap) + w, h); c.drawRoundRect(r, h / 2, h / 2, if (i <= at) on else off) }
+    }
 }

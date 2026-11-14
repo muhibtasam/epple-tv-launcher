@@ -379,6 +379,13 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
     init {
         view.addView(title, FrameLayout.LayoutParams(l.px(560), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(170) })
         view.addView(about, FrameLayout.LayoutParams(l.px(560), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(290) })
+        // Bottom left: the logo and version, so Settings always says what it belongs to.
+        val sign = LinearLayout(nav.ctx).apply { orientation = LinearLayout.VERTICAL }
+        sign.addView(ImageView(nav.ctx).apply { setImageResource(com.eppletv.launcher.R.drawable.logo_wordmark); scaleType = ImageView.ScaleType.FIT_START; alpha = 0.9f },
+            LinearLayout.LayoutParams(l.px(178), l.px(55)))
+        sign.addView(TextView(nav.ctx).apply { style(Txt.META, l.u, Colors.TEXT_DIM); text = "Version ${BuildConfig.VERSION_NAME}" },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(12) })
+        view.addView(sign, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { leftMargin = l.left; bottomMargin = l.px(70) })
         // Rows scrolling up fade out before they reach the tab bar instead of being cut in half by it (see [fadeTop]).
         val frame = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
         frame.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT).apply { leftMargin = l.px(40); rightMargin = l.px(40) })

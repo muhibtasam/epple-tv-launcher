@@ -94,10 +94,12 @@ open class Pill(
     ctx: Context, label: String, textPx: Float, radius: Float, padH: Int,
     private val clock: FrameClock, private val restBg: Int, private val restText: Int,
     private val focusScale: Float, startAligned: Boolean = false,
+    /** An outline at rest (the monochrome primary button); the focused fill covers it. */
+    strokePx: Int = 0, strokeColor: Int = Colors.WHITE,
 ) : TextView(ctx), FrameClock.Tick {
     private val f = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
     private val s = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 3f)
-    private val bg = GradientDrawable().apply { cornerRadius = radius; setColor(restBg) }
+    private val bg = GradientDrawable().apply { cornerRadius = radius; setColor(restBg); if (strokePx > 0) setStroke(strokePx, strokeColor) }
 
     var selectedState = false
         set(v) { if (field != v) { field = v; s.target = if (v) 1f else 0f; clock.add(this) } }

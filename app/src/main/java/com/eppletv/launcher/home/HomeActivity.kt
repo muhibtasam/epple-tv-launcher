@@ -219,7 +219,6 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         root.addView(setup.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         if (!setup.done) setup.start()                     // first launch, or an interrupted setup resumes
         setup.behind = listOf(anchor, homeLayer, sectionLayer, tabs, pill)
-        setup.view.background = android.graphics.drawable.BitmapDrawable(resources, neutral).apply { isFilterBitmap = true }
 
         setContentView(root)
         // Home tab selected, its wallpaper behind: posters appear only once a streaming app is focused.
@@ -519,9 +518,10 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     /** Deep blue-black field with the scrim baked in: the backdrop of sections without artwork, and while art loads. */
+    /** Graphite, for the black-and-white theme: Home without a wallpaper, Settings, sections still loading. */
     private fun neutralBackdrop(): Bitmap {
         val b = Bitmap.createBitmap(96, 54, Bitmap.Config.ARGB_8888)
-        android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF1C2A40.toInt(), 0xFF0C1220.toInt(), 0xFF05070C.toInt()))
+        android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF26262A.toInt(), 0xFF0E0E10.toInt(), 0xFF000000.toInt()))
             .apply { setBounds(0, 0, 96, 54); draw(android.graphics.Canvas(b)) }
         Scrim.paint(b); b.prepareToDraw()
         return b
