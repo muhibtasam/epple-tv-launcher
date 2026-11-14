@@ -52,6 +52,9 @@ object Colors {
     const val FILL_SELECTED = 0x2EFFFFFF
     const val HAIRLINE = 0x24FFFFFF
 
+    /** Relative luminance 0..1 (sRGB, approximate). */
+    fun luminance(c: Int): Float = (0.2126f * ((c shr 16) and 0xFF) + 0.7152f * ((c shr 8) and 0xFF) + 0.0722f * (c and 0xFF)) / 255f
+
     fun lerp(a: Int, b: Int, t: Float): Int {
         val u = if (t < 0f) 0f else if (t > 1f) 1f else t
         val aa = a ushr 24; val ar = (a shr 16) and 0xFF; val ag = (a shr 8) and 0xFF; val ab = a and 0xFF

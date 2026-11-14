@@ -111,6 +111,11 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     val net = Net(listDir)
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newFixedThreadPool(2) { r -> Thread(r, "epple-content").apply { priority = Thread.NORM_PRIORITY - 1 } }
+    /** Title logos have their own two threads: they never wait behind row lists, artwork or the TV's listings. */
+    private val logoIo = Executors.newFixedThreadPool(2) { r -> Thread(r, "epple-logos").apply { priority = Thread.NORM_PRIORITY } }
+
+    /** Main thread. Starts the logos of the first titles of a list that just arrived, so they are ready when focused. */
+    fun prefetchLogos(list: List<ContentItem>, n: Int = 6) = list.take(n).forEach { logo(it) {} }
     private val imgDir = File(ctx.cacheDir, "img").apply { mkdirs() }
     private val launchedAt = System.currentTimeMillis()
     init { io.execute { trimImages() } }   // once per launch, off the main thread
@@ -163,7 +168,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
             main.post {
                 if ((epochs[src.key] ?: 0) != epoch) return@post          // the key changed meanwhile: its waiters were answered
                 val picked = if (result.isEmpty()) result else if (src.ordered) result.take(SHOW) else curate(key, result)
-                if (picked.isEmpty()) failedAt[key] = System.currentTimeMillis() else lists[key] = picked
+                if (picked.isEmpty()) failedAt[key] = System.currentTimeMillis() else { lists[key] = picked; prefetchLogos(picked) }
                 listWaiters.remove(key)?.forEach { it(picked) }
             }
         }
@@ -347,7 +352,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
         logoUrls[item.id]?.let { u -> if (u.isEmpty()) return cb(null); logos.get(u)?.let { return cb(it) } }
         logoWaiters[item.id]?.let { it.add(cb); return }
         logoWaiters[item.id] = arrayListOf(cb)
-        io.execute {
+        logoIo.execute {
             var url = ""
             val bmp = try {
                 url = item.logoUrl.ifEmpty { sources.firstNotNullOfOrNull { s -> if (s.ready) try { s.logo(net, item) } catch (e: Exception) { null } else null } ?: "" }

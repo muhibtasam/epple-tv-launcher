@@ -193,6 +193,7 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             for (j in 0 until i) stack.shelves[j].cards.forEach { c -> c.item?.id?.let { seen.add(it) } }
             val items = list.filter { it.id !in seen }
             val hadFocus = shelf.hasFocus()                    // a row rebuilt under the focus keeps it
+            nav.content.prefetchLogos(items, 4)               // the first titles' logos are ready when the row is reached
             shelf.set(items, src.emptyText) { c, it -> c.bind(it.title, it.meta.split("  ·  ").take(2).joinToString(" · ")); wire(c) }
             stack.relayout()
             if (hadFocus) stack.focus()

@@ -857,7 +857,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
                 dy > 0 -> { main.removeCallbacks(switchTab); if (tabIdx < TAB_NAMES.size) showSection(tabIdx); intoSection() }
             }
             Zone.FEED -> if (!feed.key(dx, dy)) enterContent()
-            Zone.SECTION -> if (screens[section]?.key(dx, dy) == false && section < TAB_NAMES.size) enterTabs(section)
+            // Up out of a section reaches the tab bar; from Settings (not a tab) it lands on the clock, where it opened from.
+            Zone.SECTION -> if (screens[section]?.key(dx, dy) == false) enterTabs(if (section < TAB_NAMES.size) section else TAB_NAMES.size)
             Zone.DETAIL -> details.lastOrNull()?.key(dx, dy)
         }
         return true
