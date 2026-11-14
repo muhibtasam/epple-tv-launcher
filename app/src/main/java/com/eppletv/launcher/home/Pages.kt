@@ -471,14 +471,53 @@ object Scrim {
  * upper-case eyebrow. (Upper-cased here: the platform's all-caps transformation would drop the styling.)
  */
 object Brand {
-    private val colors = linkedMapOf(
+    /** Exact brand colours for the default apps; every other app's colour is learned from its own tile ([learn]). */
+    private val fixed = linkedMapOf(
         "Prime Video" to 0xFF1A98FF.toInt(), "Netflix" to 0xFFE50914.toInt(), "Crunchyroll" to 0xFFF47521.toInt(),
         "YouTube" to 0xFFFF2D2D.toInt(), "Stremio" to 0xFF8F6BFF.toInt(), "tapmad" to 0xFF3BD16F.toInt(),
     )
+    @Volatile private var learned: Map<String, Int> = emptyMap()
+
+    /** Worker or main thread: each installed app's colour from its tile artwork (cheap: a 24x14 sample per app). */
+    fun learn(apps: List<com.eppletv.launcher.apps.AppEntry>) {
+        val m = HashMap<String, Int>()
+        for (e in apps) if (fixed.keys.none { it.equals(e.label, true) } && e.label.length >= 3) m[e.label] = colorOf(e.banner)
+        learned = m
+    }
+
+    /**
+     * An app's brand colour, readable on the dark hero: the one hue that clearly dominates its tile's colourful pixels,
+     * lifted if it is too dark to read. A tile with no single dominant hue (Apple TV's rainbow mark on black) or no colour
+     * at all (black or white tiles) gives white: the name stays bold and legible over any artwork.
+     */
+    fun colorOf(b: android.graphics.Bitmap): Int {
+        val s = android.graphics.Bitmap.createScaledBitmap(b, 24, 14, true)
+        val hsv = FloatArray(3); val buckets = IntArray(12); val sums = Array(12) { FloatArray(3) }
+        var colourful = 0
+        for (y in 0 until s.height) for (x in 0 until s.width) {
+            val c = s.getPixel(x, y); if ((c ushr 24) < 128) continue
+            android.graphics.Color.colorToHSV(c, hsv)
+            if (hsv[1] < 0.45f || hsv[2] < 0.35f) continue
+            val k = ((hsv[0] / 30f).toInt()).coerceIn(0, 11)
+            buckets[k]++; colourful++
+            sums[k][0] += android.graphics.Color.red(c).toFloat(); sums[k][1] += android.graphics.Color.green(c).toFloat(); sums[k][2] += android.graphics.Color.blue(c).toFloat()
+        }
+        if (s !== b) s.recycle()
+        val top = buckets.indices.maxByOrNull { buckets[it] } ?: return Colors.WHITE
+        if (colourful < 24 || buckets[top] < colourful * 0.55f) return Colors.WHITE
+        val n = buckets[top].toFloat()
+        var c = android.graphics.Color.rgb((sums[top][0] / n).toInt(), (sums[top][1] / n).toInt(), (sums[top][2] / n).toInt())
+        android.graphics.Color.colorToHSV(c, hsv)
+        if (hsv[2] < 0.85f) { hsv[2] = 0.95f; c = android.graphics.Color.HSVToColor(hsv) }          // bright enough for the dark hero
+        return c
+    }
+
     fun eyebrow(text: String): CharSequence {
         val up = text.uppercase()
         val out = android.text.SpannableString(up)
-        for ((name, color) in colors) {
+        // The longest name that appears wins ("Apple TV" over "TV").
+        val all = (fixed + learned).entries.sortedByDescending { it.key.length }
+        for ((name, color) in all) {
             val i = up.indexOf(name.uppercase()); if (i < 0) continue
             val end = i + name.length
             out.setSpan(android.text.style.ForegroundColorSpan(color), i, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)

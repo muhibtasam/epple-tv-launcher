@@ -91,7 +91,9 @@ object TvListings {
     private val BADGE = Regex("\\._PI[^_/]*badge[^_/]*_\\._ZA([^,_/]*)[^_/]*_")
 
     /** Prime Video's art without its drawn-in badge ("NEW MOVIE", "TOP 10"), and the badge's words ("" when none). */
-    fun cleanArt(art: String): Pair<String, String> {
+    fun cleanArt(raw: String): Pair<String, String> {
+        // Crunchyroll's image service serves any size from the same address: ask for a full-screen one, not 600x338.
+        val art = raw.replace(Regex("(crunchyroll\\.com/imgsrv/display/thumbnail/)\\d+x\\d+/"), "$11920x1080/")
         val m = BADGE.find(art) ?: return art to ""
         var words = m.groupValues[1]
         try { repeat(3) { if ('%' in words) words = URLDecoder.decode(words, "UTF-8") } } catch (_: Exception) { words = "" }

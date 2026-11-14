@@ -212,7 +212,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         root.addView(panel.dim, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         root.addView(panel.panel, panel.params())
 
-        saver = Screensaver(this).apply { clockText = { timeText } }
+        saver = Screensaver(this).apply {
+            clockText = { timeText }
+            wifiName = { val cm = getSystemService(android.net.ConnectivityManager::class.java)
+                if (cm?.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true) (if (::ccWifi.isInitialized) ccWifi.sub.takeIf { it.isNotEmpty() && it != "Off" } else null) ?: "Wi-Fi" else null }
+        }
         root.addView(saver.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
         setup = SetupFlow(this, this)
@@ -237,6 +241,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     private fun onApps(list: List<AppEntry>) {
         apps = list
+        content.run({ Brand.learn(list); true }) {}             // brand colours for the hero's "New on …" names
         refresh(null)
         empty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
         (screens[APPS] as? AppsScreen)?.rebuild()

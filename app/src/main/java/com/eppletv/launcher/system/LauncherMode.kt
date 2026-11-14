@@ -57,6 +57,9 @@ class LauncherMode(ctx: Context) {
             status("Turning off ${label(p)}…")
             if (adb.shell("pm disable-user --user 0 $p").contains("disabled-user")) { disabled += p; record(adb, disabled) }
         }
+        // What Epple TV's rows read from the TV (apps' own rows, Continue Watching): allowed here, so there is no prompt.
+        status("Allowing TV listings…")
+        adb.shell("pm grant $PKG android.permission.READ_TV_LISTINGS")
         prefs.edit().putBoolean("on", true).apply()
         null
     }

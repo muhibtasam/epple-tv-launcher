@@ -518,58 +518,78 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
 // ------------------------------------------------------------------------------------------------ Screensaver
 
 /**
- * Full-screen artwork from titles already loaded this launch, one every 12 seconds with a slow crossfade and an
- * optional slow pan. Runs only while visible; images come from the disk cache (no new requests unless uncached),
- * and only two are in memory. Any button dismisses it.
+ * The screensaver (design "Living wallpaper"): your own Home pictures, one every 20 seconds with a slow crossfade and
+ * a slow zoom, never titles or posters. A large clock and the date bottom left, Wi-Fi top left, the Epple TV logo top
+ * right, each over a soft radial shade so white stays readable on any picture. Without pictures it shows the clock on
+ * graphite. Only two pictures are in memory; pictures are decoded on a worker. Any button dismisses it.
  */
 class Screensaver(private val nav: Nav) : FrameClock.Tick {
-    val view = FrameLayout(nav.ctx).apply { setBackgroundColor(0xFF000000.toInt()); visibility = View.GONE; alpha = 0f }
+    private val l get() = nav.l
+    val view = FrameLayout(nav.ctx).apply { setBackgroundColor(0xFF0E0E10.toInt()); visibility = View.GONE; alpha = 0f }
     private val a = ImageView(nav.ctx).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
     private val b = ImageView(nav.ctx).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f }
-    private val caption = TextView(nav.ctx).apply { style(Txt.TITLE, nav.l.u); setShadowLayer(nav.l.pxf(16f), 0f, 0f, 0xCC000000.toInt()) }
-    private val time = TextView(nav.ctx).apply { style(Txt.CLOCK, nav.l.u); setShadowLayer(nav.l.pxf(16f), 0f, 0f, 0xCC000000.toInt()) }
+    private val time = TextView(nav.ctx).apply {
+        typeface = com.eppletv.launcher.ui.Type.of(300, com.eppletv.launcher.ui.Type.Face.NUM); setTextColor(Colors.WHITE)
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, l.pxf(168f)); letterSpacing = -0.04f; includeFontPadding = false
+        setShadowLayer(l.pxf(24f), 0f, 0f, 0x66000000) }
+    private val date = TextView(nav.ctx).apply {
+        typeface = com.eppletv.launcher.ui.Type.of(500); setTextColor(0xEBFFFFFF.toInt())
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, l.pxf(34f)); setShadowLayer(l.pxf(16f), 0f, 0f, 0x80000000.toInt()) }
+    private val wifi = WifiBadge(nav.ctx, l)
+    private val logo = ImageView(nav.ctx).apply { setImageResource(com.eppletv.launcher.R.drawable.logo_wordmark); scaleType = ImageView.ScaleType.FIT_END }
     private val h = Handler(Looper.getMainLooper())
-    private val fade = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 0.35f)
+    private val fade = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 0.3f)
     private val show = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS)
-    private var urls: List<ContentItem> = emptyList()
+    private var files: List<java.io.File> = emptyList()
     private var n = 0
     private var front = a
     private var t = 0f
     var showing = false; private set
     var clockText: () -> String = { "" }
+    /** The Wi-Fi network's name, or null when the TV isn't on Wi-Fi (then the badge hides). */
+    var wifiName: () -> String? = { null }
 
     init {
         view.addView(a, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)); view.addView(b, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        view.addView(caption, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { leftMargin = nav.l.left; bottomMargin = nav.l.px(80) })
-        view.addView(time, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply { rightMargin = nav.l.left; bottomMargin = nav.l.px(70) })
+        // Soft radial shades under each corner's white text and marks (and a gentle bottom gradient under the clock).
+        view.addView(Shade(nav.ctx, l), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        val clock = LinearLayout(nav.ctx).apply { orientation = LinearLayout.VERTICAL }
+        clock.addView(time); clock.addView(date, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(6) })
+        view.addView(clock, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { leftMargin = l.px(120); bottomMargin = l.px(100) })
+        view.addView(wifi, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(56), Gravity.TOP or Gravity.START).apply { leftMargin = l.px(110); topMargin = l.px(80) })
+        view.addView(logo, FrameLayout.LayoutParams(l.px(210), l.px(65), Gravity.TOP or Gravity.END).apply { rightMargin = l.px(120); topMargin = l.px(76) })
     }
 
-    private val next = object : Runnable { override fun run() { advance(); h.postDelayed(this, 12_000) } }
+    private val next = object : Runnable { override fun run() { advance(); h.postDelayed(this, 20_000) } }
+    private val minute = object : Runnable { override fun run() { stamp(); h.postDelayed(this, 15_000) } }
+
+    private fun stamp() {
+        time.text = clockText().replace(Regex("\\s*(am|pm|AM|PM)$"), "")
+        date.text = java.text.SimpleDateFormat("EEEE, d MMMM", java.util.Locale.getDefault()).format(java.util.Date())
+        val w = wifiName(); wifi.visibility = if (w == null) View.GONE else View.VISIBLE; wifi.name = w ?: ""
+    }
 
     fun start() {
         if (showing) return
-        urls = (nav.user.items(com.eppletv.launcher.content.UserLibrary.Kind.WATCHLIST) + nav.content.loadedItems())
-            .filter { it.imageUrl.startsWith("http") }.distinctBy { it.imageUrl }.shuffled().take(30)
+        files = nav.wallpapers.files().shuffled()
         showing = true; n = 0
         view.visibility = View.VISIBLE; show.target = 1f
-        time.text = clockText()
-        advance(); h.postDelayed(next, 12_000)
+        stamp(); h.post(minute)
+        advance(); h.postDelayed(next, 20_000)
         nav.clock.add(this)
     }
 
     fun stop() {
         if (!showing) return
-        showing = false; h.removeCallbacks(next); show.target = 0f; nav.clock.add(this)
+        showing = false; h.removeCallbacks(next); h.removeCallbacks(minute); show.target = 0f; nav.clock.add(this)
     }
 
     private fun advance() {
-        time.text = clockText()
-        val item = urls.getOrNull(n++ % maxOf(1, urls.size)) ?: return
-        nav.content.wide(item.imageUrl) { bmp ->
-            if (!showing || bmp == null) return@wide
+        val f = files.getOrNull(n++ % maxOf(1, files.size)) ?: return
+        nav.content.run({ nav.wallpapers.load(f, scrim = false) ?: throw IllegalStateException() }) { bmp ->
+            if (!showing || bmp == null) return@run
             val back = if (front === a) b else a
-            back.setImageBitmap(bmp); back.alpha = 0f; back.scaleX = 1f; back.scaleY = 1f
-            caption.text = item.title
+            back.setImageBitmap(bmp); back.alpha = 0f; back.scaleX = 1f; back.scaleY = 1f; back.translationX = 0f
             fade.snapTo(0f); fade.target = 1f; t = 0f
             front = back; nav.clock.add(this)
         }
@@ -580,11 +600,53 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
         view.alpha = show.value
         front.alpha = fade.value
         val other = if (front === a) b else a
-        if (fade.atRest() && other.drawable != null) other.setImageDrawable(null)        // release the previous image
+        if (fade.atRest() && other.drawable != null) other.setImageDrawable(null)        // release the previous picture
         val pan = showing && nav.prefs.get(Prefs.SAVER_STYLE) == 0
-        if (pan) { t += dt; val s = 1f + 0.06f * (t / 12f).coerceAtMost(1f); front.scaleX = s; front.scaleY = s; front.translationX = -nav.l.pxf(40f) * (t / 12f).coerceAtMost(1f) }
+        if (pan) { t += dt; val k = (t / 20f).coerceAtMost(1f); val s = 1f + 0.07f * k; front.scaleX = s; front.scaleY = s; front.translationX = -l.pxf(36f) * k }
         if (!showing && show.atRest()) { view.visibility = View.GONE; a.setImageDrawable(null); b.setImageDrawable(null); return false }
         return pan || !show.atRest() || !fade.atRest()       // a still screensaver requests no frames between pictures
+    }
+
+    /** Radial shades in three corners and a low gradient: drawn once per size into one bitmap. */
+    @android.annotation.SuppressLint("ViewConstructor")
+    private class Shade(ctx: android.content.Context, private val l: Layout) : View(ctx) {
+        private var bmp: android.graphics.Bitmap? = null
+        override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+            if (w <= 0 || h <= 0) return
+            bmp?.recycle()
+            bmp = android.graphics.Bitmap.createBitmap(w / 2, h / 2, android.graphics.Bitmap.Config.ARGB_8888).also { b ->
+                val c = android.graphics.Canvas(b); val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+                fun spot(x: Float, y: Float, r: Float, a: Int) {
+                    p.shader = android.graphics.RadialGradient(x, y, r, intArrayOf(a shl 24, ((a * 0.45f).toInt()) shl 24, 0), floatArrayOf(0f, 0.55f, 1f), android.graphics.Shader.TileMode.CLAMP)
+                    c.drawRect(0f, 0f, b.width.toFloat(), b.height.toFloat(), p)
+                }
+                val sx = b.width.toFloat(); val sy = b.height.toFloat()
+                p.shader = android.graphics.LinearGradient(0f, sy * 0.55f, 0f, sy, 0, 0x8C000000.toInt(), android.graphics.Shader.TileMode.CLAMP)
+                c.drawRect(0f, 0f, sx, sy, p)
+                spot(sx * 0.2f, sy * 0.86f, sx * 0.34f, 0x66)           // clock and date
+                spot(sx * 0.08f, sy * 0.1f, sx * 0.16f, 0x59)           // Wi-Fi
+                spot(sx * 0.9f, sy * 0.1f, sx * 0.2f, 0x59)             // logo
+            }
+        }
+        override fun onDraw(c: android.graphics.Canvas) { bmp?.let { c.drawBitmap(it, null, android.graphics.Rect(0, 0, width, height), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)) } }
+    }
+}
+
+/** Wi-Fi mark and the network's name, for the screensaver's top-left corner. */
+@android.annotation.SuppressLint("ViewConstructor")
+class WifiBadge(ctx: android.content.Context, private val l: Layout) : View(ctx) {
+    var name = ""
+        set(v) { if (field != v) { field = v; requestLayout(); invalidate() } }
+    private val stroke = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val text = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xEBFFFFFF.toInt(); textSize = l.pxf(28f); typeface = com.eppletv.launcher.ui.Type.of(500)
+        setShadowLayer(l.pxf(10f), 0f, 0f, 0x80000000.toInt()) }
+    private val icon get() = l.pxf(40f)
+    override fun onMeasure(w: Int, h: Int) = setMeasuredDimension((icon + l.pxf(16f) + text.measureText(name) + l.pxf(12f)).toInt(), MeasureSpec.getSize(h))
+    override fun onDraw(c: android.graphics.Canvas) {
+        Glyphs.draw(Glyphs.WIFI, c, icon / 2f + l.pxf(4f), height / 2f, icon, Colors.WHITE, stroke, fill)
+        c.drawText(name, icon + l.pxf(16f), height / 2f - (text.descent() + text.ascent()) / 2f, text)
     }
 }
 

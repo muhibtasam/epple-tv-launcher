@@ -116,7 +116,7 @@ class Wallpapers(ctx: Context) {
     @Synchronized fun removeAll() { files().forEach { it.delete() } }
 
     /** The wallpaper as a full-screen backdrop: 1920x1080, centre-cropped, with the hero scrim painted in. */
-    fun load(f: File): Bitmap? {
+    fun load(f: File, scrim: Boolean = true): Bitmap? {
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(f.path, o)
         if (o.outWidth <= 0 || o.outHeight <= 0) return null
@@ -128,8 +128,7 @@ class Wallpapers(ctx: Context) {
         val m = Matrix().apply { setScale(k, k); postTranslate((OUT_W - src.width * k) / 2f, (OUT_H - src.height * k) / 2f) }
         Canvas(out).drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG))
         src.recycle()
-        Scrim.paint(out)
-        Frost.prepare(out)                                  // the glass textures, here on the worker
+        if (scrim) { Scrim.paint(out); Frost.prepare(out) }  // the hero's scrim and glass textures (not for the screensaver)
         out.prepareToDraw()
         return out
     }

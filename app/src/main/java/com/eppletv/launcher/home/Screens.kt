@@ -121,7 +121,8 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
         summary.visibility = if (item.summary.isEmpty()) GONE else VISIBLE
         if (!fresh) return
         logo.setImageBitmap(null); logo.visibility = GONE; title.visibility = VISIBLE
-        if (item.id.startsWith("movie:") || item.id.startsWith("tv:") || item.logoUrl.isNotEmpty()) {
+        // TMDB titles, and titles from apps' rows and Watch Next (their logo is found by name): the logo when there is one.
+        if (Regex("^(movie|tv|wn|app):").containsMatchIn(item.id) || item.logoUrl.isNotEmpty()) {
             val id = item.id
             var answered = false
             content.logo(item) { b ->
@@ -267,7 +268,8 @@ object Rows {
 class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
     // What you left half-way in any app (the TV's own Watch Next list, as Google TV shows it), then titles opened from Epple TV.
     RowSource("Continue Watching", dynamic = true) { cb ->
-        nav.content.run({ ContinueWatching.load(nav.ctx, nav.content.net) }) { tv ->
+        // Twice: at once with the apps' own pictures, then again once TMDB posters are found (cached after the first time).
+        for (posters in listOf(false, true)) nav.content.run({ ContinueWatching.load(nav.ctx, nav.content.net, posters) }) { tv ->
             val seen = tv.orEmpty().map { ContinueWatching.norm(it.title) }.toHashSet()
             cb(tv.orEmpty() + nav.user.items(UserLibrary.Kind.CONTINUE).filter { seen.add(ContinueWatching.norm(it.title)) })
         }
@@ -319,7 +321,7 @@ object ContinueWatching {
     private const val PER_APP = 2; private const val MAX = 12
     fun norm(t: String) = t.trim().lowercase(java.util.Locale.ROOT).replace(Regex("\\s+"), " ")
 
-    fun load(ctx: android.content.Context, net: com.eppletv.launcher.content.Net): List<ContentItem> {
+    fun load(ctx: android.content.Context, net: com.eppletv.launcher.content.Net, posters: Boolean = true): List<ContentItem> {
         if (!com.eppletv.launcher.content.TvListings.allowed(ctx)) return emptyList()
         val all = try { com.eppletv.launcher.content.TvListings.read(ctx) } catch (e: Exception) { return emptyList() }
         val pm = ctx.packageManager
@@ -336,7 +338,7 @@ object ContinueWatching {
                 com.eppletv.launcher.content.TvListings.cleanArt(p.wide!!).first, p.link, p.pkg, "Continue in ${app(p.pkg)}", p.description ?: "",
                 // Portrait art for the row's narrow cards: the app's own when it published one, else TMDB's poster by name.
                 posterUrl = p.tall?.let { com.eppletv.launcher.content.TvListings.cleanArt(it).first }
-                    ?: (try { com.eppletv.launcher.content.Sources.posterFor(net, p.title, p.isMovie) } catch (_: Exception) { null }) ?: "")
+                    ?: (if (!posters) null else try { com.eppletv.launcher.content.Sources.posterFor(net, p.title, p.isMovie) } catch (_: Exception) { null }) ?: "")
         }
     }
 }

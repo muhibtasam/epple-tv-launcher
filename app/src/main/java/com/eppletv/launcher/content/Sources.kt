@@ -55,7 +55,7 @@ object Sources {
     fun posterFor(net: Net, title: String, movie: Boolean): String? {
         if (!usesTmdb) return null
         val name = title.replace(Regex("\\s*[-:–]\\s*(Season|Series)\\s*\\d+.*$", RegexOption.IGNORE_CASE), "").trim()
-        return (showcase.find(net, if (movie) "movie" else "tv", name, "", 0.0) ?: if (movie) null else showcase.find(net, "movie", name, "", 0.0))
+        return (showcase.find(net, if (movie) "movie" else "tv", name, "", 0.0, exact = true) ?: if (movie) null else showcase.find(net, "movie", name, "", 0.0, exact = true))
             ?.posterUrl?.ifEmpty { null }
     }
 
@@ -207,14 +207,14 @@ class Showcase(private val services: Map<String, Service>, private val keys: Key
      * A title found on TMDB by its exact name (Netflix's Top 10 gives names only): the most popular result whose title
      * matches, else the first result. Cached for a month: the same week's names are looked up once.
      */
-    fun find(net: Net, type: String, name: String, kind: String, weight: Double): ContentItem? {
+    fun find(net: Net, type: String, name: String, kind: String, weight: Double, exact: Boolean = false): ContentItem? {
         val q = java.net.URLEncoder.encode(name, "UTF-8")
         val res = tmdb(net, "find-$type-${name.lowercase(Locale.ROOT).hashCode()}", 30 * 24 * HOUR, "search/$type?query=$q&include_adult=false")
             .optJSONArray("results") ?: return null
         val all = (0 until res.length()).map { res.getJSONObject(it) }
         val norm = { t: String -> t.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "") }
         val pick = all.filter { norm(it.optString(if (type == "movie") "title" else "name")) == norm(name) }
-            .maxByOrNull { it.optDouble("popularity", 0.0) } ?: all.firstOrNull() ?: return null
+            .maxByOrNull { it.optDouble("popularity", 0.0) } ?: (if (exact) null else all.firstOrNull()) ?: return null
         return build(pick, type, kind, weight, genreNames(net))
     }
 
@@ -229,9 +229,18 @@ class Showcase(private val services: Map<String, Service>, private val keys: Key
 
     /** Transparent title logo from TMDB (PNG only), English first, then the title's own language, then language-neutral. */
     override fun logo(net: Net, item: ContentItem): String? {
-        val m = Regex("^(movie|tv):(\\d+)$").find(item.id) ?: return null
-        val (type, id) = m.destructured
-        val logos = tmdb(net, "logos-$type-$id", 30 * 24 * HOUR, "$type/$id/images?include_image_language=en,${INDIAN.joinToString(",")},null")
+        // Titles from an app's own rows or Watch Next carry no TMDB id: found by name (series first), so every hero
+        // shows the title's logo the same way.
+        val (type, id) = Regex("^(movie|tv):(\\d+)$").find(item.id)?.destructured?.let { it.component1() to it.component2() } ?: run {
+            if (keys.tmdb.isEmpty() || !(item.id.startsWith("wn:") || item.id.startsWith("app:"))) return null
+            val name = item.title.replace(Regex("\\s*[-:–]\\s*(Season|Series)\\s*\\d+.*$", RegexOption.IGNORE_CASE), "").trim()
+            val movie = "Movie" in item.meta
+            // Exact names only: a near match would put another title's logo on this one.
+            val f = (if (movie) null else find(net, "tv", name, "", 0.0, exact = true)) ?: find(net, "movie", name, "", 0.0, exact = true)
+                ?: if (movie) find(net, "tv", name, "", 0.0, exact = true) else null
+            f?.id?.split(':')?.let { it[0] to it[1] } ?: return null
+        }
+        val logos = tmdb(net, "logos-$type-$id", 30 * 24 * HOUR, "$type/$id/images?include_image_language=en,${INDIAN.joinToString(",")},ja,ko,zh,null")
             .optJSONArray("logos") ?: return null
         var best: JSONObject? = null; var bestScore = -1.0
         for (i in 0 until logos.length()) {
