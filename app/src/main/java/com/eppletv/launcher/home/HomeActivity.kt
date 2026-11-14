@@ -295,7 +295,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         resumed = true; restartRotation(); restartIdle()
         hero.backdrop.pauseDrift(false)
         // Pictures copied from a computer (scripts/wallpapers.sh) arrive while another app is in front: take them in now.
-        if (startedOnce) content.run({ wallpapers.importDropped() }) { n -> if ((n ?: 0) > 0) nextWallpaper(newest = true) }
+        if (startedOnce) content.run({ wallpapers.importDropped() + wallpapers.importBundled() }) { n -> if ((n ?: 0) > 0) nextWallpaper(newest = true) }
         startedOnce = true                                   // the first start's import is part of onCreate's pick
     }
 
@@ -377,7 +377,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override fun nextWallpaper(newest: Boolean) {
         val gen = ++wallGen
         content.run({
-            try { wallpapers.importDropped(); val f = if (newest) wallpapers.newest() else wallpapers.pick(); f?.let { wallpapers.load(it) } ?: neutral }
+            try { wallpapers.importDropped(); wallpapers.importBundled(); val f = if (newest) wallpapers.newest() else wallpapers.pick(); f?.let { wallpapers.load(it) } ?: neutral }
             catch (e: Throwable) { android.util.Log.w("EppleHome", "wallpaper failed: ${e.javaClass.simpleName}"); throw e }
         }) { b ->
             if (gen != wallGen) return@run

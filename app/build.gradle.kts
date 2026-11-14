@@ -32,6 +32,9 @@ android {
         create("google") { dimension = "services" }
     }
 
+    // The project's own wallpapers/ folder (not in git), resized by scripts/build.sh, is packed in as assets/wallpapers.
+    sourceSets["main"].assets.srcDir("build/bundled-wallpapers")
+
     buildTypes {
         release {
             isMinifyEnabled = true

@@ -191,6 +191,8 @@ class AppsScreen(nav: Nav) : Screen(nav), TileHost, FrameClock.Tick {
     private val heading = TextView(nav.ctx).apply { style(Txt.HERO, l.u); text = "Apps" }
     private val count = TextView(nav.ctx).apply { style(Txt.META, l.u, Colors.TEXT_DIM) }
     private val grid = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
+    /** The heading, the count and the grid scroll together as one page (the heading used to stay put over the rows). */
+    private val page = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
     private val none = TextView(nav.ctx).apply { style(Txt.ROW, l.u, Colors.TEXT_DIM); text = "No apps installed"; visibility = View.GONE }
     private val tiles = ArrayList<Tile>()
     private var r = 0; private var c = 0
@@ -199,10 +201,12 @@ class AppsScreen(nav: Nav) : Screen(nav), TileHost, FrameClock.Tick {
     private var built: List<AppEntry>? = null
 
     init {
-        view.addView(heading, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(150) })
-        view.addView(count, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(244) })
-        view.addView(grid, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        view.addView(none, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = gridTop })
+        page.addView(heading, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(150) })
+        page.addView(count, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(244) })
+        page.addView(grid, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        page.addView(none, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = gridTop })
+        view.addView(page, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        page.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fadeTop() }
     }
 
     /** Rebuilds the grid when the installed apps changed. */
@@ -251,7 +255,20 @@ class AppsScreen(nav: Nav) : Screen(nav), TileHost, FrameClock.Tick {
     override fun back(): Boolean = if (r > 0) { r = 0; focus(); true } else false
 
     private fun place() { sy.target = -(maxOf(0, r - 1) * l.rowPitch).toFloat(); nav.clock.add(this) }
-    override fun tick(dt: Float): Boolean { sy.step(dt); grid.translationY = sy.value; return !sy.atRest() }
+    override fun tick(dt: Float): Boolean { sy.step(dt); page.translationY = sy.value; fadeTop(); return !sy.atRest() }
+
+    /**
+     * Rows that scroll up past the grid's first line fade out before they reach the tab pill and the clock, and the
+     * heading and count fade as soon as the page scrolls: nothing runs under the top bar. Uses laid-out positions only
+     * (it runs again after layout, so a freshly built grid never starts hidden).
+     */
+    private fun fadeTop() {
+        val y0 = page.translationY
+        val head = (1f + y0 / l.pxf(120f)).coerceIn(0f, 1f)
+        heading.alpha = head; count.alpha = head
+        val from = l.pxf(120f); val band = l.pxf(90f)
+        tiles.forEach { t -> if (t.height > 0) t.alpha = ((y0 + t.top - from) / band).coerceIn(0f, 1f) }
+    }
 
     override fun onTileFocused(tile: Tile) { nav.artBitmap(tile.entry.backdrop) }
     override fun onTileClicked(tile: Tile) { nav.launch(tile.entry) }

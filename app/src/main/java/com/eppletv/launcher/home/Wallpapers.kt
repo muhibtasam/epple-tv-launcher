@@ -12,14 +12,16 @@ import java.security.SecureRandom
 /**
  * Home's own pictures: the wallpaper shown while the Home tab is selected, before any streaming app is focused.
  *
- * They are the user's, never part of the APK or the repository, and they arrive two ways:
+ * They are the user's, never part of the repository, and they arrive three ways:
+ *  - in the build: pictures in the project's `wallpapers/` folder are packed into the APK by scripts/build.sh, and
+ *    [importBundled] takes each one in once after an install or update (one removed on the TV is never re-added);
  *  - from a phone, through the paired setup page (Settings > Wallpapers > Add from Phone), via [add];
  *  - from a computer: `scripts/wallpapers.sh` pushes images into this app's own external folder
  *    (Android/data/com.eppletv.launcher/files/wallpapers), and [importDropped] takes them in on the next pick.
  * Every picture is decoded, checked and re-encoded as a fresh JPEG of at most 1920x1080 in the app's private storage,
  * so nothing from the original file (metadata, odd formats, huge sizes) is kept. Worker threads only, except [count].
  */
-class Wallpapers(ctx: Context, folder: String = "wallpapers") {
+class Wallpapers(private val ctx: Context, private val folder: String = "wallpapers") {
     private val dir = File(ctx.filesDir, folder).apply { mkdirs() }
     private val drop: File? = try { ctx.getExternalFilesDir(folder) } catch (_: Exception) { null }
     private val prefs = ctx.getSharedPreferences(folder, Context.MODE_PRIVATE)
@@ -56,8 +58,11 @@ class Wallpapers(ctx: Context, folder: String = "wallpapers") {
         val name = "w-${System.currentTimeMillis()}-${Integer.toHexString(random.nextInt())}.jpg"
         val tmp = File(dir, "$name.tmp")
         try {
+            val sig = signature(out)
+            if (files().any { f -> signatureOf(f)?.let { same(it, sig) } == true }) return Result(true, "Already on this TV")
             tmp.outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, QUALITY, it) }
             if (!tmp.renameTo(File(dir, name))) { tmp.delete(); return Result(false, "Couldn't save this picture") }
+            sigs[name] = sig
             android.util.Log.i("EppleWallpaper", "stored ${w}x$h as ${ow}x$oh, ${File(dir, name).length() / 1024} KB")
         } catch (_: Exception) {
             tmp.delete(); return Result(false, "Couldn't save this picture")
@@ -66,6 +71,44 @@ class Wallpapers(ctx: Context, folder: String = "wallpapers") {
         }
         return Result(true, "Added to Home")
     }
+
+    /**
+     * Takes in the pictures packed into this build (assets/wallpapers), each once: a picture is remembered by name and
+     * size after it is taken in, so a later build adds only new ones and one the user removed on the TV stays removed.
+     * Pictures already on the TV (sent from a phone or a computer before) are recognised by look and not added twice.
+     */
+    @Synchronized fun importBundled(): Int {
+        if (folder != "wallpapers") return 0
+        val names = try { ctx.assets.list(BUNDLED) ?: return 0 } catch (_: Exception) { return 0 }
+        val seen = prefs.getStringSet("bundled", emptySet())!!.toMutableSet()
+        var n = 0
+        for (name in names.sorted()) {
+            if (name.substringAfterLast('.', "").lowercase() !in EXTS) continue
+            val bytes = try { ctx.assets.open("$BUNDLED/$name").use { it.readBytes() } } catch (_: Exception) { continue }
+            val key = "$name:${bytes.size}"
+            if (key in seen) continue
+            val r = add(bytes)
+            if (!r.ok && files().size >= MAX) break                          // full: try again after some are removed
+            if (r.ok && r.message != "Already on this TV") n++
+            seen += key
+        }
+        prefs.edit().putStringSet("bundled", seen).apply()
+        if (n > 0) android.util.Log.i("EppleWallpaper", "took in $n wallpaper(s) from this build")
+        return n
+    }
+
+    // A 32x18 grey-level thumbprint: two encodings of the same picture match even at different sizes or qualities.
+    private val sigs = java.util.concurrent.ConcurrentHashMap<String, IntArray>()
+    private fun signature(b: Bitmap): IntArray {
+        val s = Bitmap.createScaledBitmap(b, 32, 18, true)
+        val px = IntArray(32 * 18); s.getPixels(px, 0, 32, 0, 0, 32, 18); if (s !== b) s.recycle()
+        return IntArray(px.size) { val c = px[it]; ((c shr 16 and 0xFF) * 3 + (c shr 8 and 0xFF) * 6 + (c and 0xFF)) / 10 }
+    }
+    private fun signatureOf(f: File): IntArray? = sigs[f.name] ?: try {
+        val o = BitmapFactory.Options().apply { inSampleSize = 16 }
+        BitmapFactory.decodeFile(f.path, o)?.let { b -> signature(b).also { b.recycle(); sigs[f.name] = it } }
+    } catch (_: Exception) { null }
+    private fun same(a: IntArray, b: IntArray) = a.size == b.size && a.indices.sumOf { kotlin.math.abs(a[it] - b[it]) } / a.size < 10
 
     /** Takes in pictures copied from a computer into the app's external folder, then removes the copies. */
     @Synchronized fun importDropped(): Int {
@@ -135,6 +178,7 @@ class Wallpapers(ctx: Context, folder: String = "wallpapers") {
 
     companion object {
         const val MAX = 40
+        private const val BUNDLED = "wallpapers"
         private const val QUALITY = 85
         private const val OUT_W = 1920
         private const val OUT_H = 1080
