@@ -134,7 +134,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         if (!::tabs.isInitialized) return
         tabs.open = zone == Zone.TABS && menuOpen && tabIdx < TAB_NAMES.size
         tabs.hint = zone == Zone.TABS && !menuOpen && tabIdx < TAB_NAMES.size
-        railP.target = if (zone == Zone.TABS || section == 0 && (zone == Zone.CONTENT || zone == Zone.HERO)) 1f else 0f
+        railP.target = if (zone == Zone.TABS || section != SETTINGS && zone != Zone.DETAIL && zone != Zone.FEED) 1f else 0f
         // A hidden view can't take focus: the menu is made visible at once when focus is going to it (it then fades in).
         if (railP.target > 0f && tabs.visibility != View.VISIBLE) { tabs.visibility = View.VISIBLE; tabs.alpha = maxOf(tabs.alpha, 0.01f) }
     }
@@ -220,9 +220,10 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         cc = ControlCenter(this, l, clock, hero.backdrop)
         root.addView(cc.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         buildControlCenter()
+        cc.onTop = { pill.part = 1; pill.requestFocus() }
         pill = ClockPill(this, l, clock, hero.backdrop)
         // OK: Control Center, or on the profile orb Epple TV's settings; holding OK on the orb opens the TV's settings.
-        pill.setOnClickListener { if (pill.part == 1) goTab(SETTINGS) else openControlCenter() }
+        pill.setOnClickListener { if (pill.part == 1) goTab(SETTINGS) else if (cc.open) cc.hide() else openControlCenter() }
         pill.setOnLongClickListener { if (pill.part == 1) { open(Intent(Settings.ACTION_SETTINGS), "TV Settings"); true } else false }
         root.addView(pill, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(70), Gravity.TOP or Gravity.END).apply { topMargin = l.px(49); rightMargin = l.px(64) })
 
@@ -435,16 +436,16 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     /** Home's resting place: the hint pill ("Home · Press Back for menu") focused, the menu closed, the wallpaper behind. */
     private fun enterHint() { menuOpen = false; enterTabs(section) }
-    private fun toNav() { if (section == 0) enterHint() else openMenu() }
+    private fun toNav() { if (section == SETTINGS) openMenu() else enterHint() }
 
     /** Opens the menu with section [i] highlighted. Nothing changes until a section is chosen (OK or Right). */
-    private fun openMenu(i: Int = section) { menuOpen = true; enterTabs(i) }
+    private fun openMenu(i: Int = section) { menuOpen = true; enterTabs(if (i in MENU_ORDER) i else 0) }
 
     /** Chooses the highlighted section: the menu closes and focus goes into it. */
     private fun chooseMenu() { val i = tabIdx; menuOpen = false; showSection(i); tabIdx = i; intoSection() }
 
     /** Closes the menu without changing anything: back to the hint on Home, or into the section. */
-    private fun closeMenu() { menuOpen = false; tabIdx = section; if (section == 0) enterTabs(0) else intoSection() }
+    private fun closeMenu() { menuOpen = false; tabIdx = section; enterTabs(section) }
 
     /** Home's rows: the top row and its artwork text slide away, the rows take the screen. */
     private fun enterFeed() {
@@ -715,10 +716,14 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private fun goHome() {
         closeOverlays()
         while (details.isNotEmpty()) sectionLayer.removeView(details.removeAt(details.size - 1).view)
+        // Once: the open section, back at its top with its pill focused. Again (already there, or in Settings): Home.
+        val atTop = zone == Zone.TABS && !menuOpen && tabIdx == section
         if (zone == Zone.FEED) leaveFeed()
-        if (section != 0) showSection(0)
-        else { homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE; feed.hide() }
-        enterHint()                                          // Home chosen, menu closed; the same wallpaper (a new one only when Epple TV starts)
+        if (section != 0 && (atTop || section == SETTINGS)) showSection(0)
+        else if (section == 0) { homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE; feed.hide() }
+        else screens[section]?.reset()
+        menuOpen = false
+        enterHint()                                          // menu closed; Home keeps the same wallpaper (a new one only when Epple TV starts)
         animateShell()
     }
 
@@ -901,6 +906,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         if (down) restartRotation()
 
         if (cc.open && !panel.open) {
+            // The profile orb sits above Control Center: Left/Right switch between it and the switches, Down goes back.
+            if (pill.isFocused && dpad) {
+                if (down) when { dy > 0 -> { pill.part = 0; cc.key(event) }; dx > 0 -> pill.part = 1; dx < 0 -> pill.part = 0 }
+                return true
+            }
             if (select) return super.dispatchKeyEvent(event)
             if (k == KeyEvent.KEYCODE_BACK || k == KeyEvent.KEYCODE_MENU || k == KeyEvent.KEYCODE_SETTINGS) { if (down) cc.key(event); return true }
             return if (dpad) cc.key(event) else super.dispatchKeyEvent(event)
@@ -937,12 +947,12 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             // Down goes into the page below it.
             Zone.TABS -> if (tabIdx >= TAB_NAMES.size) when {
                 dx > 0 -> pill.part = 1
-                dx < 0 -> if (pill.part == 1) pill.part = 0 else if (section == 0) enterHint() else openMenu()
+                dx < 0 -> if (pill.part == 1) pill.part = 0 else if (section != SETTINGS) enterHint()
                 dy > 0 -> intoSection()
             } else if (!menuOpen) when {
-                // The hint pill (closed menu, Home only): Down into Home, Right to the clock, Left opens the menu.
+                // The hint pill (closed menu): Down into the section, Up or Right to the clock, Left opens the menu.
                 dy > 0 -> intoSection()
-                dx > 0 -> { tabIdx = PILL; focusTab() }
+                dx > 0 || dy < 0 -> { tabIdx = PILL; pill.part = if (dy < 0) 1 else 0; focusTab() }
                 dx < 0 -> openMenu()
             } else when {
                 // The open menu, as on tvOS: Up/Down only highlight (Up past Search reaches the clock); OK or Right chooses.
@@ -955,7 +965,10 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             }
             Zone.FEED -> if (!feed.key(dx, dy)) { if (dx < 0) openMenu() else enterContent() }
             // Up or Left out of a section opens the menu (as the Apple TV app's sidebar does).
-            Zone.SECTION -> if (screens[section]?.key(dx, dy) == false) openMenu()
+            Zone.SECTION -> if (screens[section]?.key(dx, dy) == false) when {
+                dy < 0 -> if (section == SETTINGS) { tabIdx = PILL; pill.part = 1; zone = Zone.TABS; focusTab() } else enterHint()
+                dx < 0 && section != SETTINGS -> openMenu()
+            }
             Zone.DETAIL -> details.lastOrNull()?.key(dx, dy)
         }
         return true
@@ -972,21 +985,27 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     /** BACK walks up: details -> section -> tab bar -> Home's top row; at the top row it leaves the app. */
     private fun handleBack(): Boolean = when (zone) {
         Zone.DETAIL -> { closeDetail(); true }
-        Zone.SECTION -> { if (screens[section]?.back() != true) openMenu(); true }
+        // Back walks up to the open tab's pill (it never opens the menu); Settings (not a tab) goes back Home.
+        Zone.SECTION -> { if (screens[section]?.back() != true) { if (section == SETTINGS) { showSection(0); enterHint() } else enterHint() }; true }
         Zone.FEED -> { if (!feed.back()) enterContent(); true }
         // Back closes the open menu (nothing changes); from the clock it returns to where you were; on Home's hint it stays.
-        Zone.TABS -> when { menuOpen -> { closeMenu(); true }; tabIdx >= TAB_NAMES.size -> { if (section == 0) enterHint() else intoSection(); true }; else -> true }
-        Zone.CONTENT -> { if (!page.atTop()) { dirX = 0; dirY = -1; page.toTop() } else openMenu(); true }
+        Zone.TABS -> when {
+            menuOpen -> { closeMenu(); true }
+            tabIdx >= TAB_NAMES.size -> { if (section == SETTINGS) intoSection() else enterHint(); true }
+            section != 0 -> { showSection(0); enterHint(); true }                      // another tab's pill: Back goes Home
+            else -> true                                                               // Home's pill: Back does nothing
+        }
+        Zone.CONTENT -> { if (!page.atTop()) { dirX = 0; dirY = -1; page.toTop() } else enterHint(); true }
         Zone.HERO -> { enterContent(); true }
     }
 
     private companion object {
         // Settings is not a tab: it opens from the Epple TV icon in the TV's apps, and from Control Center (SETTINGS).
         // Library was removed: Watchlist and Favourites stay reachable from Home's rows below the top row.
-        // Indexed by section; the side menu lists them in MENU_ORDER (Search first, Settings last).
+        // Indexed by section; the side menu lists MENU_ORDER (Search at the bottom; Settings is not in it).
         val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Apps", "Search", "Settings")
         val TAB_ICONS = listOf(TabIcons.HOME, TabIcons.MOVIES, TabIcons.TV, TabIcons.APPS, TabIcons.SEARCH, TabIcons.SETTINGS)
-        val MENU_ORDER = listOf(4, 0, 1, 2, 3, 5)
+        val MENU_ORDER = listOf(0, 1, 2, 3, 4)
         const val PILL = 6
         const val APPS = 3
         const val SEARCH = 4

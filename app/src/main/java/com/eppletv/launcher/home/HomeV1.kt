@@ -80,7 +80,7 @@ class SideBar(ctx: Context, private val l: Layout, private val clock: FrameClock
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND; color = Colors.WHITE }
     private val title = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(28f) * Type.scale; typeface = Type.of(600); color = Colors.WHITE }
     private val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(23f) * Type.scale; typeface = Type.of(500); color = Colors.WHITE }
-    private val hintText = "Press Back for menu"
+    private val hintText = "Press OK for menu"
 
     var open = false
         set(v) { if (field != v) { field = v; o.target = if (v) 1f else 0f; clock.add(this) } }
@@ -115,7 +115,7 @@ class SideBar(ctx: Context, private val l: Layout, private val clock: FrameClock
             val ink = Colors.lerp(Colors.WHITE, Colors.INK, h)
             val cx = l.pxf(15f) + chip / 2f; val cy = ph / 2f
             chipPaint.color = Colors.lerp(0x38FFFFFF, 0x14000000, h); chipPaint.alpha = ((chipPaint.color ushr 24) * a).toInt(); c.drawCircle(cx, cy, chip / 2f, chipPaint)
-            stroke.color = ink; stroke.alpha = (255 * a).toInt(); TabIcons.draw(icons[selected], c, cx, cy, l.pxf(28f), stroke)
+            stroke.color = ink; stroke.alpha = (255 * a).toInt(); TabIcons.draw(icons[selected], c, cx, cy, l.pxf(36f), stroke, 1f)
             val tx = l.pxf(15f) + chip + l.pxf(18f)
             title.color = ink; sub.color = ink
             title.alpha = (255 * a).toInt(); sub.alpha = (200 * a).toInt()
@@ -162,7 +162,7 @@ class SideItem(ctx: Context, private val l: Layout, private val clock: FrameCloc
         val d = l.pxf(58f); val cx = (h - d) / 2f + d / 2f; val cy = h / 2f
         fill.color = Colors.lerp(if (sv > 0.5f) 0x5CFFFFFF else 0x38FFFFFF, 0x14000000, fv); c.drawCircle(cx, cy, d / 2f, fill)
         val ink = Colors.lerp(Colors.WHITE, Colors.INK, fv)
-        stroke.color = ink; TabIcons.draw(icon, c, cx, cy, l.pxf(28f), stroke)
+        stroke.color = ink; TabIcons.draw(icon, c, cx, cy, l.pxf(36f), stroke, maxOf(fv, sv))
         text.color = ink
         c.drawText(label, cx + d / 2f + l.pxf(20f), cy - (text.descent() + text.ascent()) / 2f, text)
     }

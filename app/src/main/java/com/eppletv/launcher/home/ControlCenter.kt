@@ -197,6 +197,9 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
         onClosed?.invoke()
     }
 
+    /** Up from the top row (the profile orb above the panel takes the focus). */
+    var onTop: (() -> Unit)? = null
+
     /** D-pad inside the panel; returns true when handled. */
     fun key(e: KeyEvent): Boolean {
         if (e.action != KeyEvent.ACTION_DOWN) return true
@@ -205,7 +208,8 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
         if (e.keyCode == KeyEvent.KEYCODE_BACK || e.keyCode == KeyEvent.KEYCODE_MENU) { if (e.repeatCount == 0) hide(); return true }
         if (dx == 0 && dy == 0) return false
         val cur = tiles.firstOrNull { it.isFocused } ?: return true.also { tiles.firstOrNull()?.requestFocus() }
-        nearest(cur, dx, dy)?.requestFocus()
+        val next = nearest(cur, dx, dy)
+        if (next == null && dy < 0) onTop?.invoke() else next?.requestFocus()
         return true
     }
 

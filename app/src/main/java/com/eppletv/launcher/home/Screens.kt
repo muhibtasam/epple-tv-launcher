@@ -286,17 +286,6 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
             (0 until (per.maxOfOrNull { it.size } ?: 0)).flatMap { i -> per.mapNotNull { it.getOrNull(i) } }
         }) { cb(it.orEmpty()) }
     },
-    RowSource("Recently Added", dynamic = true) { cb ->
-        // New releases on the user's own services (Watchmode "New on" lists already loaded for the top row).
-        cb(nav.content.loadedItems().filter { it.kind.startsWith("New on") }.distinctBy { it.id }.take(20))
-    },
-    RowSource("Trending Now") { cb -> nav.content.work("row:trending-all", { nav.catalog.row(nav.catalog.trendingAll) }, cb) },
-    RowSource("For You", dynamic = true) { cb ->
-        val seed = (nav.user.items(UserLibrary.Kind.CONTINUE) + nav.user.items(UserLibrary.Kind.FAVOURITES) +
-            nav.user.items(UserLibrary.Kind.WATCHLIST) + nav.user.items(UserLibrary.Kind.RECENT)).firstOrNull { Regex("^(movie|tv):\\d+$").matches(it.id) }
-        if (seed == null) nav.content.work("row:discover/movie?with_original_language=hi", { nav.catalog.row(nav.catalog.movieRows()[2]) }, cb)
-        else { val (t, id) = seed.id.split(":"); nav.content.work("recs:${seed.id}", { nav.catalog.recommendations(t, id.toInt()) }, cb) }
-    },
     Rows.user(nav, "Your Watchlist", UserLibrary.Kind.WATCHLIST),
 )) {
     override fun wire(c: Card) {

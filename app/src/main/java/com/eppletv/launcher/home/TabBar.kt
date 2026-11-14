@@ -64,34 +64,55 @@ internal object Frost {
     }
 }
 
-/** Line icons for the tabs, drawn from paths on a 24-unit grid (no image assets). */
+/**
+ * Epple TV's tab icons, drawn from paths on a 24-unit grid (no image assets). One duotone style for all of them: a
+ * rounded 2-unit outline plus one solid accent shape (Home's door, the clapper's top, the play mark on the TV, one
+ * Apps tile, the Search lens). [accent] 0..1 lights the accent: the open tab and the focused one show it in full.
+ */
 internal object TabIcons {
     const val HOME = 0; const val MOVIES = 1; const val TV = 2; const val LIBRARY = 3; const val APPS = 4; const val SEARCH = 5; const val SETTINGS = 6
     private val path = Path()
     private val r = RectF()
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
-    fun draw(icon: Int, c: Canvas, cx: Float, cy: Float, size: Float, p: Paint) {
+    fun draw(icon: Int, c: Canvas, cx: Float, cy: Float, size: Float, p: Paint, accent: Float = 0f) {
         val u = size / 24f
         c.save(); c.translate(cx - size / 2f, cy - size / 2f); c.scale(u, u)
-        p.strokeWidth = 2f
+        p.strokeWidth = 2.1f; p.strokeCap = Paint.Cap.ROUND; p.strokeJoin = Paint.Join.ROUND
+        fill.color = p.color; fill.alpha = (p.alpha * (0.55f + 0.45f * accent.coerceIn(0f, 1f))).toInt()
         path.reset()
-        fun rr(l: Float, t: Float, rt: Float, b: Float, rad: Float) { r.set(l, t, rt, b); c.drawRoundRect(r, rad, rad, p) }
+        fun rr(l: Float, t: Float, rt: Float, b: Float, rad: Float, paint: Paint = p) { r.set(l, t, rt, b); c.drawRoundRect(r, rad, rad, paint) }
         when (icon) {
-            HOME -> { path.moveTo(3f, 11.5f); path.lineTo(12f, 3.8f); path.lineTo(21f, 11.5f)
-                      path.moveTo(5.5f, 9.8f); path.lineTo(5.5f, 20.5f); path.lineTo(18.5f, 20.5f); path.lineTo(18.5f, 9.8f)
-                      path.moveTo(10f, 20.5f); path.lineTo(10f, 14.8f); path.lineTo(14f, 14.8f); path.lineTo(14f, 20.5f); c.drawPath(path, p) }
-            MOVIES -> { rr(3f, 4.5f, 21f, 19.5f, 2.5f)
-                        path.moveTo(7.5f, 4.5f); path.lineTo(7.5f, 19.5f); path.moveTo(16.5f, 4.5f); path.lineTo(16.5f, 19.5f)
-                        path.moveTo(3f, 12f); path.lineTo(7.5f, 12f); path.moveTo(16.5f, 12f); path.lineTo(21f, 12f)
-                        path.moveTo(3f, 8.2f); path.lineTo(7.5f, 8.2f); path.moveTo(16.5f, 8.2f); path.lineTo(21f, 8.2f)
-                        path.moveTo(3f, 15.8f); path.lineTo(7.5f, 15.8f); path.moveTo(16.5f, 15.8f); path.lineTo(21f, 15.8f); c.drawPath(path, p) }
-            TV -> { rr(2.5f, 5.5f, 21.5f, 17.5f, 2.5f)
-                    path.moveTo(8f, 21f); path.lineTo(16f, 21f); path.moveTo(9f, 2.5f); path.lineTo(12f, 5.5f); path.lineTo(15f, 2.5f); c.drawPath(path, p) }
+            HOME -> {
+                path.moveTo(3.2f, 11.2f); path.lineTo(12f, 3.9f); path.lineTo(20.8f, 11.2f)
+                path.moveTo(5.6f, 9.6f); path.lineTo(5.6f, 18.4f); path.quadTo(5.6f, 20.6f, 7.8f, 20.6f); path.lineTo(16.2f, 20.6f)
+                path.quadTo(18.4f, 20.6f, 18.4f, 18.4f); path.lineTo(18.4f, 9.6f); c.drawPath(path, p)
+                rr(9.7f, 13.6f, 14.3f, 20.6f, 1.6f, fill)
+            }
+            MOVIES -> {
+                rr(3.4f, 9.8f, 20.6f, 20.4f, 2.6f)
+                // The clapper, tilted open, as the solid accent.
+                path.moveTo(3.4f, 8.6f); path.lineTo(20.2f, 4.6f); path.lineTo(19.3f, 1.4f); path.lineTo(2.5f, 5.4f); path.close()
+                c.drawPath(path, fill); path.reset()
+                path.moveTo(3.4f, 13.6f); path.lineTo(20.6f, 13.6f); c.drawPath(path, p)
+            }
+            TV -> {
+                rr(2.6f, 5.4f, 21.4f, 17.4f, 3f)
+                path.moveTo(8.2f, 20.8f); path.lineTo(15.8f, 20.8f); c.drawPath(path, p); path.reset()
+                path.moveTo(10.2f, 8.6f); path.lineTo(15.4f, 11.4f); path.lineTo(10.2f, 14.2f); path.close(); c.drawPath(path, fill)
+            }
             LIBRARY -> { rr(4f, 9.5f, 20f, 20.5f, 2.5f)
                          path.moveTo(6.5f, 6.5f); path.lineTo(17.5f, 6.5f); path.moveTo(9f, 3.5f); path.lineTo(15f, 3.5f); c.drawPath(path, p) }
-            APPS -> { rr(3.5f, 3.5f, 10.5f, 10.5f, 2.2f); rr(13.5f, 3.5f, 20.5f, 10.5f, 2.2f); rr(3.5f, 13.5f, 10.5f, 20.5f, 2.2f); rr(13.5f, 13.5f, 20.5f, 20.5f, 2.2f) }
-            SEARCH -> { c.drawCircle(10.5f, 10.5f, 6.5f, p); path.moveTo(15.4f, 15.4f); path.lineTo(20.5f, 20.5f); c.drawPath(path, p) }
-            SETTINGS -> { c.drawCircle(12f, 12f, 3.2f, p); c.drawCircle(12f, 12f, 7f, p)
+            APPS -> {
+                rr(3.4f, 3.4f, 10.6f, 10.6f, 2.4f); rr(3.4f, 13.4f, 10.6f, 20.6f, 2.4f); rr(13.4f, 13.4f, 20.6f, 20.6f, 2.4f)
+                c.drawCircle(17f, 7f, 3.8f, fill)
+            }
+            SEARCH -> {
+                c.drawCircle(10.4f, 10.4f, 4.6f, fill)
+                c.drawCircle(10.4f, 10.4f, 6.8f, p)
+                p.strokeWidth = 2.8f; path.moveTo(15.4f, 15.4f); path.lineTo(20.6f, 20.6f); c.drawPath(path, p); p.strokeWidth = 2.1f
+            }
+            SETTINGS -> { c.drawCircle(12f, 12f, 3.2f, fill); c.drawCircle(12f, 12f, 7f, p)
                           for (i in 0 until 8) { val a = Math.toRadians(i * 45.0); val ca = Math.cos(a).toFloat(); val sa = Math.sin(a).toFloat()
                               path.moveTo(12f + ca * 7f, 12f + sa * 7f); path.lineTo(12f + ca * 10f, 12f + sa * 10f) }
                           c.drawPath(path, p) }
