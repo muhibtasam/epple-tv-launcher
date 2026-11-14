@@ -93,14 +93,21 @@ class GlassPlatter(ctx: Context, private val l: Layout, private val backdrop: Ba
 
     private companion object { const val FROST = 0f } // Frost off: on the C6K any frost under the rim/glint costs ~15 ms a frame, whatever its strength.
 
+    private val tint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x4D13151A }
+
     override fun onDraw(c: Canvas) {
         val sw = rootView.width.toFloat(); val sh = rootView.height.toFloat()
-        if (sw > 0f) {
+        // Frosted body, the same as the tab bar's: the current artwork's shared 240x135 frost texture, screen-aligned,
+        // under a light tint. One textured draw plus one flat fill (the per-layer lens body stays off: see FROST).
+        val b = backdrop.currentBitmap
+        if (b != null && sw > 0f) {
             getLocationInWindow(loc)
-            val ta = backdrop.topAlpha
-            if (backdrop.bottomVisible && ta < 0.99f) body(c, backdrop.bottomBitmap, 1f, sw, sh)
-            body(c, backdrop.topBitmap, ta, sw, sh)
+            val fs = Frost.shader(b)
+            m.setScale(sw / 240f, sh / 135f); m.postTranslate(-loc[0].toFloat(), -loc[1].toFloat())
+            fs.setLocalMatrix(m); bodyPaint.shader = fs; bodyPaint.alpha = 255
+            c.drawRoundRect(rb, radius, radius, bodyPaint)
         }
+        c.drawRoundRect(rb, radius, radius, tint)
         // No sheen pass: with the frost under it, a second full-platter layer costs this GPU ~15 ms a frame.
         // Rims are pre-rendered: stroked rounded rects with gradients cost this GPU ~45 ms a frame when drawn live.
         rimBmp?.let { c.drawBitmap(it, 0f, 0f, null) }

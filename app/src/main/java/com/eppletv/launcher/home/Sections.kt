@@ -395,6 +395,14 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
     private fun mb(b: Long) = if (b < 1024 * 1024) "${b / 1024} KB" else "%.1f MB".format(b / 1048576.0)
 
     private fun build() {
+        header("Launcher")
+        row("Home screen", "Which launcher the Home button opens. Epple TV turns off the Google TV home screen (it stays installed) " +
+            "and asks this TV to allow debugging once; choosing the TV's default turns it back on.", {
+            if (isHome()) "Epple TV" else "TV's default" }) {
+            nav.menu("Launcher", listOf(
+                "Use Epple TV as Launcher" to { nav.switchLauncher(true) },
+                "Use the TV's Default Launcher" to { nav.switchLauncher(false) }))
+        }
         header("Appearance")
         choice(Prefs.CLOCK, "How the time is shown in the corner and in Control Center.")
         choice(Prefs.ROTATE, "How often the artwork behind the top row moves to the next title.")
@@ -442,10 +450,15 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         if (n > 1) items.add("Show Another Now" to { nav.nextWallpaper(); nav.toast("Wallpaper changed") })
         if (n > 0) items.add("Remove All Pictures" to {
             nav.menu("Remove all $n pictures from this TV?", listOf(
-                "Remove All" to { nav.wallpapers.removeAll(); nav.nextWallpaper(); refreshValues(); nav.toast("Pictures removed") },
-                "Cancel" to {}))
+                "Cancel" to {},                                   // first, so a stray OK keeps the pictures
+                "Remove All" to { nav.wallpapers.removeAll(); nav.nextWallpaper(); refreshValues(); nav.toast("Pictures removed") }))
         })
         nav.menu("Wallpapers", items)
+    }
+
+    private fun isHome(): Boolean {
+        val rm = nav.ctx.getSystemService(android.app.role.RoleManager::class.java)
+        return rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME) && rm.isRoleHeld(android.app.role.RoleManager.ROLE_HOME)
     }
 
     private fun refreshValues() { rows.forEach { it.pill.value = it.value() }; rows.getOrNull(i)?.let { about.text = it.help } }

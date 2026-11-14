@@ -96,9 +96,9 @@ internal object TabIcons {
 }
 
 /**
- * One tab, in the style of a streaming app's floating tab bar: its icon above its label, always both. The tab of the
- * open section sits on a soft capsule in full white; the focused tab gets a brighter capsule and grows slightly.
- * Every tab has the same fixed slot, so focus changes never move the other tabs.
+ * One tab of the glass capsule (tvOS 26 style): a text label, or for Search only its icon. The open section's tab sits
+ * on a soft capsule; the focused tab becomes a solid white capsule with dark text and grows slightly.
+ * Each tab keeps its own fixed width, so focus changes never move the others.
  */
 @SuppressLint("ViewConstructor")
 class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock, val label: String, private val icon: Int) : View(ctx), FrameClock.Tick {
@@ -106,16 +106,17 @@ class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock
     private val s = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 3f)
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
-    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(21f) * Type.scale; typeface = Type.of(600); textAlign = Paint.Align.CENTER }
-    private val iconSize = l.pxf(32f)
-    private val pad = l.pxf(20f)
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(27f) * Type.scale; typeface = Type.of(600); textAlign = Paint.Align.CENTER }
+    private val iconOnly = icon == TabIcons.SEARCH
+    private val iconSize = l.pxf(30f)
+    private val pad = l.pxf(30f)
     private val rect = RectF()
     var selectedState = false
         set(v) { if (field != v) { field = v; s.target = if (v) 1f else 0f; clock.add(this) } }
 
     init { isFocusable = true; contentDescription = label }
 
-    fun contentWidth() = maxOf(text.measureText(label) + pad * 2, l.pxf(118f))
+    fun contentWidth() = if (iconOnly) iconSize + pad * 1.6f else text.measureText(label) + pad * 2
 
     override fun onFocusChanged(gain: Boolean, direction: Int, prev: android.graphics.Rect?) {
         super.onFocusChanged(gain, direction, prev)
@@ -125,15 +126,12 @@ class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock
     override fun onDraw(c: Canvas) {
         val fv = f.value.coerceIn(0f, 1f); val sv = s.value.coerceIn(0f, 1f)
         val h = height.toFloat(); val w = width.toFloat()
-        val inset = l.pxf(5f)
-        rect.set(inset, inset, w - inset, h - inset)
-        val bg = Colors.lerp(Colors.lerp(0x00FFFFFF, 0x24FFFFFF, sv), 0x45FFFFFF, fv)
-        if ((bg ushr 24) > 0) { fill.color = bg; val rad = rect.height() * 0.32f; c.drawRoundRect(rect, rad, rad, fill) }
-        val ink = Colors.lerp(0x9EFFFFFF.toInt(), Colors.WHITE, maxOf(sv, fv))
-        stroke.color = ink
-        TabIcons.draw(icon, c, w / 2f, h * 0.39f, iconSize, stroke)
-        text.color = ink
-        c.drawText(label, w / 2f, h * 0.80f, text)
+        rect.set(0f, 0f, w, h)
+        val bg = Colors.lerp(Colors.lerp(0x00FFFFFF, 0x2EFFFFFF, sv), Colors.WHITE, fv)
+        if ((bg ushr 24) > 0) { fill.color = bg; c.drawRoundRect(rect, h / 2f, h / 2f, fill) }
+        val ink = Colors.lerp(Colors.lerp(0xD1FFFFFF.toInt(), Colors.WHITE, sv), Colors.INK, fv)
+        if (iconOnly) { stroke.color = ink; TabIcons.draw(icon, c, w / 2f, h / 2f, iconSize, stroke) }
+        else { text.color = ink; c.drawText(label, w / 2f, h / 2f - (text.descent() + text.ascent()) / 2f, text) }
     }
 
     override fun tick(dt: Float): Boolean {
@@ -152,7 +150,7 @@ class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock
 @SuppressLint("ViewConstructor")
 class TabGlass(ctx: Context, private val l: Layout, private val backdrop: Backdrop) : View(ctx) {
     private val frost = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val tint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x8013151A.toInt() }
+    private val tint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x6613151A }
     private val rect = RectF(); private val m = Matrix(); private val loc = IntArray(2)
     private var overlay: Bitmap? = null
     private val radius get() = height / 2f
@@ -200,15 +198,76 @@ class TabBar(ctx: Context, l: Layout, clock: FrameClock, labels: List<String>, i
 
     init {
         clipChildren = false; clipToPadding = false
-        val slot = tabs.maxOf { it.contentWidth() }.toInt()
-        val p = l.px(14)
-        val width = slot * tabs.size + 2 * p
+        val p = l.px(8); val gap = l.px(4)
+        val widths = tabs.map { it.contentWidth().toInt() }
+        val width = widths.sum() + gap * (tabs.size - 1) + 2 * p
         // Both children get the bar's real width: a MATCH_PARENT glass inside a WRAP_CONTENT bar would measure
         // itself to the whole screen and stretch the bar edge to edge.
         addView(TabGlass(ctx, l, backdrop), LayoutParams(width, MATCH_PARENT).apply { gravity = Gravity.CENTER })
-        tabs.forEach { t -> row.addView(t, LinearLayout.LayoutParams(slot, l.px(96))) }
+        tabs.forEachIndexed { i, t -> row.addView(t, LinearLayout.LayoutParams(widths[i], l.px(64)).apply { if (i > 0) leftMargin = gap }) }
         addView(row, LayoutParams(width, MATCH_PARENT).apply { gravity = Gravity.CENTER })
         row.setPadding(p, 0, p, 0)
         selected = 0
+    }
+}
+
+/**
+ * The clock in the top-right corner, as on tvOS: a small frosted capsule with the time and a round profile badge.
+ * Focusable (it opens Control Center); focused it turns solid white with dark text.
+ */
+@SuppressLint("ViewConstructor")
+class ClockPill(ctx: Context, private val l: Layout, private val clock: FrameClock, backdrop: Backdrop) : FrameLayout(ctx), FrameClock.Tick {
+    private val f = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
+    private val glass = TabGlass(ctx, l, backdrop)
+    private val face = object : View(ctx) {
+        override fun onDraw(c: Canvas) = drawFace(c, width.toFloat(), height.toFloat())
+    }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val badge = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val glyph = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = l.pxf(2.6f); strokeCap = Paint.Cap.ROUND; color = Colors.WHITE }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(25f) * Type.scale; typeface = Type.of(600) }
+    private val rect = RectF()
+    private val path = Path()
+    private val padL = l.pxf(22f); private val gap = l.pxf(14f); private val inset = l.pxf(7f)
+    var label: String = ""
+        set(v) { if (field != v) { field = v; requestLayout(); face.invalidate() } }
+
+    init {
+        isFocusable = true; clipChildren = false
+        addView(glass, LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        addView(face, LayoutParams(MATCH_PARENT, MATCH_PARENT))
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val h = MeasureSpec.getSize(heightMeasureSpec)
+        val w = (padL + text.measureText(label) + gap + (h - 2 * inset) + inset).toInt()
+        super.onMeasure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY))
+    }
+
+    override fun onFocusChanged(gain: Boolean, direction: Int, prev: android.graphics.Rect?) {
+        super.onFocusChanged(gain, direction, prev)
+        f.target = if (gain) 1f else 0f; clock.add(this)
+    }
+
+    private fun drawFace(c: Canvas, w: Float, h: Float) {
+        val fv = f.value.coerceIn(0f, 1f)
+        if (fv > 0.01f) { fill.color = Colors.lerp(0x00FFFFFF, Colors.WHITE, fv); rect.set(0f, 0f, w, h); c.drawRoundRect(rect, h / 2f, h / 2f, fill) }
+        text.color = Colors.lerp(Colors.WHITE, Colors.INK, fv)
+        c.drawText(label, padL, h / 2f - (text.descent() + text.ascent()) / 2f, text)
+        // Profile badge: a grey disc with a simple person glyph.
+        val d = h - 2 * inset; val cx = w - inset - d / 2f; val cy = h / 2f
+        badge.shader = android.graphics.LinearGradient(cx, cy - d / 2f, cx, cy + d / 2f, 0xFFA3ABB8.toInt(), 0xFF5D6573.toInt(), Shader.TileMode.CLAMP)
+        c.drawCircle(cx, cy, d / 2f, badge)
+        val u = d / 24f
+        c.drawCircle(cx, cy - 2.6f * u, 3.6f * u, glyph)
+        path.reset(); path.moveTo(cx - 6.6f * u, cy + 7.2f * u)
+        path.quadTo(cx, cy - 0.4f * u, cx + 6.6f * u, cy + 7.2f * u); c.drawPath(path, glyph)
+    }
+
+    override fun tick(dt: Float): Boolean {
+        f.step(dt)
+        val sc = 1f + 0.06f * f.value; scaleX = sc; scaleY = sc
+        face.invalidate()
+        return !f.atRest()
     }
 }

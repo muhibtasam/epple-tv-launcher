@@ -55,6 +55,9 @@ interface Nav {
     fun openPhone()
     /** Shows another wallpaper now ([newest]: the most recently added one). */
     fun nextWallpaper(newest: Boolean = false)
+    /** Making Epple TV the TV's launcher, and giving it back (Settings > Launcher). */
+    val launcher: com.eppletv.launcher.system.LauncherMode
+    fun switchLauncher(epple: Boolean, done: (() -> Unit)? = null)
 }
 
 /** One section of the launcher. Focus inside a section is explicit and survives leaving and returning. */
@@ -112,7 +115,14 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
         logo.setImageBitmap(null); logo.visibility = GONE; title.visibility = VISIBLE
         if (item.id.startsWith("movie:") || item.id.startsWith("tv:") || item.logoUrl.isNotEmpty()) {
             val id = item.id
-            content.logo(item) { b -> if (b != null && shownId == id) { logo.setImageBitmap(b); logo.visibility = VISIBLE; title.visibility = GONE } }
+            var answered = false
+            content.logo(item) { b ->
+                answered = true
+                if (shownId != id) return@logo
+                if (b != null) { logo.setImageBitmap(b); logo.visibility = VISIBLE; title.visibility = GONE } else title.visibility = VISIBLE
+            }
+            // Logo still loading: hold the typeset title back briefly instead of flashing it and swapping it out.
+            if (!answered) { title.visibility = INVISIBLE; postDelayed({ if (shownId == id && logo.visibility != VISIBLE) title.visibility = VISIBLE }, 350) }
         }
         a.value = 0.35f; a.target = 1f; clock.add(this)
     }

@@ -29,8 +29,6 @@ import com.eppletv.launcher.ui.style
 class SetupFlow(private val nav: Nav, private val host: Host) {
     interface Host {
         fun isDefaultHome(): Boolean
-        /** Opens the system's own Home-screen choice; false when this TV offers none to apps. */
-        fun requestDefaultHome(): Boolean
         fun setupFinished(changedKeys: Boolean)
         fun setupClosed(changedKeys: Boolean)
         /** Pictures were added to the Home wallpapers from the phone. */
@@ -44,7 +42,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     /** Views behind setup: they cannot take focus while setup is open (OK must never reach the top row behind it). */
     var behind: List<View> = emptyList()
         set(v) { field = v; block(active) }
-    private fun block(on: Boolean) = behind.forEach { (it as? android.view.ViewGroup)?.descendantFocusability = if (on) android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS else android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS; if (it !is android.view.ViewGroup) it.isFocusable = !on }
+    private fun block(on: Boolean) = behind.forEach { (it as? android.view.ViewGroup)?.descendantFocusability = if (on) android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS else android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS; if (it !is android.view.ViewGroup || it is ClockPill) it.isFocusable = !on }
     private val column = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
     private val stepLabel = TextView(ctx).apply { style(Txt.CAPTION, l.u, Colors.TEXT_DIM) }
     private val title = TextView(ctx).apply { style(Txt.HERO, l.u) }
@@ -65,6 +63,8 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     private var phoneMode = false
     /** Opened straight to the phone screen (Settings > Wallpapers): leaving it closes setup. */
     private var phoneOnly = false
+    /** Providers step: the user chose to type keys with the remote instead of using the phone. */
+    private var typeOnTv = false
     private val phone by lazy {
         PhoneLink(ctx, nav.content.net, nav.wallpapers) { if (phoneMode) render() }.apply {
             onSaved = { s -> if (s.check.ok) { checks[s.key] = s.check; changedKeys = true } }
@@ -92,10 +92,15 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     /** Opens setup at the saved step (first launch) or at [at]; [one] = just that step, from Settings. */
     fun start(at: Int = state.getInt("step", 0), one: Boolean = false) {
-        single = one; changedKeys = false; editing = null
+        single = one; changedKeys = false; editing = null; typeOnTv = false; phoneOnly = false
         step = at.coerceIn(0, 4)
         view.visibility = View.VISIBLE; block(true)
-        render()
+        enter()
+    }
+
+    /** Shows the current step; the providers step opens straight on the phone QR code with a fresh code. */
+    private fun enter() {
+        if (step == 1 && !typeOnTv) { phoneMode = true; render(); phone.start() } else render()
     }
 
     /** Opens only the phone screen (from Settings), with a fresh code. */
@@ -109,8 +114,13 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     /** BACK: closes the key editor, then goes to the previous step. On the first step it does nothing (setup must finish). */
     fun back(): Boolean {
-        if (phoneMode) { leavePhone(); if (phoneOnly) close() else render(); return true }
+        if (phoneMode) {
+            leavePhone()
+            when { phoneOnly || single -> close(); step > 0 -> go(step - 1); else -> render() }
+            return true
+        }
         if (editing != null) { editing = null; render(); return true }
+        if (typeOnTv) { typeOnTv = false; enter(); return true }
         if (single) { close(); return true }
         if (step > 0) { go(step - 1) }
         return true
@@ -119,7 +129,10 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     /** The user returned from the system's Home-screen choice. */
     fun refresh() { if (active && step == 3 && editing == null) render() }
 
-    private fun go(n: Int) { step = n; if (!single) state.edit().putInt("step", n).apply(); render() }
+    private fun go(n: Int) {
+        if (step == 1 && n != 1) { leavePhone(); typeOnTv = false }
+        step = n; if (!single) state.edit().putInt("step", n).apply(); enter()
+    }
 
     private fun close() {
         leavePhone(); phoneOnly = false
@@ -132,7 +145,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     private fun photosSeen() { if (phone.photosTotal > 0) { phone.photosTotal = 0; host.wallpapersAdded() } }
 
     /** The TV left the foreground: stop listening; the user starts a new code when they return. */
-    fun pause() { if (phoneMode) { leavePhone(); render() } }
+    fun pause() { if (phoneMode) { phone.stop(); view.removeCallbacks(tick); view.keepScreenOn = false; render() } }
 
     private fun leavePhone() {
         phoneMode = false
@@ -185,14 +198,14 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             1 -> {
                 title.text = "Content Providers"
                 body.text = "Epple TV uses these services for artwork, new releases and trends. Keys are encrypted on this TV and only the last four characters are ever shown. Skip any you don't have."
-                first = row("Set up with your phone", "Scan a code") { phoneMode = true; render(); phone.start() }
+                first = row("Use your phone instead", "Scan a code") { typeOnTv = false; enter() }
                 Credentials.Key.values().forEach { k ->
                     val r = row(k.label, status(k)) { editing = k; render() }
                     if (first == null) first = r
                 }
                 note("TMDB powers Movies, TV Shows, Search and details. Without it those sections stay empty.")
                 if (single) button("Done", primary = true) { close() }
-                else { button("Back") { go(0) }; button(if (Credentials.hasAny(Credentials.Key.TMDB)) "Continue" else "Skip for Now", primary = true) { go(2) } }
+                else { button("Back") { typeOnTv = false; enter() }; button(if (Credentials.hasAny(Credentials.Key.TMDB)) "Continue" else "Skip for Now", primary = true) { go(2) } }
             }
             2 -> {
                 title.text = "What You Watch"
@@ -203,19 +216,24 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
                 val region = row(Prefs.REGION.label, Prefs.REGION.options[nav.prefs.get(Prefs.REGION)]) {}
                 region.setOnClickListener { changedKeys = true; nav.prefs.put(Prefs.REGION, (nav.prefs.get(Prefs.REGION) + 1) % Prefs.REGION.options.size); region.value = Prefs.REGION.options[nav.prefs.get(Prefs.REGION)] }
                 note("Languages")
-                languageChips()
+                val lastRow = languageChips()
                 if (single) button("Done", primary = true) { close() } else { button("Back") { go(1) }; button("Continue", primary = true) { go(3) } }
+                // Down from the last row of languages goes to the buttons (the platform's search misses them).
+                val target = buttons.getChildAt(buttons.childCount - 1)
+                if (target.id == View.NO_ID) target.id = View.generateViewId()
+                lastRow.forEach { it.nextFocusDownId = target.id }
             }
             3 -> {
                 title.text = "Home Screen"
                 val isHome = host.isDefaultHome()
-                body.text = if (isHome) "Epple TV is your Home screen. The Home button on your remote brings you here."
-                    else "Epple TV can open when you press the Home button on your remote. Android asks you to confirm this on its own screen; Epple TV never changes it by itself. You can keep Google TV as your Home screen and open Epple TV from your apps instead."
-                note(if (isHome) "✓  Epple TV is the default Home screen" else "Current Home screen: the TV's own launcher", if (isHome) 0xFF7CE38B.toInt() else Colors.TEXT_DIM)
-                if (!isHome) first = button("Make Epple TV the Home Screen", primary = true) {
-                    if (!host.requestDefaultHome()) {
-                        note("This TV doesn't let apps offer a Home-screen choice. On Google TV this setting is managed by the system; " +
-                            "you can still open Epple TV from your apps row.", 0xFFFFB86B.toInt())
+                body.text = if (isHome) "Epple TV is your launcher. The Home button on your remote brings you here."
+                    else "Epple TV can be the TV's launcher, so the Home button opens it. To do that it turns off the Google TV home screen " +
+                        "(it stays installed) and asks the TV to allow debugging once. You can switch back any time in Epple TV's settings."
+                note(if (isHome) "✓  Epple TV is the launcher" else "Current launcher: the TV's own", if (isHome) 0xFF7CE38B.toInt() else Colors.TEXT_DIM)
+                if (!isHome) first = button("Use Epple TV as Launcher", primary = true) {
+                    val line = note("Starting…", 0xFFFFB86B.toInt())
+                    nav.content.run({ nav.launcher.useEpple { m -> view.post { line.text = m } } ?: "" }) { err ->
+                        if (err.isNullOrEmpty()) render() else { line.setTextColor(0xFFFF8A80.toInt()); line.text = err }
                     }
                 }
                 button("Back") { go(2) }
@@ -227,7 +245,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
                 body.text = "Your choices are saved. You can change everything later in Settings, including your provider keys, or run this setup again."
                 note("Providers connected: ${Credentials.connected()} of 4")
                 note("Indian languages: " + nav.prefs.langs.let { l -> if (l.isEmpty()) "none (Hollywood only)" else l.joinToString(", ") { Catalog.languageName(it) } })
-                note("Home screen: " + if (host.isDefaultHome()) "Epple TV" else "the TV's own launcher")
+                note("Launcher: " + if (host.isDefaultHome()) "Epple TV" else "the TV's own")
                 button("Back") { go(3) }
                 first = button("Start Epple TV", primary = true) { finish() }
             }
@@ -237,7 +255,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     /** Phone setup: the QR code on the left, what is happening on the right. Returns the view to focus. */
     private fun renderPhone(): View? {
-        title.text = if (phoneOnly) "Add from Your Phone" else "Set Up with Your Phone"
+        title.text = if (phoneOnly) "Add from Your Phone" else "Content Providers"
         body.text = "Scan the code with your phone's camera. Your phone must be on the same Wi-Fi as this TV. " +
             "On your phone you can enter provider keys and add pictures for the Home screen; they go straight to this TV over your home network."
         val p = phone.phase
@@ -261,7 +279,8 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         content.addView(side, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         var focus: View? = null
         when (p) {
-            PhoneLink.Phase.IDLE, PhoneLink.Phase.STARTING -> line("Starting…")
+            PhoneLink.Phase.IDLE -> line("Choose New Code to show a code.")
+            PhoneLink.Phase.STARTING -> line("Starting…")
             PhoneLink.Phase.NO_NETWORK -> line("This TV isn't on a Wi-Fi or Ethernet network. Connect it, then choose New Code.", orange)
             PhoneLink.Phase.FAILED -> line("Phone setup couldn't start on this network. Choose New Code to try again.", orange)
             PhoneLink.Phase.WAITING -> {
@@ -293,7 +312,16 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             val again = button("New Code") { phone.start() }
             if (p != PhoneLink.Phase.PAIRED && p != PhoneLink.Phase.WAITING) focus = again
         }
-        val done = button(if (p == PhoneLink.Phase.PAIRED) "Done" else "Back") { leavePhone(); if (phoneOnly) close() else render() }
+        val done = if (phoneOnly) button(if (p == PhoneLink.Phase.PAIRED) "Done" else "Back") { leavePhone(); close() }
+        else {
+            // Providers step: keys are optional, so the step can always be skipped or finished from here.
+            if (p != PhoneLink.Phase.CONFIRMING) button("Type on TV") { typeOnTv = true; leavePhone(); render() }
+            if (single) button("Done", primary = true) { leavePhone(); close() }
+            else {
+                button("Back") { go(0) }
+                button(if (Credentials.hasAny(Credentials.Key.TMDB)) "Continue" else "Skip for Now", primary = true) { go(2) }
+            }
+        }
         if (focus == null) focus = done
         view.keepScreenOn = phone.live || p == PhoneLink.Phase.STARTING
         view.removeCallbacks(tick)
@@ -313,7 +341,9 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         return android.graphics.Bitmap.createBitmap(pixels, px, px, android.graphics.Bitmap.Config.ARGB_8888)
     }
 
-    private fun languageChips() {
+    /** Returns the chips of the last row. */
+    private fun languageChips(): List<View> {
+        val last = ArrayList<View>()
         val chosen = nav.prefs.langs.toMutableSet()
         // Two rows of four, so every name fits; a checkmark marks the chosen languages.
         Catalog.INDIAN.chunked(4).forEach { line ->
@@ -329,8 +359,10 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
                 }
                 wrap.addView(chip, LinearLayout.LayoutParams(WRAP_CONTENT, l.px(58)).apply { if (wrap.childCount > 0) leftMargin = l.px(12) })
             }
+            last.clear(); for (k in 0 until wrap.childCount) last.add(wrap.getChildAt(k))
             content.addView(wrap, LinearLayout.LayoutParams(WRAP_CONTENT, l.px(58)).apply { topMargin = l.px(12) })
         }
+        return last
     }
 
     private fun status(k: Credentials.Key): String {

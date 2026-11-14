@@ -70,6 +70,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override lateinit var user: UserLibrary; private set
     override lateinit var prefs: Prefs; private set
     override lateinit var wallpapers: Wallpapers; private set
+    override lateinit var launcher: com.eppletv.launcher.system.LauncherMode; private set
     private var wallBmp: Bitmap? = null
     private var wallGen = 0
     private lateinit var repo: AppRepository
@@ -79,7 +80,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private lateinit var homeLayer: FrameLayout
     private lateinit var sectionLayer: FrameLayout
     private lateinit var tabs: TabBar
-    private lateinit var pill: Pill
+    private lateinit var pill: ClockPill
     private lateinit var panel: MenuPanel
     private lateinit var empty: TextView
     private lateinit var anchor: View
@@ -92,7 +93,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override var apps: List<AppEntry> = emptyList(); private set
     private var zone = Zone.TABS                     // Epple TV opens on the Home tab, over a wallpaper
     private var section = 0
-    private var tabIdx = 0                          // 0..6 tabs, 7 = the clock (Control Center)
+    private var tabIdx = 0                          // 0..5 tabs, 6 = the clock (Control Center)
     private val screens = arrayOfNulls<Screen>(7)
     private val details = ArrayList<DetailScreen>()
     private var detailReturn = Zone.SECTION
@@ -155,6 +156,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
         wallpapers = Wallpapers(this)
+        launcher = com.eppletv.launcher.system.LauncherMode(this)
+        guardCrashes()
         Type.init(this); Type.scale = prefs.textScale; Type.boldDelta = if (prefs.boldText) 150 else 0
         Sources.override = prefs.regionCode
         Sources.indianLangs = prefs.langs
@@ -185,11 +188,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         feed = HomeFeed(this)
 
         tabs = TabBar(this, l, clock, TAB_NAMES, TAB_ICONS, hero.backdrop).apply { alpha = 0f; visibility = View.INVISIBLE }
-        root.addView(tabs, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(108), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = l.px(36) })
+        root.addView(tabs, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(80), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = l.px(44) })
 
-        pill = Pill(this, "", l.pxf(Txt.META.px), l.pxf(30f), l.px(28), clock, Colors.GLASS, Colors.WHITE, 0.06f)
+        pill = ClockPill(this, l, clock, hero.backdrop)
         pill.setOnClickListener { openControlCenter() }
-        root.addView(pill, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(60), Gravity.TOP or Gravity.END).apply { topMargin = l.px(56); rightMargin = l.px(64) })
+        root.addView(pill, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(60), Gravity.TOP or Gravity.END).apply { topMargin = l.px(54); rightMargin = l.px(64) })
 
         empty = TextView(this).apply { setText(R.string.no_apps); style(Txt.ROW, l.u, Colors.TEXT_DIM); visibility = View.GONE }
         root.addView(empty, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
@@ -211,6 +214,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         // Home tab selected, its wallpaper behind: posters appear only once a streaming app is focused.
         tabsP.target = 1f; animateShell()
         showWallpaper(); nextWallpaper()
+        // Opened from the Epple TV icon in the TV's apps (not the Home button): its settings first, as a setup app would.
+        if (fromAppIcon(intent) && setup.done) main.post { goTab(SETTINGS) }
         val repeat = if (BuildConfig.DEBUG) intent.getIntExtra("repeat", 1) else 1
         val artScale = l.px(300) / l.tileW.toFloat()     // art is rendered larger than the tile, so it stays sharp when focused
         repo = AppRepository(this, l.px(300), l.px(169), { onApps(it) }, repeat,
@@ -269,7 +274,41 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             2 -> SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
             else -> DateFormat.getTimeFormat(this).format(now)
         }
-        pill.text = timeText; pill.contentDescription = getString(R.string.cc_label, timeText)
+        pill.label = timeText; pill.contentDescription = getString(R.string.cc_label, timeText)
+    }
+
+    // ---- launcher mode ----
+
+    private fun fromAppIcon(i: Intent?) = i?.hasCategory(Intent.CATEGORY_LEANBACK_LAUNCHER) == true || i?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
+
+    /** Crashes are counted; three in five minutes while Epple TV is the launcher hand Home back to the TV's own. */
+    private fun guardCrashes() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e -> try { launcher.noteCrash() } catch (_: Throwable) {}; previous?.uncaughtException(t, e) }
+        if (launcher.crashLoop()) Thread({ launcher.useDefault {}; launcher.clearCrashes() }, "epple-recover").start()
+    }
+
+    /** Runs a launcher switch with its progress in a panel; [epple] = Epple TV as the launcher, else the TV's default. */
+    private var switching = false
+    override fun switchLauncher(epple: Boolean, done: (() -> Unit)?) {
+        if (switching) return
+        switching = true
+        val title = TextView(this).apply { text = if (epple) "Setting Epple TV as Launcher" else "Restoring the TV's Launcher"; style(Txt.TITLE, l.u) }
+        val line = TextView(this).apply { style(Txt.META, l.u, Colors.TEXT_DIM); isSingleLine = false; maxLines = 5; setPadding(0, l.px(14), 0, 0); text = "Starting…" }
+        panel.show(listOf(title, line), emptyList(), atCorner = false)
+        line.isFocusable = true; line.requestFocus()                 // OK while it runs must not reach the row behind
+        content.run({ (if (epple) launcher.useEpple { m -> main.post { line.text = m } } else launcher.useDefault { m -> main.post { line.text = m } }) ?: "" }) { err ->
+            switching = false
+            val ok = err.isNullOrEmpty()
+            val msg = if (ok) (if (epple) "Epple TV is now your launcher. The Home button brings you here."
+                else "The TV's own launcher is back on the Home button.") else err!!
+            if (ok) launcher.clearCrashes()
+            panel.show(listOf(TextView(this).apply { text = if (ok) "Done" else "Not Changed"; style(Txt.TITLE, l.u) },
+                TextView(this).apply { text = msg; style(Txt.META, l.u, Colors.TEXT_DIM); isSingleLine = false; maxLines = 6; setPadding(0, l.px(14), 0, 0) }),
+                listOf("OK" to {}), atCorner = false)
+            (screens[SETTINGS] as? SettingsScreen)?.show()
+            done?.invoke()
+        }
     }
 
     // ---- Home wallpaper ----
@@ -286,7 +325,10 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     /** Loads another wallpaper off the main thread (taking in any copied from a computer first) and shows it on Home. */
     override fun nextWallpaper(newest: Boolean) {
         val gen = ++wallGen
-        content.run({ wallpapers.importDropped(); val f = if (newest) wallpapers.newest() else wallpapers.pick(); f?.let { wallpapers.load(it) } ?: neutral }) { b ->
+        content.run({
+            try { wallpapers.importDropped(); val f = if (newest) wallpapers.newest() else wallpapers.pick(); f?.let { wallpapers.load(it) } ?: neutral }
+            catch (e: Throwable) { android.util.Log.w("EppleHome", "wallpaper failed: ${e.javaClass.simpleName}"); throw e }
+        }) { b ->
             if (gen != wallGen) return@run
             wallBmp = if (b === neutral) null else b         // the previous one is left to the GC: a backdrop layer may still hold it
             if (section == 0 && hero.resting) showWallpaper()
@@ -494,18 +536,6 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         return ri?.activityInfo?.packageName == packageName
     }
 
-    /** Android's own confirmation (RoleManager), else the system Home settings screen; never changed silently. */
-    override fun requestDefaultHome(): Boolean {
-        val rm = getSystemService(android.app.role.RoleManager::class.java)
-        if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME)) {
-            val i = rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_HOME)
-            if (packageManager.resolveActivity(i, 0) != null) { startActivityForResult(i, REQ_HOME); return true }
-        }
-        val s = Intent(Settings.ACTION_HOME_SETTINGS)
-        if (packageManager.resolveActivity(s, 0) != null) { startActivityForResult(s, REQ_HOME); return true }
-        return false
-    }
-
     override fun setupFinished(changedKeys: Boolean) { recreate() }       // providers, region and languages apply on a fresh start
     override fun setupClosed(changedKeys: Boolean) { if (changedKeys) recreate() else restoreFocus() }
 
@@ -520,6 +550,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     /** The Home button while Epple TV is the Home screen: back to Home's top row. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (fromAppIcon(intent) && !setup.active) { if (panel.open) panel.hide(); if (zone == Zone.FEED) leaveFeed(); goTab(SETTINGS); return }
         if (intent.hasCategory(Intent.CATEGORY_HOME) && !setup.active) {
             if (panel.open) panel.hide()
             while (details.isNotEmpty()) sectionLayer.removeView(details.removeAt(details.size - 1).view)
@@ -574,7 +605,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         )
         val quick = listOf<Pair<String, () -> Unit>>(
             "Search" to { goTab(5) },
-            "Epple TV Settings" to { goTab(6) },
+            "Epple TV Settings" to { goTab(SETTINGS) },
             "Start Screensaver" to { startSaver() },
         )
         val system = listOf(
@@ -653,7 +684,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
                 dy > 0 -> { main.removeCallbacks(switchTab); if (tabIdx < TAB_NAMES.size) showSection(tabIdx); intoSection() }
             }
             Zone.FEED -> if (!feed.key(dx, dy)) enterContent()
-            Zone.SECTION -> if (screens[section]?.key(dx, dy) == false) enterTabs(section)
+            Zone.SECTION -> if (screens[section]?.key(dx, dy) == false && section < TAB_NAMES.size) enterTabs(section)
             Zone.DETAIL -> details.lastOrNull()?.key(dx, dy)
         }
         return true
@@ -669,7 +700,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     /** BACK walks up: details -> section -> tab bar -> Home's top row; at the top row it leaves the app. */
     private fun handleBack(): Boolean = when (zone) {
         Zone.DETAIL -> { closeDetail(); true }
-        Zone.SECTION -> { if (screens[section]?.back() != true) enterTabs(section); true }
+        Zone.SECTION -> { if (screens[section]?.back() != true) { if (section < TAB_NAMES.size) enterTabs(section) else { showSection(0); enterTabs(0) } }; true }
         Zone.FEED -> { if (!feed.back()) enterContent(); true }
         Zone.TABS -> if (section != 0) { showSection(0); enterTabs(0); true } else false
         Zone.CONTENT -> { if (!page.atTop()) { dirX = 0; dirY = -1; page.toTop() } else enterTabs(0); true }
@@ -677,8 +708,10 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     private companion object {
-        val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Library", "Apps", "Search", "Settings")
-        val TAB_ICONS = listOf(TabIcons.HOME, TabIcons.MOVIES, TabIcons.TV, TabIcons.LIBRARY, TabIcons.APPS, TabIcons.SEARCH, TabIcons.SETTINGS)
+        // Settings is not a tab: it opens from the Epple TV icon in the TV's apps, and from Control Center (SETTINGS).
+        val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Library", "Apps", "Search")
+        val TAB_ICONS = listOf(TabIcons.HOME, TabIcons.MOVIES, TabIcons.TV, TabIcons.LIBRARY, TabIcons.APPS, TabIcons.SEARCH)
+        const val SETTINGS = 6
         const val REQ_HOME = 41
     }
 }
