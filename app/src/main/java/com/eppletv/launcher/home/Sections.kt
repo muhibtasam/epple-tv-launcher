@@ -415,7 +415,7 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
             if (nav.profile.exists()) "Set" else "None" }) { nav.profileMenu() }
         header("Typography")
         choice(Prefs.TEXT, "Makes every label, title and description larger for easier reading from the sofa.")
-        choice(Prefs.WEIGHT, "Uses a heavier weight of the Inter typeface everywhere.")
+        choice(Prefs.WEIGHT, "Uses heavier weights of every typeface.")
         header("Content")
         choice(Prefs.REGION, "Which country's streaming catalogues and availability are shown. Automatic uses this TV's region (${Sources.region}).")
         choice(Prefs.INDIAN, "The mix of Bollywood and regional Indian titles against Hollywood titles in the top row's showcases.")

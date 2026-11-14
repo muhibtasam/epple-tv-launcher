@@ -225,7 +225,7 @@ class ClockPill(ctx: Context, private val l: Layout, private val clock: FrameClo
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val badge = Paint(Paint.ANTI_ALIAS_FLAG)
     private val glyph = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = l.pxf(2.6f); strokeCap = Paint.Cap.ROUND; color = Colors.WHITE }
-    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(25f) * Type.scale; typeface = Type.of(600) }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(25f) * Type.scale; typeface = Type.of(600, Type.Face.NUM) }
     private val rect = RectF()
     private val path = Path()
     private val padL = l.pxf(22f); private val gap = l.pxf(14f); private val inset = l.pxf(7f)

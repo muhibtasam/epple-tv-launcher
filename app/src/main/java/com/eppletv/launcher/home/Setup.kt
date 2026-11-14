@@ -292,7 +292,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             }
             PhoneLink.Phase.CONFIRMING -> {
                 line("A phone wants to connect", Colors.WHITE, Txt.TITLE)
-                line(phone.code.orEmpty().toCharArray().joinToString("  "), Colors.WHITE, Txt.HERO)
+                line(phone.code.orEmpty().toCharArray().joinToString("  "), Colors.WHITE, Txt.HERO).apply { typeface = com.eppletv.launcher.ui.Type.of(600, com.eppletv.launcher.ui.Type.Face.NUM) }
                 line("Allow it only if your phone shows the same code.")
                 countdown = line("")
                 focus = button("Allow", primary = true) { phone.allow() }
