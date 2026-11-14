@@ -63,8 +63,11 @@ class Wallpapers(ctx: Context) {
     }
 
     /** Takes in pictures copied from a computer into the app's external folder, then removes the copies. */
-    fun importDropped(): Int {
+    @Synchronized fun importDropped(): Int {
         val d = drop ?: return 0
+        // scripts/wallpapers.sh --replace leaves this marker: the copied pictures replace all the current ones.
+        val marker = File(d, ".replace")
+        if (marker.exists()) { removeAll(); marker.delete() }
         var n = 0
         for (f in d.listFiles() ?: return 0) {
             val ext = f.name.substringAfterLast('.', "").lowercase()

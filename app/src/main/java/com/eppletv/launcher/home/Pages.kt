@@ -175,15 +175,59 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
     val topAlpha: Float get() = if (top.visibility == View.VISIBLE) top.alpha else 0f
     val bottomVisible: Boolean get() = bottom.visibility == View.VISIBLE
 
-    fun show(b: Bitmap) {
-        if (b === current) return
+    /** [drift]: a slow zoom in and out (Home's own wallpapers); everything else stands still. */
+    fun show(b: Bitmap, drift: Boolean = false) {
+        if (b === current) { drift(drift); return }
         current = b
-        if (bottom.drawable == null) { bottom.setImageBitmap(b); listeners.forEach { it() }; return }
+        if (bottom.drawable == null) { bottom.setImageBitmap(b); listeners.forEach { it() }; drift(drift); return }
         if (topIsFront) { bottom.setImageBitmap(b); fade.target = 0f; topIsFront = false }
         else { top.setImageBitmap(b); fade.target = 1f; topIsFront = true }
         bottom.visibility = View.VISIBLE; top.visibility = View.VISIBLE
+        // The incoming layer starts at its natural size; the outgoing one keeps its zoom while it fades out.
+        front.animate().cancel(); front.scaleX = 1f; front.scaleY = 1f
+        drifting = false; drift(drift)
         clock.add(this)
     }
+
+    private val front: ImageView get() = if (topIsFront) top else bottom
+    private var drifting = false
+    private var driftPaused = false
+    private var driftT = 0f
+    private var driftFrame = 0
+
+    /**
+     * Ken Burns drift on Home's wallpaper: the front layer zooms smoothly between 100 % and 108 % and back, one full
+     * cycle every [DRIFT_PERIOD_S] seconds. Only the layer's transform changes (no redraw of the picture), and it is
+     * applied every second frame: the whole screen recomposites when the backdrop moves, so the drift runs at 30 fps,
+     * half the idle cost of 60 (the motion is under a pixel per frame either way).
+     */
+    private val drifter = object : FrameClock.Tick {
+        override fun tick(dt: Float): Boolean {
+            if (!drifting || driftPaused) return false
+            driftT += dt
+            if (driftFrame++ % 2 == 0) {
+                val s = 1f + (DRIFT_SCALE - 1f) * 0.5f * (1f - kotlin.math.cos(2.0 * Math.PI * driftT / DRIFT_PERIOD_S).toFloat())
+                front.scaleX = s; front.scaleY = s
+            }
+            return true
+        }
+    }
+
+    fun drift(on: Boolean) {
+        if (on == drifting) return
+        drifting = on
+        if (on) { driftT = 0f; if (!driftPaused) clock.add(drifter) }
+        else front.animate().scaleX(1f).scaleY(1f).setDuration(700).start()
+    }
+
+    /** The window is hidden (another app is in front): stop the drift, resume it on return. */
+    fun pauseDrift(paused: Boolean) {
+        if (paused == driftPaused) return
+        driftPaused = paused
+        if (!paused && drifting) clock.add(drifter)
+    }
+
+    private companion object { const val DRIFT_PERIOD_S = 44f; const val DRIFT_SCALE = 1.08f }
 
     override fun tick(dt: Float): Boolean {
         fade.step(dt); top.alpha = fade.value; listeners.forEach { it() }
@@ -269,7 +313,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         want = null; wantLogo = null; shown = null
         dots.set(0, 0)
         layers.forEach { it.a.target = 0f }
-        backdrop.show(b)
+        backdrop.show(b, drift = true)
         textVis.target = 0f; clock.add(this)
     }
 

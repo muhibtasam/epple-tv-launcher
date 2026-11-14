@@ -23,7 +23,7 @@ class ConfigServerTest {
             saved += fields
             return fields.keys.map { ConfigServer.Result(it, true, "Connected") }
         }
-        override fun photo(bytes: ByteArray): ConfigServer.Result { photos += String(bytes); return ConfigServer.Result("photo", true, "Added to Home") }
+        override fun photo(bytes: ByteArray, kind: String): ConfigServer.Result { photos += (if (kind == "profile") "P:" else "") + String(bytes); return ConfigServer.Result("photo", true, "Added to Home") }
         override fun stopped(error: Throwable?) { stopped.countDown() }
     }
     private val photos = mutableListOf<String>()
@@ -81,6 +81,12 @@ class ConfigServerTest {
         assertNotNull(field(r.body, "nonce"))
         assertEquals(409, http("POST", "/s/photo", h, "again")!!.status)
         assertEquals(1, photos.size)
+    }
+
+    @Test fun profileKindIsPassedThrough() {
+        val (secret, nonce) = paired()
+        assertEquals(200, http("POST", "/s/photo", jpeg + ("X-Epple-Session" to secret) + ("X-Epple-Nonce" to nonce) + ("X-Epple-Kind" to "profile"), "face")!!.status)
+        assertEquals(listOf("P:face"), photos)
     }
 
     @Test fun photoNeedsJpegTypeAndSecret() {

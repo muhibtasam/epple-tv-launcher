@@ -28,14 +28,15 @@ import java.util.concurrent.Executors
  * Validated, not assumed: an intent is used only if it is restricted to the intended package AND that installed package
  * declares an activity for it. Otherwise the app itself opens (never a browser or store).
  */
-class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey: String, region: String) {
+class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey_: () -> String, private val region: () -> String) {
+    private val watchmodeKey get() = watchmodeKey_()
     private val app = ctx.applicationContext
     private val pm = app.packageManager
     private val main = Handler(Looper.getMainLooper())
     private val prefs = app.getSharedPreferences("title-links", Context.MODE_PRIVATE)
     private var ioUsed = false
     private val io by lazy { ioUsed = true; Executors.newSingleThreadExecutor { r -> Thread(r, "epple-links").apply { priority = Thread.NORM_PRIORITY - 1 } } }
-    private val regions = listOf(region, "IN", "US")          // Watchmode has no PK; India's links use the same title ids
+    private val regions get() = listOf(region(), "IN", "US")          // Watchmode has no PK; India's links use the same title ids
     private var busy = false
     @Volatile private var pauseUntil = 0L
 

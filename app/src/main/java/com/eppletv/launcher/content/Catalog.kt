@@ -24,10 +24,12 @@ class Details(
  * Every request goes through [Net.cached] (disk cache with TTL, stale copy on failure, per-key de-duplication),
  * using the same cache keys as the home showcase where the requests are the same, so nothing is fetched twice.
  */
-class Catalog(private val net: Net, private val key: String, private val region: () -> String) {
+/** [key_] is read on every request, so a TMDB key changed in Settings applies at once. */
+class Catalog(private val net: Net, private val key_: () -> String, private val region: () -> String) {
+    private val key get() = key_()
     val ready get() = key.isNotEmpty()
-    private val v4 = key.length > 40
-    private val headers = if (v4) mapOf("Authorization" to "Bearer $key") else emptyMap()
+    private val v4 get() = key.length > 40
+    private val headers get() = if (v4) mapOf("Authorization" to "Bearer $key") else emptyMap()
     private fun url(path: String) = "https://api.themoviedb.org/3/$path${if ('?' in path) "&" else "?"}language=en-US" + if (v4) "" else "&api_key=$key"
     private fun get(cacheKey: String, ttlH: Int, path: String) = JSONObject(net.cached("tmdb-$cacheKey", ttlH * HOUR, url(path), headers))
 

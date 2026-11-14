@@ -35,10 +35,10 @@ object Sources {
                 Apps.PRIME to Service("Prime Video", watchmode = "26", tmdb = "119|9"),
                 Apps.CRUNCHYROLL to Service("Crunchyroll", watchmode = "80,79", tmdb = "283", indian = false),
             ),
-            Keys(Credentials.get(Credentials.Key.TMDB), Credentials.get(Credentials.Key.WATCHMODE), Credentials.get(Credentials.Key.TRAKT)), region,
+            Keys(), { region },
         ),
-        YouTube(Credentials.get(Credentials.Key.YOUTUBE), region),
-        YouTubeChannel(Apps.TAPMAD, "tapmad", TAPMAD_UPLOADS, Credentials.get(Credentials.Key.YOUTUBE)),
+        YouTube({ Credentials.get(Credentials.Key.YOUTUBE) }, { region }),
+        YouTubeChannel(Apps.TAPMAD, "tapmad", TAPMAD_UPLOADS) { Credentials.get(Credentials.Key.YOUTUBE) },
     )
     val usesTmdb get() = Credentials.hasAny(Credentials.Key.TMDB)
 
@@ -78,7 +78,12 @@ class Cinemeta(private val pkgs: Set<String>) : ContentSource {
     }
 }
 
-class Keys(val tmdb: String, val watchmode: String, val trakt: String)
+/** The provider keys, read when used: a key changed in Settings applies to the next request, without a restart. */
+class Keys {
+    val tmdb get() = Credentials.get(Credentials.Key.TMDB)
+    val watchmode get() = Credentials.get(Credentials.Key.WATCHMODE)
+    val trakt get() = Credentials.get(Credentials.Key.TRAKT)
+}
 class Service(val name: String, val watchmode: String, val tmdb: String, val indian: Boolean = true)
 
 /**
@@ -90,13 +95,15 @@ class Service(val name: String, val watchmode: String, val tmdb: String, val ind
  *  Trakt trending (worldwide) only boosts titles already in 1 or 2. TMDB supplies metadata and backdrops.
  * Each title gets a weight from popularity, release recency and trending, and an origin ("in" or "intl").
  */
-class Showcase(private val services: Map<String, Service>, private val keys: Keys, private val region: String) : ContentSource {
+class Showcase(private val services: Map<String, Service>, private val keys: Keys, private val region_: () -> String) : ContentSource {
+    private val region get() = region_()
     override val key = "showcase2"
-    override val ready = keys.tmdb.isNotEmpty()
+    override val uses = setOf(Credentials.Key.TMDB, Credentials.Key.WATCHMODE, Credentials.Key.TRAKT)
+    override val ready get() = keys.tmdb.isNotEmpty()
     override fun handles(pkg: String) = pkg in services
 
-    private val v4 = keys.tmdb.length > 40
-    private val tmdbHeaders = if (v4) mapOf("Authorization" to "Bearer ${keys.tmdb}") else emptyMap()
+    private val v4 get() = keys.tmdb.length > 40
+    private val tmdbHeaders get() = if (v4) mapOf("Authorization" to "Bearer ${keys.tmdb}") else emptyMap()
     private fun tmdbUrl(path: String) = "https://api.themoviedb.org/3/$path${if ('?' in path) "&" else "?"}language=en-US" +
         if (v4) "" else "&api_key=${keys.tmdb}"
     private fun tmdb(net: Net, cacheKey: String, ttl: Long, path: String) = JSONObject(net.cached("tmdb-$cacheKey", ttl, tmdbUrl(path), tmdbHeaders))
@@ -234,9 +241,12 @@ class Showcase(private val services: Map<String, Service>, private val keys: Key
 }
 
 /** YouTube Data API v3, most popular videos in the region. Opens each video in the YouTube app. */
-class YouTube(private val apiKey: String, private val region: String) : ContentSource {
+class YouTube(private val key_: () -> String, private val region_: () -> String) : ContentSource {
+    private val region get() = region_()
+    private val apiKey get() = key_()
     override val key = "youtube2"
-    override val ready = apiKey.isNotEmpty()
+    override val uses = setOf(Credentials.Key.YOUTUBE)
+    override val ready get() = apiKey.isNotEmpty()
     override fun handles(pkg: String) = pkg == Apps.YOUTUBE
     override fun load(net: Net, pkg: String): List<ContentItem> {
         val items = JSONObject(net.cached("yt-popular-$region", 3 * HOUR,
@@ -246,9 +256,11 @@ class YouTube(private val apiKey: String, private val region: String) : ContentS
 }
 
 /** Latest uploads of an app's official YouTube channel (legitimate public source for apps with no catalogue API). */
-class YouTubeChannel(private val pkg: String, private val name: String, private val uploads: String, private val apiKey: String) : ContentSource {
+class YouTubeChannel(private val pkg: String, private val name: String, private val uploads: String, private val key_: () -> String) : ContentSource {
+    private val apiKey get() = key_()
     override val key = "ytchannel2"
-    override val ready = apiKey.isNotEmpty()
+    override val uses = setOf(Credentials.Key.YOUTUBE)
+    override val ready get() = apiKey.isNotEmpty()
     override fun handles(pkg: String) = pkg == this.pkg
     override fun load(net: Net, pkg: String): List<ContentItem> {
         val items = JSONObject(net.cached("yt-$uploads", 3 * HOUR,

@@ -70,9 +70,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override lateinit var user: UserLibrary; private set
     override lateinit var prefs: Prefs; private set
     override lateinit var wallpapers: Wallpapers; private set
+    override lateinit var profile: Profile; private set
     override lateinit var launcher: com.eppletv.launcher.system.LauncherMode; private set
     private var wallBmp: Bitmap? = null
     private var wallGen = 0
+    private var startedOnce = false
     private lateinit var repo: AppRepository
     private lateinit var titles: TitleLauncher
     private lateinit var hero: Hero
@@ -156,6 +158,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
         wallpapers = Wallpapers(this)
+        profile = Profile(this)
         launcher = com.eppletv.launcher.system.LauncherMode(this)
         guardCrashes()
         Type.init(this); Type.scale = prefs.textScale; Type.boldDelta = if (prefs.boldText) 150 else 0
@@ -168,8 +171,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         user = UserLibrary(this)
         content = ContentRepository(this, Sources.all(if (BuildConfig.DEBUG) intent.getStringExtra("cinemetaFor") else null), Scrim::paint)
         content.indianMode = prefs.get(Prefs.INDIAN)
-        catalog = Catalog(content.net, com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.TMDB)) { Sources.region }
-        titles = TitleLauncher(this, content.net, com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.WATCHMODE), Sources.region)
+        catalog = Catalog(content.net, { com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.TMDB) }) { Sources.region }
+        titles = TitleLauncher(this, content.net, { com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.WATCHMODE) }) { Sources.region }
         shadowBmp = makeShadow(l)
         neutral = neutralBackdrop()
 
@@ -214,6 +217,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         // Home tab selected, its wallpaper behind: posters appear only once a streaming app is focused.
         tabsP.target = 1f; animateShell()
         showWallpaper(); nextWallpaper()
+        content.run({ profile.load() ?: Unit }) { profileChanged() }
         // Opened from the Epple TV icon in the TV's apps (not the Home button): its settings first, as a setup app would.
         if (fromAppIcon(intent) && setup.done) main.post { goTab(SETTINGS) }
         val repeat = if (BuildConfig.DEBUG) intent.getIntExtra("repeat", 1) else 1
@@ -247,10 +251,15 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         })
         updateTime()
         resumed = true; restartRotation(); restartIdle()
+        hero.backdrop.pauseDrift(false)
+        // Pictures copied from a computer (scripts/wallpapers.sh) arrive while another app is in front: take them in now.
+        if (startedOnce) content.run({ wallpapers.importDropped() }) { n -> if ((n ?: 0) > 0) nextWallpaper(newest = true) }
+        startedOnce = true                                   // the first start's import is part of onCreate's pick
     }
 
     override fun onStop() {
         resumed = false; main.removeCallbacks(rotate); main.removeCallbacks(idle); saver.stop()
+        hero.backdrop.pauseDrift(true)
         setup.pause()                                        // phone setup stops listening when the TV leaves Epple TV
         unregisterReceiver(timeReceiver)
         super.onStop()
@@ -336,6 +345,15 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     override fun openPhone() { setup.startPhone() }
+    override fun profileChanged() { pill.avatar = profile.cached; (screens[SETTINGS] as? SettingsScreen)?.show() }
+
+    /** Control Center / Settings: the profile picture's choices. */
+    override fun profileMenu() {
+        val items = ArrayList<Pair<String, () -> Unit>>()
+        items.add("Add from Phone" to { openPhone() })
+        if (profile.exists()) items.add("Remove Picture" to { content.run({ profile.remove() }) { profileChanged() } })
+        menu("Profile Picture", items)
+    }
     override fun wallpapersAdded() { nextWallpaper(newest = true); (screens[6] as? SettingsScreen)?.show() }
 
     // ---- focus and zones ----
@@ -536,8 +554,35 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         return ri?.activityInfo?.packageName == packageName
     }
 
-    override fun setupFinished(changedKeys: Boolean) { recreate() }       // providers, region and languages apply on a fresh start
-    override fun setupClosed(changedKeys: Boolean) { if (changedKeys) recreate() else restoreFocus() }
+    override fun setupFinished(prefsChanged: Boolean, providers: Set<com.eppletv.launcher.content.Credentials.Key>) { applyChanges(prefsChanged, providers) }
+    override fun setupClosed(prefsChanged: Boolean, providers: Set<com.eppletv.launcher.content.Credentials.Key>) { applyChanges(prefsChanged, providers) }
+
+    /**
+     * Applies provider keys and content preferences changed in setup, without restarting: only the sources that use a
+     * changed key are reset (region or languages reset all), the top row reloads just those apps, and the TMDB-based
+     * sections (Movies, TV Shows, Search, Home's rows) are rebuilt the next time they open.
+     */
+    private fun applyChanges(prefsChanged: Boolean, providers: Set<com.eppletv.launcher.content.Credentials.Key>) {
+        if (!prefsChanged && providers.isEmpty()) { restoreFocus(); return }
+        if (prefsChanged) { Sources.override = prefs.regionCode; Sources.indianLangs = prefs.langs; content.indianMode = prefs.get(Prefs.INDIAN) }
+        val reset = content.invalidate(providers, all = prefsChanged)
+        if (prefsChanged || com.eppletv.launcher.content.Credentials.Key.TMDB in providers) dropCatalogScreens()
+        if (reset.isNotEmpty()) {
+            content.warm(library.pinned(apps).map { it.packageName })      // reloads only what was reset; the rest is cached
+            if (section == 0 && pending != null && zone != Zone.TABS) { main.removeCallbacks(applyPending); applyPending.run() }
+        }
+        (screens[SETTINGS] as? SettingsScreen)?.show()
+        restoreFocus()
+    }
+
+    /** Movies, TV Shows, Search and Home's rows are built from TMDB: forget them so they are built again when next opened. */
+    private fun dropCatalogScreens() {
+        for (i in intArrayOf(1, 2, 5)) {
+            if (i == section) continue
+            screens[i]?.let { it.hide(); sectionLayer.removeView(it.view) }; screens[i] = null
+        }
+        if (zone != Zone.FEED) { feed.hide(); sectionLayer.removeView(feed.view); feed = HomeFeed(this) }
+    }
 
     @Deprecated("Activity result API is not available without AndroidX")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -555,7 +600,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             if (panel.open) panel.hide()
             while (details.isNotEmpty()) sectionLayer.removeView(details.removeAt(details.size - 1).view)
             if (zone == Zone.FEED) leaveFeed()
-            showSection(0); enterTabs(0); nextWallpaper()
+            showSection(0); enterTabs(0)                    // the same wallpaper: a new one only when Epple TV starts
         }
     }
 
@@ -605,6 +650,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         )
         val quick = listOf<Pair<String, () -> Unit>>(
             "Search" to { goTab(5) },
+            "Profile Picture" to { profileMenu() },
             "Epple TV Settings" to { goTab(SETTINGS) },
             "Start Screensaver" to { startSaver() },
         )

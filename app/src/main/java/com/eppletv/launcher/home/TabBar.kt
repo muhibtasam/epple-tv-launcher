@@ -231,6 +231,15 @@ class ClockPill(ctx: Context, private val l: Layout, private val clock: FrameClo
     private val padL = l.pxf(22f); private val gap = l.pxf(14f); private val inset = l.pxf(7f)
     var label: String = ""
         set(v) { if (field != v) { field = v; requestLayout(); face.invalidate() } }
+    /** The profile picture inside the round badge; null shows the person glyph. */
+    var avatar: android.graphics.Bitmap? = null
+        set(v) {
+            field = v
+            avatarPaint.shader = v?.let { android.graphics.BitmapShader(it, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP) }
+            face.invalidate()
+        }
+    private val avatarPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val am = Matrix()
 
     init {
         isFocusable = true; clipChildren = false
@@ -257,6 +266,12 @@ class ClockPill(ctx: Context, private val l: Layout, private val clock: FrameClo
         // Profile badge: a grey disc with a simple person glyph.
         val d = h - 2 * inset; val cx = w - inset - d / 2f; val cy = h / 2f
         badge.shader = android.graphics.LinearGradient(cx, cy - d / 2f, cx, cy + d / 2f, 0xFFA3ABB8.toInt(), 0xFF5D6573.toInt(), Shader.TileMode.CLAMP)
+        val av = avatar
+        if (av != null && avatarPaint.shader != null) {
+            val k = d / av.width; am.setScale(k, k); am.postTranslate(cx - d / 2f, cy - d / 2f)
+            avatarPaint.shader.setLocalMatrix(am)
+            c.drawCircle(cx, cy, d / 2f, avatarPaint); return
+        }
         c.drawCircle(cx, cy, d / 2f, badge)
         val u = d / 24f
         c.drawCircle(cx, cy - 2.6f * u, 3.6f * u, glyph)

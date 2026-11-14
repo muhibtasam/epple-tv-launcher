@@ -399,9 +399,11 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         row("Home screen", "Which launcher the Home button opens. Epple TV turns off the Google TV home screen (it stays installed) " +
             "and asks this TV to allow debugging once; choosing the TV's default turns it back on.", {
             if (isHome()) "Epple TV" else "TV's default" }) {
+            // Only the change is offered, after "Keep" (first, so a stray OK changes nothing).
+            val home = isHome()
             nav.menu("Launcher", listOf(
-                "Use Epple TV as Launcher" to { nav.switchLauncher(true) },
-                "Use the TV's Default Launcher" to { nav.switchLauncher(false) }))
+                (if (home) "Keep Epple TV" else "Keep the TV's Launcher") to {},
+                if (home) "Use the TV's Default Launcher" to { nav.switchLauncher(false) } else "Use Epple TV as Launcher" to { nav.switchLauncher(true) }))
         }
         header("Appearance")
         choice(Prefs.CLOCK, "How the time is shown in the corner and in Control Center.")
@@ -409,6 +411,8 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         row("Wallpapers", "Your own pictures behind Home while the Home tab is selected; a different one each time Home opens. " +
             "Add them from your phone, or copy them from a computer with scripts/wallpapers.sh. Streaming apps show their own titles when you move to them.", {
             nav.wallpapers.count().let { if (it == 0) "None yet" else if (it == 1) "1 picture" else "$it pictures" } }) { wallpaperMenu() }
+        row("Profile picture", "The picture in the round badge next to the clock. Add it from your phone.", {
+            if (nav.profile.exists()) "Set" else "None" }) { nav.profileMenu() }
         header("Typography")
         choice(Prefs.TEXT, "Makes every label, title and description larger for easier reading from the sofa.")
         choice(Prefs.WEIGHT, "Uses a heavier weight of the Inter typeface everywhere.")

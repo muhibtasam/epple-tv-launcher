@@ -52,6 +52,10 @@ interface Nav {
     fun openSetup(step: Int, one: Boolean)
     /** Home's own pictures, and the phone screen that adds them. */
     val wallpapers: Wallpapers
+    val profile: Profile
+    /** The profile picture changed (set or removed). */
+    fun profileChanged()
+    fun profileMenu()
     fun openPhone()
     /** Shows another wallpaper now ([newest]: the most recently added one). */
     fun nextWallpaper(newest: Boolean = false)

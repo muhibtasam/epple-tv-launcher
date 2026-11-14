@@ -12,7 +12,8 @@ import com.eppletv.launcher.content.Net
  * All public members are used on the main thread; [onChange] runs there too.
  * A new code (or stop) bumps a generation number, so late events from an old code are ignored.
  */
-class PhoneLink(private val ctx: Context, private val net: Net, private val wallpapers: com.eppletv.launcher.home.Wallpapers, private val onChange: () -> Unit) {
+class PhoneLink(private val ctx: Context, private val net: Net, private val wallpapers: com.eppletv.launcher.home.Wallpapers,
+                private val profile: com.eppletv.launcher.home.Profile, private val onChange: () -> Unit) {
     enum class Phase { IDLE, STARTING, NO_NETWORK, FAILED, WAITING, CONFIRMING, PAIRED, DENIED, EXPIRED, LOST, DONE }
     class Saved(val key: Credentials.Key, val check: Credentials.Check)
 
@@ -33,6 +34,9 @@ class PhoneLink(private val ctx: Context, private val net: Net, private val wall
         private set
     /** Pictures added since the setup screen opened (survives New Code), for the Home screen to show the newest. */
     var photosTotal = 0
+    /** The profile picture was set from the phone in this session. */
+    var profileSet = false
+        private set
     private var session: PairingSession? = null
     private var server: ConfigServer? = null
     private var gen = 0
@@ -74,7 +78,7 @@ class PhoneLink(private val ctx: Context, private val net: Net, private val wall
         gen++
         server?.stop()
         server = null; session = null; qr = null; code = null
-        saved.clear(); photos = 0; photoError = null
+        saved.clear(); photos = 0; photoError = null; profileSet = false
         phase = Phase.IDLE
     }
 
@@ -114,7 +118,12 @@ class PhoneLink(private val ctx: Context, private val net: Net, private val wall
         }
 
         /** Runs on a server handler thread: decodes, checks and re-encodes one picture into the wallpapers. */
-        override fun photo(bytes: ByteArray): ConfigServer.Result {
+        override fun photo(bytes: ByteArray, kind: String): ConfigServer.Result {
+            if (kind == "profile") {
+                val r = profile.set(bytes)
+                post(g) { if (r.ok) { profileSet = true; photoError = null } else photoError = r.message }
+                return ConfigServer.Result("photo", r.ok, r.message)
+            }
             val r = wallpapers.add(bytes)
             post(g) { if (r.ok) { photos++; photosTotal++; photoError = null } else photoError = r.message }
             return ConfigServer.Result("photo", r.ok, r.message)

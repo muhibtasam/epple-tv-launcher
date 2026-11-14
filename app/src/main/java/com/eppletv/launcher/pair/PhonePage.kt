@@ -41,7 +41,7 @@ button:disabled{opacity:.5}
 a{color:#8fbcff}
 .st{font-size:14px;margin-top:6px;min-height:1px}
 .ok{color:#7ce38b}.no{color:#ff8a80}.wait{color:#ffb86b}
-#files{position:absolute;width:1px;height:1px;opacity:0}
+#files,#face{position:absolute;width:1px;height:1px;opacity:0}
 ul{padding-left:20px;margin:8px 0;color:#aeb3bd;word-break:break-word}
 </style></head>
 """
@@ -99,6 +99,14 @@ ul{padding-left:20px;margin:8px 0;color:#aeb3bd;word-break:break-word}
  <ul id="photoList"></ul>
 </section>
 
+<section id="profile" class="card hide">
+ <h2>Profile picture</h2>
+ <p>Shown in the round badge next to the clock on your TV. Cropped to a square on this phone.</p>
+ <label class="pick" for="face">Choose Picture</label>
+ <input id="face" type="file" accept="image/*">
+ <div class="st" id="faceSt"></div>
+</section>
+
 <p id="done" class="small hide">When you're finished, choose <b>Done</b> on your TV. This page stops working when the TV closes setup.</p>
 </main>
 """
@@ -115,7 +123,7 @@ function show(id,on){el(id).classList.toggle('hide',!on);}
 function say(id,text,cls){var e=el(id);e.textContent=text;e.className='st'+(cls?' '+cls:'');}
 function end(title,text){
  over=true;if(timer)clearTimeout(timer);secret=null;nonce=null;
- ['pairing','keys','photos','done'].forEach(function(s){show(s,false);});
+ ['pairing','keys','photos','profile','done'].forEach(function(s){show(s,false);});
  FIELDS.forEach(function(f){el(f).value='';});
  el('lead').textContent='';el('endTitle').textContent=title;el('endText').textContent=text;show('ended',true);
 }
@@ -132,7 +140,7 @@ function state(){
   if(j.state==='paired'){
    if(!busy&&j.nonce)nonce=j.nonce;
    if(el('keys').classList.contains('hide')){
-    show('pairing',false);show('keys',true);show('photos',true);show('done',true);
+    show('pairing',false);show('keys',true);show('photos',true);show('profile',true);show('done',true);
     el('lead').textContent='Connected to your TV.';
    }
    poll(5000);return;
@@ -192,13 +200,16 @@ el('keys').addEventListener('submit',function(ev){
  }).catch(function(){release(null);say('saveSt','Lost the connection to your TV.','no');})
  .then(function(){el('save').disabled=false;});
 });
-function shrink(file){
+function shrink(file,square){
  return new Promise(function(ok,fail){
   var url=URL.createObjectURL(file),img=new Image();
   img.onload=function(){
-   var w=img.naturalWidth,h=img.naturalHeight,k=Math.min(1,Math.max(1920/w,1080/h));
-   var c=document.createElement('canvas');c.width=Math.max(1,Math.round(w*k));c.height=Math.max(1,Math.round(h*k));
-   c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);
+   var w=img.naturalWidth,h=img.naturalHeight,c=document.createElement('canvas');
+   if(square){var side=Math.min(w,h),out=Math.min(512,side);c.width=out;c.height=out;
+    c.getContext('2d').drawImage(img,(w-side)/2,(h-side)/2,side,side,0,0,out,out);}
+   else{var k=Math.min(1,Math.max(1920/w,1080/h));c.width=Math.max(1,Math.round(w*k));c.height=Math.max(1,Math.round(h*k));
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);}
+   URL.revokeObjectURL(url);
    c.toBlob(function(b){if(b)ok(b);else fail();},'image/jpeg',0.88);
   };
   img.onerror=function(){URL.revokeObjectURL(url);fail();};
@@ -207,11 +218,11 @@ function shrink(file){
 }
 function line(text){var li=document.createElement('li');li.textContent=text;el('photoList').appendChild(li);return li;}
 function wait(ms){return new Promise(function(r){setTimeout(r,ms);});}
-function send(b,li,name,tries){
+function send(b,li,name,tries,kind){
  var n=claim();
- if(!n)return tries>20?Promise.resolve(false):wait(500).then(function(){return send(b,li,name,tries+1);});
+ if(!n)return tries>20?Promise.resolve(false):wait(500).then(function(){return send(b,li,name,tries+1,kind);});
  li.textContent=name+': sending…';
- return fetch('/s/photo',{method:'POST',headers:{'X-Epple-Session':secret,'X-Epple-Nonce':n,'Content-Type':'image/jpeg'},body:b,cache:'no-store'}).then(function(r){
+ return fetch('/s/photo',{method:'POST',headers:{'X-Epple-Session':secret,'X-Epple-Nonce':n,'X-Epple-Kind':kind||'wallpaper','Content-Type':'image/jpeg'},body:b,cache:'no-store'}).then(function(r){
   if(!r.ok){release(null);var m=failed(r);li.textContent=name+': '+(m||'stopped');li.className='no';return false;}
   return r.json().then(function(j){
    release(j);var x=j.results[0]||{ok:false,message:'Not added'};
@@ -236,6 +247,14 @@ el('files').addEventListener('change',function(){
   .then(next);
  }
  next();
+});
+el('face').addEventListener('change',function(){
+ var f=(el('face').files||[])[0];el('face').value='';
+ if(!f||over)return;
+ var box={textContent:'',className:''};
+ say('faceSt','Sending…','wait');
+ shrink(f,true).then(function(b){return send(b,box,'Picture',0,'profile');},function(){box.textContent='Picture: this phone couldn’t open it';return false;})
+ .then(function(ok){say('faceSt',box.textContent.replace(/^Picture: /,''),ok?'ok':'no');},function(){release(null);say('faceSt','Lost the connection to your TV.','no');});
 });
 start();
 })();

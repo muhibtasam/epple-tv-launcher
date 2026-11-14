@@ -29,8 +29,9 @@ import com.eppletv.launcher.ui.style
 class SetupFlow(private val nav: Nav, private val host: Host) {
     interface Host {
         fun isDefaultHome(): Boolean
-        fun setupFinished(changedKeys: Boolean)
-        fun setupClosed(changedKeys: Boolean)
+        /** [prefsChanged]: region, languages or the Indian mix changed. [providers]: keys saved, replaced or removed. */
+        fun setupFinished(prefsChanged: Boolean, providers: Set<Credentials.Key>)
+        fun setupClosed(prefsChanged: Boolean, providers: Set<Credentials.Key>)
         /** Pictures were added to the Home wallpapers from the phone. */
         fun wallpapersAdded()
     }
@@ -53,7 +54,8 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     private var step = 0
     private var single = false
-    private var changedKeys = false
+    private var changedKeys = false                                 // content preferences (region, languages, mix)
+    private val changedProviders = HashSet<Credentials.Key>()
     private val checks = HashMap<Credentials.Key, Credentials.Check>()
     private var editing: Credentials.Key? = null
     val active get() = view.visibility == View.VISIBLE
@@ -66,8 +68,8 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     /** Providers step: the user chose to type keys with the remote instead of using the phone. */
     private var typeOnTv = false
     private val phone by lazy {
-        PhoneLink(ctx, nav.content.net, nav.wallpapers) { if (phoneMode) render() }.apply {
-            onSaved = { s -> if (s.check.ok) { checks[s.key] = s.check; changedKeys = true } }
+        PhoneLink(ctx, nav.content.net, nav.wallpapers, nav.profile) { if (phoneMode) render() }.apply {
+            onSaved = { s -> if (s.check.ok) { checks[s.key] = s.check; changedProviders += s.key } }
         }
     }
     private var countdown: TextView? = null
@@ -92,7 +94,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     /** Opens setup at the saved step (first launch) or at [at]; [one] = just that step, from Settings. */
     fun start(at: Int = state.getInt("step", 0), one: Boolean = false) {
-        single = one; changedKeys = false; editing = null; typeOnTv = false; phoneOnly = false
+        single = one; changedKeys = false; changedProviders.clear(); editing = null; typeOnTv = false; phoneOnly = false
         step = at.coerceIn(0, 4)
         view.visibility = View.VISIBLE; block(true)
         enter()
@@ -105,7 +107,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
 
     /** Opens only the phone screen (from Settings), with a fresh code. */
     fun startPhone() {
-        single = true; phoneOnly = true; changedKeys = false; editing = null; step = 1
+        single = true; phoneOnly = true; changedKeys = false; changedProviders.clear(); editing = null; step = 1
         view.visibility = View.VISIBLE; block(true)
         phoneMode = true; render(); phone.start()
     }
@@ -138,11 +140,11 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         leavePhone(); phoneOnly = false
         view.visibility = View.GONE; block(false)
         photosSeen()
-        host.setupClosed(changedKeys)
+        host.setupClosed(changedKeys, HashSet(changedProviders))
     }
 
     /** Tells Home once about pictures added from the phone since setup opened. */
-    private fun photosSeen() { if (phone.photosTotal > 0) { phone.photosTotal = 0; host.wallpapersAdded() } }
+    private fun photosSeen() { if (phone.photosTotal > 0) { phone.photosTotal = 0; host.wallpapersAdded() }; nav.profileChanged() }
 
     /** The TV left the foreground: stop listening; the user starts a new code when they return. */
     fun pause() { if (phoneMode) { phone.stop(); view.removeCallbacks(tick); view.keepScreenOn = false; render() } }
@@ -160,7 +162,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         state.edit().putBoolean("done", true).putInt("step", 4).apply()
         view.visibility = View.GONE; block(false)
         photosSeen()
-        host.setupFinished(changedKeys)
+        host.setupFinished(changedKeys, HashSet(changedProviders))
     }
 
     // ---- rendering ----
@@ -257,7 +259,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     private fun renderPhone(): View? {
         title.text = if (phoneOnly) "Add from Your Phone" else "Content Providers"
         body.text = "Scan the code with your phone's camera. Your phone must be on the same Wi-Fi as this TV. " +
-            "On your phone you can enter provider keys and add pictures for the Home screen; they go straight to this TV over your home network."
+            "On your phone you can enter provider keys, add pictures for the Home screen and set your profile picture; they go straight to this TV over your home network."
         val p = phone.phase
         val green = 0xFF7CE38B.toInt(); val orange = 0xFFFFB86B.toInt(); val red = 0xFFFF8A80.toInt()
         val side = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
@@ -300,6 +302,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
                 line("✓  Phone connected", green, Txt.TITLE)
                 line("Enter keys or choose pictures on the phone. Each key is tested before it is stored.")
                 for (s in phone.saved) line(if (s.check.ok) "✓  ${s.key.label}: connected and saved" else "✕  ${s.key.label}: ${s.check.message}", if (s.check.ok) green else red)
+                if (phone.profileSet) line("✓  Profile picture set", green)
                 if (phone.photos > 0) line("✓  ${phone.photos} ${if (phone.photos == 1) "picture" else "pictures"} added to Home", green)
                 phone.photoError?.let { line("✕  Picture: $it", red) }
             }
@@ -400,7 +403,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
                 val check = c ?: Credentials.Check(false, "Connection failed")
                 // The list shows the status of the key in use: a rejected new key leaves it untouched.
                 if (!save || check.ok) checks[k] = check
-                if (check.ok && save) { Credentials.set(k, value); changedKeys = true }
+                if (check.ok && save) { Credentials.set(k, value); changedProviders += k }
                 if (editing == k) {
                     result.setTextColor(if (check.ok) 0xFF7CE38B.toInt() else 0xFFFF8A80.toInt())
                     result.text = if (check.ok) (if (save) "✓  Connected and saved" else "✓  Connected") else "✕  ${check.message}" + if (save) ". Not saved" else ""
@@ -410,7 +413,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         field.setOnEditorActionListener { _, _, _ -> if (field.text.isNotBlank()) test(field.text.toString(), save = true); true }
         button("Save & Test", primary = true) { if (field.text.isNotBlank()) test(field.text.toString(), save = true) else { result.text = "Enter a key first"; result.setTextColor(0xFFFFB86B.toInt()) } }
         if (Credentials.hasAny(k)) button("Test Current Key") { test(Credentials.get(k), save = false) }
-        if (Credentials.isSaved(k)) button("Remove") { Credentials.clear(k); checks.remove(k); changedKeys = true; result.setTextColor(Colors.TEXT_DIM); result.text = "Removed. " + if (k.built.isNotEmpty()) "The built-in key is used again." else "" }
+        if (Credentials.isSaved(k)) button("Remove") { Credentials.clear(k); checks.remove(k); changedProviders += k; result.setTextColor(Colors.TEXT_DIM); result.text = "Removed. " + if (k.built.isNotEmpty()) "The built-in key is used again." else "" }
         button("Back") { editing = null; render() }
         return field
     }

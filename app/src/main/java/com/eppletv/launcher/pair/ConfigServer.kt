@@ -31,7 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger
  *   POST /p/{token}/pair   ask to pair; returns the 4-digit code and a session secret
  *   GET  /s/state          paired phone polls; header X-Epple-Session
  *   POST /s/save           form body with nonce and keys; header X-Epple-Session
- *   POST /s/photo          one JPEG for the Home wallpapers; headers X-Epple-Session and X-Epple-Nonce.
+ *   POST /s/photo          one JPEG for the Home wallpapers, or the profile picture (X-Epple-Kind: profile);
+ *                          headers X-Epple-Session and X-Epple-Nonce.
  *                          The larger body limit applies only after the session secret checks out.
  */
 class ConfigServer(
@@ -44,8 +45,8 @@ class ConfigServer(
         fun page(cspNonce: String): String
         /** Validates and stores the submitted values; returns one result per field it handled. */
         fun save(fields: Map<String, String>): List<Result>
-        /** Validates and stores one picture (JPEG bytes, at most [MAX_PHOTO]). */
-        fun photo(bytes: ByteArray): Result = Result("photo", false, "Not supported")
+        /** Validates and stores one picture (JPEG bytes, at most [MAX_PHOTO]); [kind] is "wallpaper" or "profile". */
+        fun photo(bytes: ByteArray, kind: String): Result = Result("photo", false, "Not supported")
         /** Called once when the server stops, with the reason if it failed. */
         fun stopped(error: Throwable?) {}
     }
@@ -170,7 +171,8 @@ class ConfigServer(
                 if (r.headers["content-type"]?.substringBefore(';')?.trim() != JPEG) return Reply(415, json("""{"error":"type"}"""))
                 if (r.body.isEmpty()) return Reply(400, json("""{"error":"empty"}"""))
                 gated(session.claimSave(r.headers["x-epple-session"], from, r.headers["x-epple-nonce"], photo = true)) {
-                    listOf(try { handler.photo(r.body) } catch (_: Exception) { Result("photo", false, "Couldn't save this picture") })
+                    val kind = if (r.headers["x-epple-kind"] == "profile") "profile" else "wallpaper"
+                    listOf(try { handler.photo(r.body, kind) } catch (_: Exception) { Result("photo", false, "Couldn't save this picture") })
                 }
             }
             else -> Reply(404, text("Not found"))

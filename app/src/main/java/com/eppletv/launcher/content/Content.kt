@@ -45,6 +45,8 @@ class ContentItem(
 interface ContentSource {
     val key: String                       // cache key, unique per source
     val ready: Boolean                    // false when the source lacks what it needs (e.g. an API key)
+    /** The provider keys this source's requests use: changing one refreshes this source (see [ContentRepository.invalidate]). */
+    val uses: Set<Credentials.Key> get() = emptySet()
     fun handles(pkg: String): Boolean
     fun load(net: Net, pkg: String): List<ContentItem>   // worker thread; throws on failure; may return a larger pool to pick from
     /** Worker thread. URL of a transparent title logo for [item], or null. */
@@ -142,18 +144,20 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
         if (System.currentTimeMillis() - (failedAt[key] ?: 0L) < RETRY_MS) return cb(emptyList())
         listWaiters[key]?.let { it.add(cb); return }
         listWaiters[key] = arrayListOf(cb)
+        val epoch = epochs[src.key] ?: 0
         io.execute {
             val file = File(listDir, "$key.json")
             var out = readList(file, fresh = true)
             if (out == null) {
                 out = try {
-                    src.load(net, pkg).also { l -> if (l.isNotEmpty()) file.writeText(JSONArray(l.map { it.json() }).toString()) }
+                    src.load(net, pkg).also { l -> if (l.isNotEmpty() && (epochs[src.key] ?: 0) == epoch) file.writeText(JSONArray(l.map { it.json() }).toString()) }
                 } catch (e: Exception) {
                     Log.w(TAG, "load ${src.key} failed: $e"); readList(file, fresh = false)   // stale copy beats nothing
                 }
             }
             val result = out ?: emptyList()
             main.post {
+                if ((epochs[src.key] ?: 0) != epoch) return@post          // the key changed meanwhile: its waiters were answered
                 val picked = if (result.isEmpty()) result else curate(key, result)
                 if (picked.isEmpty()) failedAt[key] = System.currentTimeMillis() else lists[key] = picked
                 listWaiters.remove(key)?.forEach { it(picked) }
@@ -288,6 +292,27 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
 
     /** Main thread. Picks titles again from the saved pools (after a mix setting changed). */
     fun resetPicks() { lists.clear() }
+
+    private val epochs = java.util.concurrent.ConcurrentHashMap<String, Int>()            // source key -> bumped on invalidate; late loads of an older epoch are dropped
+
+    /**
+     * Main thread. A provider key changed ([changed]), or every source ([all]: region or language changes): forgets only
+     * the affected sources' lists (memory and disk), retry timers and in-flight loads, so their next request fetches
+     * again with the new key. Others keep everything. Returns the keys of the sources that were reset.
+     */
+    fun invalidate(changed: Set<Credentials.Key>, all: Boolean = false): Set<String> {
+        val hit = sources.filter { all || it.uses.any { k -> k in changed } }.map { it.key }.toSet()
+        for (k in hit) {
+            epochs[k] = (epochs[k] ?: 0) + 1
+            val prefix = "$k-"
+            lists.keys.removeAll { it.startsWith(prefix) }
+            failedAt.keys.removeAll { it.startsWith(prefix) }
+            listWaiters.keys.filter { it.startsWith(prefix) }.forEach { w -> listWaiters.remove(w)?.forEach { it(emptyList()) } }
+            io.execute { listDir.listFiles()?.filter { it.name.startsWith(prefix) && it.name.endsWith(".json") }?.forEach { it.delete() } }
+        }
+        if (all || Credentials.Key.TMDB in changed) { results.evictAll(); logoUrls.clear() }    // catalogue answers and logo lookups use TMDB
+        return hit
+    }
 
     /** Main thread. Drops cached lists and API responses so everything is fetched fresh. */
     fun clearLists() {
