@@ -67,6 +67,8 @@ class SideBar(ctx: Context, private val l: Layout, private val clock: FrameClock
     val w1 = l.px(440)
     private val pad = l.px(18); private val pillH = l.pxf(88f); private val chip = l.pxf(58f)
     private val o = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
+    private val hf = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)       // the hint pill itself focused
+    private val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Colors.WHITE }
     val openness get() = o.value.coerceIn(0f, 1f)
     /** Indexed by section, laid out in [order]. */
     val tabs = labels.mapIndexed { i, s -> SideItem(ctx, l, clock, s, icons[i]) }
@@ -78,7 +80,7 @@ class SideBar(ctx: Context, private val l: Layout, private val clock: FrameClock
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND; color = Colors.WHITE }
     private val title = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(28f) * Type.scale; typeface = Type.of(600); color = Colors.WHITE }
     private val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(23f) * Type.scale; typeface = Type.of(500); color = Colors.WHITE }
-    private val hint = "Press Back for menu"
+    private val hintText = "Press Back for menu"
 
     var open = false
         set(v) { if (field != v) { field = v; o.target = if (v) 1f else 0f; clock.add(this) } }
@@ -86,14 +88,18 @@ class SideBar(ctx: Context, private val l: Layout, private val clock: FrameClock
         set(v) { field = v; tabs.forEachIndexed { i, t -> t.selectedState = i == v }; invalidate() }
 
     init {
-        setWillNotDraw(false); clipChildren = true
+        setWillNotDraw(false); clipChildren = true; isFocusable = true
         order.forEachIndexed { k, i -> col.addView(tabs[i], LinearLayout.LayoutParams(w1 - 2 * pad, l.px(80)).apply { if (k > 0) topMargin = l.px(4) }) }
         addView(col, LayoutParams(w1, LayoutParams.WRAP_CONTENT))
         backdrop.listeners.add { invalidate() }; GlassStyle.register(this)
         selected = 0
     }
 
-    private fun pillW() = l.pxf(15f) + chip + l.pxf(18f) + maxOf(title.measureText(names[selected]), sub.measureText(hint)) + l.pxf(34f)
+    /** The hint pill itself has the focus (Home's resting place): it turns white. */
+    var hint = false
+        set(v) { if (field != v) { field = v; hf.target = if (v) 1f else 0f; clock.add(this) } }
+
+    private fun pillW() = l.pxf(15f) + chip + l.pxf(18f) + maxOf(title.measureText(names[selected]), sub.measureText(hintText)) + l.pxf(34f)
 
     override fun onDraw(c: Canvas) {
         val k = openness
@@ -104,21 +110,25 @@ class SideBar(ctx: Context, private val l: Layout, private val clock: FrameClock
         c.drawRoundRect(rect, rad, rad, lift)
         val a = (1f - k) * (1f - k)
         if (a > 0.01f) {
+            val h = hf.value.coerceIn(0f, 1f)
+            if (h > 0.01f) { white.alpha = (255 * h * a).toInt(); c.drawRoundRect(rect, rad, rad, white) }
+            val ink = Colors.lerp(Colors.WHITE, Colors.INK, h)
             val cx = l.pxf(15f) + chip / 2f; val cy = ph / 2f
-            chipPaint.alpha = (0x38 * a).toInt(); c.drawCircle(cx, cy, chip / 2f, chipPaint)
-            stroke.alpha = (255 * a).toInt(); TabIcons.draw(icons[selected], c, cx, cy, l.pxf(28f), stroke)
+            chipPaint.color = Colors.lerp(0x38FFFFFF, 0x14000000, h); chipPaint.alpha = ((chipPaint.color ushr 24) * a).toInt(); c.drawCircle(cx, cy, chip / 2f, chipPaint)
+            stroke.color = ink; stroke.alpha = (255 * a).toInt(); TabIcons.draw(icons[selected], c, cx, cy, l.pxf(28f), stroke)
             val tx = l.pxf(15f) + chip + l.pxf(18f)
+            title.color = ink; sub.color = ink
             title.alpha = (255 * a).toInt(); sub.alpha = (200 * a).toInt()
             c.drawText(names[selected], tx, cy - l.pxf(6f), title)
-            c.drawText(hint, tx, cy + l.pxf(24f), sub)
+            c.drawText(hintText, tx, cy + l.pxf(24f), sub)
         }
     }
 
     override fun tick(dt: Float): Boolean {
-        o.step(dt); val k = openness
+        o.step(dt); hf.step(dt); val k = openness
         col.alpha = k * k; col.translationY = -(1f - k) * l.pxf(12f)
         invalidate()
-        return !o.atRest()
+        return !(o.atRest() && hf.atRest())
     }
 }
 

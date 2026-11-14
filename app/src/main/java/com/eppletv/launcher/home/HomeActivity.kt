@@ -100,6 +100,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private var zone = Zone.TABS                     // Epple TV opens on the Home tab, over a wallpaper
     private var section = 0
     private var tabIdx = 0                          // 0..5 menu entries (by section), 6 = the clock (PILL)
+    private var menuOpen = false                    // TABS with the menu closed = its hint pill (Home's resting focus)
     private val screens = arrayOfNulls<Screen>(7)
     private val details = ArrayList<DetailScreen>()
     private var detailReturn = Zone.SECTION
@@ -118,7 +119,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             hero.backdrop.dim(dimP.value)
             val rail = railP.value                 // sections own the left edge: there the menu shows only when opened
             tabs.alpha = rail; tabs.translationX = -(1f - rail) * l.pxf(30f)
-            tabs.visibility = if (rail > 0.01f) View.VISIBLE else View.INVISIBLE
+            tabs.visibility = if (rail > 0.01f || railP.target > 0f) View.VISIBLE else View.INVISIBLE
             val homeClock = if (section == 0 && zone != Zone.FEED && zone != Zone.DETAIL) (1f - dimP.value * 2f).coerceIn(0f, 1f) else 0f
             pill.alpha = if (::cc.isInitialized && cc.open) 1f else maxOf(tabsP.value, homeClock)
             homeLayer.alpha = homeP.value; homeLayer.translationY = -(1f - homeP.value) * l.pxf(260f)
@@ -131,8 +132,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     /** The menu opens while focus is in it; on Home's top level its closed rail stays in view, elsewhere it hides. */
     private fun syncSide() {
         if (!::tabs.isInitialized) return
-        tabs.open = zone == Zone.TABS && tabIdx < TAB_NAMES.size
+        tabs.open = zone == Zone.TABS && menuOpen && tabIdx < TAB_NAMES.size
+        tabs.hint = zone == Zone.TABS && !menuOpen && tabIdx < TAB_NAMES.size
         railP.target = if (zone == Zone.TABS || section == 0 && (zone == Zone.CONTENT || zone == Zone.HERO)) 1f else 0f
+        // A hidden view can't take focus: the menu is made visible at once when focus is going to it (it then fades in).
+        if (railP.target > 0f && tabs.visibility != View.VISIBLE) { tabs.visibility = View.VISIBLE; tabs.alpha = maxOf(tabs.alpha, 0.01f) }
     }
 
     // The artwork follows focus after a short pause, so fast navigation doesn't flicker the whole screen.
@@ -402,7 +406,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private fun restoreFocus() {
         if (panel.open || (::cc.isInitialized && cc.open) || (::setup.isInitialized && setup.active)) return      // setup owns focus while it is open
         when (zone) {
-            Zone.CONTENT -> if (!page.focusCurrent()) enterTabs(section)
+            Zone.CONTENT -> if (!page.focusCurrent()) toNav()
             Zone.HERO -> anchor.requestFocus()
             Zone.TABS -> focusTab()
             Zone.FEED -> if (!feed.focus()) enterContent()
@@ -416,7 +420,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private fun enterContent() {
         setShelf(false); zone = Zone.CONTENT; tabsP.target = 0f
         if (homeP.target < 1f) leaveFeed()
-        if (!page.focusCurrent()) enterTabs(0)
+        if (!page.focusCurrent()) toNav()
         animateShell()
     }
 
@@ -424,7 +428,23 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         zone = Zone.TABS; tabIdx = i; tabsP.target = 1f; page.blur(); animateShell(); focusTab()
         if (section == 0 && !hero.resting) { setShelf(false); showWallpaper() }
     }
-    private fun focusTab() { syncSide(); if (tabIdx >= TAB_NAMES.size) pill.requestFocus() else tabs.tabs[tabIdx].requestFocus() }
+    private fun focusTab() {
+        syncSide()
+        when { tabIdx >= TAB_NAMES.size -> pill.requestFocus(); menuOpen -> tabs.tabs[tabIdx].requestFocus(); else -> tabs.requestFocus() }
+    }
+
+    /** Home's resting place: the hint pill ("Home · Press Back for menu") focused, the menu closed, the wallpaper behind. */
+    private fun enterHint() { menuOpen = false; enterTabs(section) }
+    private fun toNav() { if (section == 0) enterHint() else openMenu() }
+
+    /** Opens the menu with section [i] highlighted. Nothing changes until a section is chosen (OK or Right). */
+    private fun openMenu(i: Int = section) { menuOpen = true; enterTabs(i) }
+
+    /** Chooses the highlighted section: the menu closes and focus goes into it. */
+    private fun chooseMenu() { val i = tabIdx; menuOpen = false; showSection(i); tabIdx = i; intoSection() }
+
+    /** Closes the menu without changing anything: back to the hint on Home, or into the section. */
+    private fun closeMenu() { menuOpen = false; tabIdx = section; if (section == 0) enterTabs(0) else intoSection() }
 
     /** Home's rows: the top row and its artwork text slide away, the rows take the screen. */
     private fun enterFeed() {
@@ -601,7 +621,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         applyChanges(prefsChanged, providers)
         while (details.isNotEmpty()) sectionLayer.removeView(details.removeAt(details.size - 1).view)
         if (zone == Zone.FEED) leaveFeed()
-        showSection(0); enterTabs(0)                         // a finished setup lands on Home
+        showSection(0); enterHint()                          // a finished setup lands on Home
     }
     override fun setupClosed(prefsChanged: Boolean, providers: Set<com.eppletv.launcher.content.Credentials.Key>) { applyChanges(prefsChanged, providers) }
 
@@ -698,7 +718,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         if (zone == Zone.FEED) leaveFeed()
         if (section != 0) showSection(0)
         else { homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE; feed.hide() }
-        enterTabs(0)                                         // the same wallpaper: a new one only when Epple TV starts
+        enterHint()                                          // Home chosen, menu closed; the same wallpaper (a new one only when Epple TV starts)
         animateShell()
     }
 
@@ -892,7 +912,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         }
         if (select && zone == Zone.HERO) { if (!down && !event.isCanceled) openHeroItem(); return true }
         if (select && zone == Zone.TABS && tabIdx < TAB_NAMES.size) {
-            if (down && event.repeatCount == 0) { main.removeCallbacks(switchTab); showSection(tabIdx); intoSection() }
+            if (down && event.repeatCount == 0) { if (menuOpen) chooseMenu() else openMenu() }
             return true
         }
         if (k == KeyEvent.KEYCODE_MENU || k == KeyEvent.KEYCODE_SETTINGS) { if (down && event.repeatCount == 0) openControlCenter(); return true }
@@ -906,29 +926,36 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         dirX = dx; dirY = dy
         when (zone) {
             Zone.CONTENT -> when {
-                dx < 0 && page.atLeft() -> enterTabs(section)
-                dy < 0 && page.atTop() && !hero.hasItems -> enterTabs(PILL)
+                dx < 0 && page.atLeft() -> openMenu()
+                dy < 0 && page.atTop() && !hero.hasItems -> enterHint()
                 dy > 0 && page.atTop() -> enterFeed()
-                !page.move(dx, dy) -> if (hero.hasItems) enterHero() else enterTabs(0)
+                !page.move(dx, dy) -> if (hero.hasItems) enterHero() else enterHint()
             }
-            Zone.HERO -> if (dx != 0) { if (!hero.step(dx) && dx < 0) enterTabs(section) } else if (dy < 0) enterTabs(PILL) else enterContent()
+            Zone.HERO -> if (dx != 0) { if (!hero.step(dx) && dx < 0) openMenu() } else if (dy < 0) enterHint() else enterContent()
             // The clock: Right moves to the profile orb, Left back to Control Center and then to the menu; Down leaves.
+            // The clock (top right): Right selects the profile orb, Left goes back to Control Center, then to the menu's hint;
+            // Down goes into the page below it.
             Zone.TABS -> if (tabIdx >= TAB_NAMES.size) when {
                 dx > 0 -> pill.part = 1
-                dx < 0 -> if (pill.part == 1) pill.part = 0 else { tabIdx = section; focusTab() }
+                dx < 0 -> if (pill.part == 1) pill.part = 0 else if (section == 0) enterHint() else openMenu()
                 dy > 0 -> intoSection()
+            } else if (!menuOpen) when {
+                // The hint pill (closed menu, Home only): Down into Home, Right to the clock, Left opens the menu.
+                dy > 0 -> intoSection()
+                dx > 0 -> { tabIdx = PILL; focusTab() }
+                dx < 0 -> openMenu()
             } else when {
-                // The menu: Up and Down move through it (Up past the top reaches the clock), Right goes into the section.
+                // The open menu, as on tvOS: Up/Down only highlight (Up past Search reaches the clock); OK or Right chooses.
                 dy != 0 -> {
                     val pos = MENU_ORDER.indexOf(tabIdx) + dy
-                    if (pos < 0) { main.removeCallbacks(switchTab); tabIdx = PILL; focusTab() }
-                    else if (pos < MENU_ORDER.size) { tabIdx = MENU_ORDER[pos]; focusTab(); main.removeCallbacks(switchTab); main.postDelayed(switchTab, 260) }
+                    if (pos < 0) { menuOpen = false; tabIdx = PILL; focusTab() }
+                    else if (pos < MENU_ORDER.size) { tabIdx = MENU_ORDER[pos]; focusTab() }
                 }
-                dx > 0 -> { main.removeCallbacks(switchTab); showSection(tabIdx); intoSection() }
+                dx > 0 -> chooseMenu()
             }
-            Zone.FEED -> if (!feed.key(dx, dy)) { if (dx < 0) enterTabs(0) else enterContent() }
-            // Up out of a section reaches the tab bar; from Settings (not a tab) it lands on the clock, where it opened from.
-            Zone.SECTION -> if (screens[section]?.key(dx, dy) == false) enterTabs(if (section < TAB_NAMES.size) section else TAB_NAMES.size)
+            Zone.FEED -> if (!feed.key(dx, dy)) { if (dx < 0) openMenu() else enterContent() }
+            // Up or Left out of a section opens the menu (as the Apple TV app's sidebar does).
+            Zone.SECTION -> if (screens[section]?.key(dx, dy) == false) openMenu()
             Zone.DETAIL -> details.lastOrNull()?.key(dx, dy)
         }
         return true
@@ -936,6 +963,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     /** From the tab bar down into the selected section (Home: back to its artwork and top row). */
     private fun intoSection() {
+        menuOpen = false
         if (section == 0) { tabsP.target = 0f; animateShell(); if (hero.hasItems) enterHero() else enterContent(); return }
         zone = Zone.SECTION
         screens[section]?.focus(); animateShell()
@@ -944,10 +972,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     /** BACK walks up: details -> section -> tab bar -> Home's top row; at the top row it leaves the app. */
     private fun handleBack(): Boolean = when (zone) {
         Zone.DETAIL -> { closeDetail(); true }
-        Zone.SECTION -> { if (screens[section]?.back() != true) { if (section < TAB_NAMES.size) enterTabs(section) else { showSection(0); enterTabs(0) } }; true }
+        Zone.SECTION -> { if (screens[section]?.back() != true) openMenu(); true }
         Zone.FEED -> { if (!feed.back()) enterContent(); true }
-        Zone.TABS -> { main.removeCallbacks(switchTab); if (tabIdx < TAB_NAMES.size) showSection(tabIdx); intoSection(); true }
-        Zone.CONTENT -> { if (!page.atTop()) { dirX = 0; dirY = -1; page.toTop() } else enterTabs(0); true }
+        // Back closes the open menu (nothing changes); from the clock it returns to where you were; on Home's hint it stays.
+        Zone.TABS -> when { menuOpen -> { closeMenu(); true }; tabIdx >= TAB_NAMES.size -> { if (section == 0) enterHint() else intoSection(); true }; else -> true }
+        Zone.CONTENT -> { if (!page.atTop()) { dirX = 0; dirY = -1; page.toTop() } else openMenu(); true }
         Zone.HERO -> { enterContent(); true }
     }
 

@@ -49,7 +49,16 @@ object Sources {
 
     private var channels: AppChannels? = null
     /** The one [AppChannels]: Home asks it which apps have rows every time it comes to the front. */
-    fun channels(ctx: android.content.Context) = channels ?: AppChannels(ctx.applicationContext) { net, title, movie -> posterFor(net, title, movie) }.also { channels = it }
+    fun channels(ctx: android.content.Context) = channels ?: AppChannels(ctx.applicationContext) { net, title, movie -> matchFor(net, title, movie) }.also { channels = it }
+
+    /** TMDB's entry for an app's title, by exact name (movie or show; null = try both): its poster, details and genres. */
+    fun matchFor(net: Net, title: String, movie: Boolean?): ContentItem? {
+        if (!usesTmdb) return null
+        val name = title.replace(Regex("\\s*[-:–]\\s*(Season|Series)\\s*\\d+.*$", RegexOption.IGNORE_CASE), "").trim()
+        val kinds = when (movie) { true -> listOf("movie", "tv"); false -> listOf("tv", "movie"); null -> listOf("movie", "tv") }
+        for (k in kinds) showcase.find(net, k, name, "", 0.0, exact = true)?.let { return it }
+        return null
+    }
 
     /** A portrait poster from TMDB for a title known only by name (an app's row, Watch Next). Null without TMDB. */
     fun posterFor(net: Net, title: String, movie: Boolean): String? {

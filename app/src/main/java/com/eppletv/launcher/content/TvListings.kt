@@ -150,8 +150,8 @@ object TvListings {
  * installed and signed-in service starts recommending with no setup. Music, YouTube (its own source) and the TV maker's
  * promotion rows are left out. Ready only once the TV lets Epple TV read its listings.
  */
-class AppChannels(private val ctx: Context, private val posterFor: (Net, String, Boolean) -> String?) : ContentSource {
-    override val key = "channels2"
+class AppChannels(private val ctx: Context, private val matchFor: (Net, String, Boolean?) -> ContentItem?) : ContentSource {
+    override val key = "channels3"
     override val ordered = true                                   // the app's own order
     override val ready get() = TvListings.allowed(ctx)
     override fun handles(pkg: String) = pkg in available
@@ -182,20 +182,35 @@ class AppChannels(private val ctx: Context, private val posterFor: (Net, String,
         }
         return rows.mapIndexed { i, p ->
             val (art, badge) = TvListings.cleanArt(p.wide!!)
-            val poster = p.tall?.let { TvListings.cleanArt(it).first } ?: (try { posterFor(net, p.title, p.isMovie) } catch (_: Exception) { null }) ?: ""
-            val kind = when {
-                badge.isEmpty() -> "On $name"
-                badge.startsWith("TOP 10") -> "Top 10 on $name"
-                else -> badge.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase() } + " on $name"
+            // The badge Prime Video draws ("NEW MOVIE", "NEW SEASON") says what the title is better than its type field.
+            val movie: Boolean? = when {
+                Regex("MOVIE|FILM").containsMatchIn(badge) -> true
+                Regex("SERIES|SEASON|EPISODE|SHOW").containsMatchIn(badge) -> false
+                p.isMovie -> true
+                p.type in SHOW_TYPES -> false
+                else -> null
             }
-            val type = if (p.isMovie) "Movie" else if (p.type < 0) "" else "Series"
-            ContentItem("app:$pkg:${p.title}", p.title, listOfNotNull(p.year, type.ifEmpty { null }).joinToString("  ·  "), art,
-                p.link, pkg, kind, p.description ?: "", weight = 1.0 - i * 0.02, origin = "app", posterUrl = poster)
+            val match = try { matchFor(net, p.title, movie) } catch (_: Exception) { null }
+            val poster = p.tall?.let { TvListings.cleanArt(it).first } ?: match?.posterUrl ?: ""
+            // The row it came from names it when the app gave no badge: "Most Popular on Crunchyroll".
+            val row = p.channel?.trim()?.takeIf { it.isNotEmpty() && !it.equals(name, true) && !name.contains(it, true) }
+            val kind = when {
+                badge.startsWith("TOP 10") -> "Top 10 on $name"
+                badge.isNotEmpty() -> badge.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase() } + " on $name"
+                row != null -> "$row on $name"
+                else -> "On $name"
+            }
+            val type = when (movie ?: match?.let { it.id.startsWith("movie:") }) { true -> "Movie"; false -> "Series"; null -> "" }
+            // TMDB's details (rating, year, genres) when found, else what the app gave.
+            val meta = match?.meta?.takeIf { it.isNotBlank() } ?: listOfNotNull(type.ifEmpty { null }, p.year).joinToString("  ·  ")
+            ContentItem(match?.id?.takeIf { it.isNotEmpty() }?.let { "app:$pkg:$it" } ?: "app:$pkg:${p.title}", p.title, meta, art,
+                p.link, pkg, kind, p.description?.takeIf { it.isNotBlank() } ?: match?.summary ?: "", weight = 1.0 - i * 0.02, origin = "app", posterUrl = poster)
         }
     }
 
     private companion object {
         /** Not video recommendations: music, YouTube (served by the YouTube source), the TV maker's and system rows. */
+        val SHOW_TYPES = setOf(TvContract.PreviewPrograms.TYPE_TV_SERIES, TvContract.PreviewPrograms.TYPE_TV_SEASON, TvContract.PreviewPrograms.TYPE_TV_EPISODE)
         val EXCLUDED = Regex("spotify|music|youtube|\\.tcl\\.|partnercustomizer|launcher|google\\.android\\.tv")
     }
 }
