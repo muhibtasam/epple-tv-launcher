@@ -159,6 +159,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
+        GlassStyle.clear = prefs.get(Prefs.GLASS) == 1
         wallpapers = Wallpapers(this)
         profile = Profile(this)
         launcher = com.eppletv.launcher.system.LauncherMode(this)
@@ -358,7 +359,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override fun profileMenu() {
         val items = ArrayList<Pair<String, () -> Unit>>()
         items.add("Add from Phone" to { openPhone() })
-        if (profile.exists()) items.add("Remove Picture" to { content.run({ profile.remove() }) { profileChanged() } })
+        if (profile.exists()) items.add("Remove Picture" to {
+            menu("Remove your profile picture?", listOf(
+                "Cancel" to {},                                   // first, so a stray OK keeps it
+                "Remove" to { content.run({ profile.remove() }) { profileChanged() } }))
+        })
         menu("Profile Picture", items)
     }
     override fun wallpapersAdded() { nextWallpaper(newest = true); (screens[6] as? SettingsScreen)?.show() }
@@ -409,8 +414,10 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     /** Shows tab [i]. Home restores the top row; other tabs build lazily and keep their state while hidden. */
     private fun showSection(i: Int) {
+        if (cc.open) cc.hide()
         if (i == section && (i == 0 || screens[i]?.view?.visibility == View.VISIBLE)) return
-        screens[section]?.let { it.hide(); it.view.visibility = View.GONE }
+        screens[section]?.let { it.hide(); it.view.visibility = View.GONE; it.reset() }
+        if (section == 0) { feed.reset(); focusedPkg = null }       // Home's rows and its carousel start again too
         section = i; tabs.selected = i
         artGen++; main.removeCallbacks(artRun)              // nothing requested for the previous tab may land now
         if (i == 0) {
@@ -440,6 +447,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         when (c) {
             Prefs.CLOCK -> updateTime()
             Prefs.ROTATE -> restartRotation()
+            Prefs.GLASS -> GlassStyle.clear = prefs.get(Prefs.GLASS) == 1
             Prefs.SAVER -> restartIdle()
             Prefs.INDIAN -> { content.indianMode = prefs.get(Prefs.INDIAN); content.resetPicks(); content.warm(library.pinned(apps).map { it.packageName }) }
             else -> if (c.restart) restartUi()
@@ -607,13 +615,26 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     /** The Home button while Epple TV is the Home screen: back to Home's top row. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (fromAppIcon(intent) && !setup.active) { if (panel.open) panel.hide(); if (zone == Zone.FEED) leaveFeed(); goTab(SETTINGS); return }
-        if (intent.hasCategory(Intent.CATEGORY_HOME) && !setup.active) {
-            if (panel.open) panel.hide()
-            while (details.isNotEmpty()) sectionLayer.removeView(details.removeAt(details.size - 1).view)
-            if (zone == Zone.FEED) leaveFeed()
-            showSection(0); enterTabs(0)                    // the same wallpaper: a new one only when Epple TV starts
-        }
+        if (fromAppIcon(intent) && !setup.active) { closeOverlays(); if (zone == Zone.FEED) leaveFeed(); goTab(SETTINGS); return }
+        if (intent.hasCategory(Intent.CATEGORY_HOME) && !setup.active) goHome()
+    }
+
+    /** Control Center, menus and the screensaver close when the Home button or another screen takes over. */
+    private fun closeOverlays() { if (cc.open) cc.hide(); if (panel.open) panel.hide(); if (saver.showing) saver.stop() }
+
+    /**
+     * The Home button: Home tab, its wallpaper and the top row, from any state. Home's layer is restored explicitly,
+     * because pressing Home from a details page opened on Home itself never goes through a tab change (it used to
+     * leave the top row hidden until some later action brought it back).
+     */
+    private fun goHome() {
+        closeOverlays()
+        while (details.isNotEmpty()) sectionLayer.removeView(details.removeAt(details.size - 1).view)
+        if (zone == Zone.FEED) leaveFeed()
+        if (section != 0) showSection(0)
+        else { homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE; feed.hide() }
+        enterTabs(0)                                         // the same wallpaper: a new one only when Epple TV starts
+        animateShell()
     }
 
     // ---- tiles (top row) ----

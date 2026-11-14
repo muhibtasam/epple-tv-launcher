@@ -27,17 +27,18 @@ class ContentItem(
     val weight: Double = 0.0,    // 0..1 selection weight (popularity, recency, trending); 0 = rank by position
     val origin: String = "",     // "in" (Indian) or "intl"; used to balance the selection
     val logoUrl: String = "",    // transparent title logo when the source supplies one directly
+    val posterUrl: String = "",  // portrait poster (2:3) for rows; empty = the landscape art, cropped
 ) {
     fun intent(): Intent? = linkUri?.let {
         Intent(Intent.ACTION_VIEW, Uri.parse(it)).setPackage(linkPkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     fun json(): JSONObject = JSONObject().put("id", id).put("title", title).put("meta", meta).put("image", imageUrl)
         .put("uri", linkUri ?: JSONObject.NULL).put("pkg", linkPkg ?: JSONObject.NULL).put("kind", kind).put("summary", summary)
-        .put("w", weight).put("o", origin).put("logo", logoUrl)
+        .put("w", weight).put("o", origin).put("logo", logoUrl).put("poster", posterUrl)
     companion object {
         fun of(o: JSONObject) = ContentItem(o.getString("id"), o.getString("title"), o.getString("meta"), o.getString("image"),
             if (o.isNull("uri")) null else o.getString("uri"), if (o.isNull("pkg")) null else o.getString("pkg"),
-            o.optString("kind"), o.optString("summary"), o.optDouble("w", 0.0), o.optString("o"), o.optString("logo"))
+            o.optString("kind"), o.optString("summary"), o.optDouble("w", 0.0), o.optString("o"), o.optString("logo"), o.optString("poster"))
     }
 }
 

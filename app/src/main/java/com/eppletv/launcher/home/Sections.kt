@@ -293,7 +293,7 @@ class SearchScreen(nav: Nav) : Screen(nav) {
     init {
         view.addView(query, FrameLayout.LayoutParams(l.px(1700), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(140) })
         view.addView(hint, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(236) })
-        view.addView(keyboard, FrameLayout.LayoutParams(MATCH_PARENT, l.px(260)).apply { leftMargin = l.left; topMargin = l.px(300) })
+        view.addView(keyboard, FrameLayout.LayoutParams(MATCH_PARENT, l.px(290)).apply { leftMargin = l.left; topMargin = l.px(296) })
         view.addView(stack, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         listOf(appsRow, moviesRow, tvRow).forEach { s -> stack.add(s); s.visibility = View.GONE }
         moviesRow.loader = { c -> thumb(c) }; tvRow.loader = { c -> thumb(c) }
@@ -351,6 +351,13 @@ class SearchScreen(nav: Nav) : Screen(nav) {
         else -> false
     }
     override fun hide() { h.removeCallbacks(run) }
+    /** Another tab was chosen: the search starts empty next time. */
+    override fun reset() {
+        h.removeCallbacks(run); inResults = false; keyboard.home()
+        if (q.isNotEmpty()) type(Keyboard.CLEAR)
+        h.removeCallbacks(run)
+        moviesRow.set(emptyList()) { _, _ -> }; tvRow.set(emptyList()) { _, _ -> }; stack.relayout()
+    }
     override val wantsArt = false
 }
 
@@ -367,16 +374,19 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
     private var i = 0
     private val sy = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
     private val rowY = HashMap<Row, Int>()
+    private val picker = WallpaperPicker(nav)
 
     init {
         view.addView(title, FrameLayout.LayoutParams(l.px(560), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(170) })
         view.addView(about, FrameLayout.LayoutParams(l.px(560), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(290) })
-        // Rows scrolling up stop at the tab bar instead of sliding under its glass: the scrolling list sits in a
-        // still frame that clips everything above the bar's lower edge (focused rows still grow sideways).
+        // Rows scrolling up fade out before they reach the tab bar instead of being cut in half by it (see [fadeTop]).
         val frame = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
         frame.addView(list, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT).apply { leftMargin = l.px(40); rightMargin = l.px(40) })
-        frame.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ -> v.clipBounds = android.graphics.Rect(0, l.px(136), v.width, v.height) }
+        list.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fadeTop(list, l) }
         view.addView(frame, FrameLayout.LayoutParams(l.px(1140), MATCH_PARENT).apply { leftMargin = l.px(720) })
+        view.addView(picker.view, FrameLayout.LayoutParams(l.px(1140), MATCH_PARENT).apply { leftMargin = l.px(720) })
+        picker.onDone = { frame.visibility = View.VISIBLE; refreshValues(); focus() }
+        picker.onOpen = { frame.visibility = View.INVISIBLE; about.text = "Choose the picture to remove. Back returns to Settings." }
         build()
     }
 
@@ -384,7 +394,8 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
     private fun header(t: String) {
         val v = TextView(nav.ctx).apply { style(Txt.CAPTION, l.u, Colors.TEXT_DIM); text = t }
         y += if (y == 0) l.px(190) else l.px(36)          // the first header clears the tab bar
-        list.addView(v, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.px(30); topMargin = y })
+        // An exact height: a wrap-content view placed below the frame's own height would measure to nothing.
+        list.addView(v, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(40)).apply { leftMargin = l.px(30); topMargin = y })
         y += l.px(46)
     }
     private fun row(label: String, help: String, value: () -> String, act: () -> Unit) {
@@ -413,6 +424,7 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         header("Appearance")
         choice(Prefs.CLOCK, "How the time is shown in the corner and in Control Center.")
         choice(Prefs.ROTATE, "How often the artwork behind the top row moves to the next title.")
+        choice(Prefs.GLASS, "The material of the tab bar, the top row, the clock and Control Center. Frosted blurs what is behind; Clear lets it show through, with brighter edges.")
         row("Wallpapers", "Your own pictures behind Home while the Home tab is selected; a different one each time Home opens. " +
             "Add them from your phone, or copy them from a computer with scripts/wallpapers.sh. Streaming apps show their own titles when you move to them.", {
             nav.wallpapers.count().let { if (it == 0) "None yet" else if (it == 1) "1 picture" else "$it pictures" } }) { wallpaperMenu() }
@@ -443,7 +455,7 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         choice(Prefs.SAVER_STYLE, "Slow pan moves gently across each picture; Still shows it unmoving.")
         row("Preview screensaver", "Starts the screensaver now.", { "" }) { nav.startSaver() }
         header("About")
-        row("Epple TV", "A private tvOS-inspired launcher for this TV. It runs as a normal app and never replaces the system launcher.", { "Version ${BuildConfig.VERSION_NAME}" }) {}
+        row("Epple TV", "A private, tvOS-inspired launcher for this TV. Settings > Home screen chooses whether it or Google TV opens on Home.", { "Version ${BuildConfig.VERSION_NAME}" }) {}
         row("Device", "This TV, its Android version and the screen size Epple TV draws at.", { "${Build.MODEL} · Android ${Build.VERSION.RELEASE} · ${nav.ctx.resources.displayMetrics.widthPixels}×${nav.ctx.resources.displayMetrics.heightPixels}" }) {}
         row("Diagnostics", "Network requests made since Epple TV opened, and memory in use.", {
             "${nav.content.net.calls.get()} requests · ${(Debug.getPss() / 1024)} MB" }) {}
@@ -457,7 +469,8 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         val items = ArrayList<Pair<String, () -> Unit>>()
         items.add("Add from Phone" to { nav.openPhone() })
         if (n > 1) items.add("Show Another Now" to { nav.nextWallpaper(); nav.toast("Wallpaper changed") })
-        if (n > 0) items.add("Remove All Pictures" to {
+        if (n > 0) items.add("Remove a Picture…" to { picker.open() })
+        if (n > 1) items.add("Remove All Pictures" to {
             nav.menu("Remove all $n pictures from this TV?", listOf(
                 "Cancel" to {},                                   // first, so a stray OK keeps the pictures
                 "Remove All" to { nav.wallpapers.removeAll(); nav.nextWallpaper(); refreshValues(); nav.toast("Pictures removed") }))
@@ -472,23 +485,29 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
 
     private fun refreshValues() { rows.forEach { it.pill.value = it.value() }; rows.getOrNull(i)?.let { about.text = it.help } }
 
-    override fun show() { refreshValues() }
+    override fun show() { refreshValues(); fadeTop(list, l) }
     override fun focus(): Boolean { rows.getOrNull(i)?.pill?.requestFocus(); place(); return true }
     override fun key(dx: Int, dy: Int): Boolean {
+        if (picker.active) return picker.key(dx, dy)
         if (dy == 0) return true
         val n = i + dy
         if (n < 0) return false
         if (n >= rows.size) return true
         i = n; focus(); return true
     }
-    override fun back(): Boolean = if (i > 0) { i = 0; focus(); true } else false
+    override fun back(): Boolean = when {
+        picker.active -> { picker.close(); true }
+        i > 0 -> { i = 0; focus(); true }
+        else -> false
+    }
+    override fun reset() { if (picker.active) picker.close() }
 
     private fun place() {
         val r = rows.getOrNull(i) ?: return
         about.text = r.help
         sy.target = -maxOf(0, rowY.getValue(r) - l.px(620)).toFloat(); nav.clock.add(this)
     }
-    override fun tick(dt: Float): Boolean { sy.step(dt); list.translationY = sy.value; return !sy.atRest() }
+    override fun tick(dt: Float): Boolean { sy.step(dt); list.translationY = sy.value; fadeTop(list, l); return !sy.atRest() }
     override val wantsArt = false
 }
 
@@ -562,5 +581,163 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
         if (pan) { t += dt; val s = 1f + 0.06f * (t / 12f).coerceAtMost(1f); front.scaleX = s; front.scaleY = s; front.translationX = -nav.l.pxf(40f) * (t / 12f).coerceAtMost(1f) }
         if (!showing && show.atRest()) { view.visibility = View.GONE; a.setImageDrawable(null); b.setImageDrawable(null); return false }
         return pan || !show.atRest() || !fade.atRest()       // a still screensaver requests no frames between pictures
+    }
+}
+
+// ------------------------------------------------------------------------------------------------ Wallpaper picker
+
+/**
+ * Settings > Wallpapers > Remove a Picture: the pictures as a grid of thumbnails, so it is clear which one goes.
+ * Thumbnails are decoded small on a worker and released when the picker closes. OK asks before deleting.
+ */
+class WallpaperPicker(private val nav: Nav) : FrameClock.Tick {
+    private val l get() = nav.l
+    val view = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false; visibility = View.GONE }
+    private val grid = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
+    private val heading = TextView(nav.ctx).apply { style(Txt.CAPTION, l.u, Colors.TEXT_DIM) }
+    private val tiles = ArrayList<Thumb>()
+    private var files: List<java.io.File> = emptyList()
+    private var i = 0
+    private val sy = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
+    private val main = Handler(Looper.getMainLooper())
+    private var gen = 0
+    var active = false; private set
+    var onDone: () -> Unit = {}
+    var onOpen: () -> Unit = {}
+
+    private val tw get() = l.px(336); private val th get() = l.px(189); private val gap get() = l.px(30)
+
+    init {
+        val frame = FrameLayout(nav.ctx).apply { clipChildren = false; clipToPadding = false }
+        frame.addView(grid, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT).apply { leftMargin = l.px(70) })
+        grid.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fadeTop(grid, l) }
+        view.addView(frame, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+    }
+
+    fun open() {
+        files = nav.wallpapers.files()
+        if (files.isEmpty()) return
+        active = true; i = 0; sy.snapTo(0f); grid.translationY = 0f
+        build(); view.visibility = View.VISIBLE; onOpen(); focus()
+    }
+
+    fun close() {
+        if (!active) return
+        active = false; gen++
+        view.visibility = View.GONE
+        tiles.forEach { it.release() }; tiles.clear(); grid.removeAllViews()
+        onDone()
+    }
+
+    private fun build() {
+        tiles.forEach { it.release() }; tiles.clear(); grid.removeAllViews()
+        heading.text = "REMOVE A PICTURE  ·  ${files.size}"
+        grid.addView(heading, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(190) })
+        val cur = nav.wallpapers.current()
+        files.forEachIndexed { n, f ->
+            val t = Thumb(nav.ctx, l, nav.clock, f.name == cur)
+            t.setOnClickListener { confirm(n) }
+            grid.addView(t, FrameLayout.LayoutParams(tw, th).apply {
+                leftMargin = (n % COLS) * (tw + gap); topMargin = l.px(250) + (n / COLS) * (th + gap) })
+            tiles.add(t)
+        }
+        val g = ++gen
+        val w = tw; val h = th
+        Thread {
+            files.forEachIndexed { n, f ->
+                if (g != gen) return@Thread
+                val b = nav.wallpapers.thumb(f, w, h)
+                main.post { if (g == gen) tiles.getOrNull(n)?.set(b) else b?.recycle() }
+            }
+        }.apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 }.start()
+    }
+
+    private fun confirm(n: Int) {
+        val f = files.getOrNull(n) ?: return
+        nav.menu("Remove this picture?", listOf(
+            "Cancel" to { focus() },                                  // first, so a stray OK keeps it
+            "Remove" to {
+                val wasShown = f.name == nav.wallpapers.current()
+                nav.wallpapers.remove(f)
+                nav.toast("Picture removed")
+                if (wasShown) nav.nextWallpaper()
+                files = nav.wallpapers.files()
+                if (files.isEmpty()) close()
+                else { i = i.coerceAtMost(files.size - 1); build(); focus() }
+            }))
+    }
+
+    fun focus() { tiles.getOrNull(i)?.requestFocus(); place() }
+
+    fun key(dx: Int, dy: Int): Boolean {
+        val n = files.size; if (n == 0) return true
+        val col = i % COLS
+        val next = when {
+            dx > 0 -> if (col < COLS - 1 && i + 1 < n) i + 1 else i
+            dx < 0 -> if (col > 0) i - 1 else i
+            dy > 0 -> if (i + COLS < n) i + COLS else if (i / COLS < (n - 1) / COLS) n - 1 else i
+            dy < 0 -> if (i - COLS >= 0) i - COLS else return false.also { close() }   // up from the first row: back to Settings
+            else -> i
+        }
+        i = next; focus(); return true
+    }
+
+    private fun place() {
+        val row = i / COLS
+        sy.target = -maxOf(0, l.px(250) + row * (th + gap) - l.px(560)).toFloat(); nav.clock.add(this)
+    }
+    override fun tick(dt: Float): Boolean { sy.step(dt); grid.translationY = sy.value; fadeTop(grid, l); return !sy.atRest() }
+
+    /** One thumbnail: rounded picture, a white ring and a slight lift when focused, "On screen" on the current one. */
+    @android.annotation.SuppressLint("ViewConstructor")
+    private class Thumb(ctx: android.content.Context, private val l: Layout, private val clock: FrameClock, private val shown: Boolean) : View(ctx), FrameClock.Tick {
+        private var b: Bitmap? = null
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+        private val ring = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; color = Colors.WHITE }
+        private val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0x26FFFFFF }
+        private val badge = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xCC000000.toInt() }
+        private val text = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = Colors.WHITE; textSize = l.pxf(20f); typeface = com.eppletv.launcher.ui.Type.of(600, com.eppletv.launcher.ui.Type.Face.UI) }
+        private val r = android.graphics.RectF()
+        private val f = Spring(0f, 0.8f, 380f)
+        init { isFocusable = true }
+        fun set(bm: Bitmap?) { b = bm; paint.shader = bm?.let { android.graphics.BitmapShader(it, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP) }; invalidate() }
+        fun release() { b?.recycle(); b = null; paint.shader = null }
+        override fun onFocusChanged(g: Boolean, d: Int, p: android.graphics.Rect?) { super.onFocusChanged(g, d, p); f.target = if (g) 1f else 0f; clock.add(this) }
+        override fun tick(dt: Float): Boolean {
+            f.step(dt); val s = 1f + 0.06f * f.value; scaleX = s; scaleY = s
+            translationZ = l.pxf(12f) * f.value; invalidate(); return !f.atRest()
+        }
+        override fun onDraw(c: android.graphics.Canvas) {
+            val rad = l.pxf(18f)
+            r.set(0f, 0f, width.toFloat(), height.toFloat())
+            c.drawRoundRect(r, rad, rad, if (b != null) paint else fill)
+            if (shown) {
+                val label = "On screen"; val pad = l.pxf(12f); val tw = text.measureText(label)
+                r.set(pad, pad, pad + tw + pad * 2, pad + l.pxf(36f))
+                c.drawRoundRect(r, r.height() / 2, r.height() / 2, badge)
+                c.drawText(label, pad * 2, r.centerY() + text.textSize * 0.35f, text)
+            }
+            if (f.value > 0.01f) {
+                val sw = l.pxf(4f); ring.strokeWidth = sw; ring.alpha = (255 * f.value.coerceIn(0f, 1f)).toInt()
+                r.set(sw / 2, sw / 2, width - sw / 2, height - sw / 2)
+                c.drawRoundRect(r, rad - sw / 2, rad - sw / 2, ring)
+            }
+        }
+    }
+
+    companion object { private const val COLS = 3 }
+}
+
+/**
+ * A scrolling settings list never shows a control cut in half under the tab bar: anything whose top edge has
+ * scrolled above the line just below the bar is hidden, and the rows just under the line fade in over a short
+ * distance. Plain alpha per child: no offscreen layer, no clipping.
+ */
+fun fadeTop(list: android.view.ViewGroup, l: Layout, line: Int = l.px(150), fade: Int = l.px(70)) {
+    val dy = list.translationY
+    for (k in 0 until list.childCount) {
+        val v = list.getChildAt(k)
+        v.alpha = ((v.top + dy - line) / fade).coerceIn(0f, 1f)
     }
 }

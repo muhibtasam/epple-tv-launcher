@@ -41,6 +41,73 @@ object Look {
     const val INFO_TOP = 150                                 // info block (title, meta, summary) under the tab bar
     const val ROWS_TOP = 540                                 // first row of a browse screen
     const val PLACEHOLDER = 0xFF2A2D35.toInt()
+    // Netflix-style rows: portrait posters at rest; the focused title opens into a wide card of the same height.
+    const val ROW_H = 300; const val POSTER_W = 200; const val WIDE_W = 533; const val ROW_GAP = 18
+}
+
+/**
+ * A card in a Netflix-style row. At rest it shows the title's portrait poster; the focused card widens (driven by its
+ * row) to a 16:9 card showing the landscape artwork, crossfading between the two as it grows. A white rim marks focus.
+ * Everything is drawn by this one view: the row moves it with translationX and [shown], never with layout passes.
+ */
+@SuppressLint("ViewConstructor")
+class PosterCard(ctx: Context, private val l: Layout, private val clock: FrameClock) :
+    Card(ctx, l, clock, l.px(Look.WIDE_W), l.px(Look.ROW_H), titled = false) {
+    private val posterW = l.pxf(Look.POSTER_W.toFloat()); private val wideW = l.pxf(Look.WIDE_W.toFloat())
+    /** The width drawn now, between the poster and the wide card. */
+    var shown = posterW
+        set(v) { if (field != v) { field = v; invalidate() } }
+    private var poster: Bitmap? = null
+    private var wide: Bitmap? = null
+    private val fv = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Look.PLACEHOLDER }
+    private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = l.pxf(4f); color = Colors.WHITE }
+    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(24f); typeface = com.eppletv.launcher.ui.Type.of(600); color = Colors.TEXT_DIM; textAlign = Paint.Align.CENTER }
+    private val r = RectF(); private val m = Matrix(); private val clip = android.graphics.Path()
+    private val radius = l.pxf(16f)
+
+    init { removeAllViews(); setWillNotDraw(false); clipChildren = true }
+
+    private val shaders = HashMap<Bitmap, BitmapShader>(2)
+    override fun setBitmap(b: Bitmap?) { wide = b; invalidate() }
+    fun setPoster(b: Bitmap?) { poster = b; invalidate() }
+    override fun release() { if (wide != null || poster != null || requested) { requested = false; wide = null; poster = null; shaders.clear(); invalidate() } }
+
+    override fun onFocusChanged(gain: Boolean, direction: Int, prev: android.graphics.Rect?) {
+        super.onFocusChanged(gain, direction, prev)
+        fv.target = if (gain) 1f else 0f; clock.add(this)
+    }
+
+    override fun tick(dt: Float): Boolean { fv.step(dt); invalidate(); return !fv.atRest() }
+
+    private fun drawCrop(c: Canvas, b: Bitmap, w: Float, h: Float, alpha: Int) {
+        val s = maxOf(w / b.width, h / b.height)
+        m.setScale(s, s); m.postTranslate((w - b.width * s) / 2f, (h - b.height * s) / 2f)
+        if (shaders.size > 2) shaders.keys.retainAll(setOf(poster, wide))
+        paint.shader = shaders.getOrPut(b) { BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP) }.apply { setLocalMatrix(m) }
+        paint.alpha = alpha
+        c.drawRect(0f, 0f, w, h, paint)
+    }
+
+    override fun onDraw(c: Canvas) {
+        val w = shown; val h = height.toFloat()
+        if (w < 1f) return
+        r.set(0f, 0f, w, h)
+        clip.reset(); clip.addRoundRect(r, radius, radius, android.graphics.Path.Direction.CW)
+        c.save(); c.clipPath(clip)
+        val t = ((w - posterW) / (wideW - posterW)).coerceIn(0f, 1f)
+        val p = poster ?: wide; val wd = wide ?: poster
+        when {
+            p == null -> { c.drawRect(r, fill); item?.title?.let { c.drawText(it.take(18), w / 2f, h / 2f, label) } }
+            t <= 0.01f || p === wd -> drawCrop(c, if (t > 0.5f) wd!! else p, w, h, 255)
+            t >= 0.99f -> drawCrop(c, wd!!, w, h, 255)
+            else -> { drawCrop(c, p, w, h, 255); drawCrop(c, wd!!, w, h, (255 * t).toInt()) }
+        }
+        c.restore()
+        val f = fv.value.coerceIn(0f, 1f)
+        if (f > 0.01f) { rim.alpha = (255 * f).toInt(); r.inset(rim.strokeWidth / 2f, rim.strokeWidth / 2f); c.drawRoundRect(r, radius, radius, rim) }
+    }
 }
 
 private val shadowCache = HashMap<Long, Bitmap>()
@@ -92,7 +159,7 @@ class ArtView(ctx: Context, private val corner: Float) : View(ctx) {
  * OK and a long OK reach [onClick] / [onLongClick] through the platform's click handling.
  */
 @SuppressLint("ViewConstructor")
-class Card(ctx: Context, private val l: Layout, private val clock: FrameClock, val w: Int, val h: Int, private val titled: Boolean = true) :
+open class Card(ctx: Context, private val l: Layout, private val clock: FrameClock, val w: Int, val h: Int, private val titled: Boolean = true) :
     FrameLayout(ctx), FrameClock.Tick {
     var item: ContentItem? = null
     var tag2: Any? = null                       // anything else the card stands for (an app, a season, a key)
@@ -124,10 +191,10 @@ class Card(ctx: Context, private val l: Layout, private val clock: FrameClock, v
         title.text = text; sub.text = subtitle; ph.text = placeholder; contentDescription = text
     }
 
-    fun setBitmap(b: Bitmap?) { art.bitmap = b; ph.visibility = if (b == null) VISIBLE else GONE }
+    open fun setBitmap(b: Bitmap?) { art.bitmap = b; ph.visibility = if (b == null) VISIBLE else GONE }
 
     /** Drops the artwork (it reloads from the memory or disk cache when the card comes back into view). */
-    fun release() { if (art.bitmap != null || requested) { requested = false; setBitmap(null) } }
+    open fun release() { if (art.bitmap != null || requested) { requested = false; setBitmap(null) } }
 
     override fun onSizeChanged(nw: Int, nh: Int, ow: Int, oh: Int) { pivotX = w / 2f; pivotY = h / 2f }
 
@@ -155,7 +222,9 @@ class Card(ctx: Context, private val l: Layout, private val clock: FrameClock, v
 /** A titled horizontal row of cards. Images load only for cards on screen (plus two ahead). */
 @SuppressLint("ViewConstructor")
 class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, val title: String,
-            val cw: Int = Look.CARD_W, val ch: Int = Look.CARD_H, private val titled: Boolean = true) : FrameLayout(ctx), FrameClock.Tick {
+            val cw: Int = Look.CARD_W, val ch: Int = Look.CARD_H, private val titled: Boolean = true,
+            /** Netflix-style: posters with a wide focused card, and an endless loop (after the last title comes the first). */
+            val poster: Boolean = false) : FrameLayout(ctx), FrameClock.Tick {
     private val header = TextView(ctx).apply { style(Txt.TITLE, l.u); text = title }
     private val status = TextView(ctx).apply { style(Txt.META, l.u, Colors.TEXT_DIM); text = "Loading…" }
     private val strip = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
@@ -165,7 +234,10 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
     private val sx = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
     private val pitch = l.px(cw + Look.GAP)
     private val visible = max(1, (l.px(1920) - l.left) / pitch)
-    val rowHeight = l.px(Look.ROW_TITLE) + l.px(ch) + l.px(if (titled) Look.CARD_LABEL + 44 else 46)
+    val rowHeight = if (poster) l.px(Look.ROW_TITLE) + l.px(Look.ROW_H) + l.px(44) else l.px(Look.ROW_TITLE) + l.px(ch) + l.px(if (titled) Look.CARD_LABEL + 44 else 46)
+    // Poster mode: a continuous position (in titles, unbounded) springs to [pt]; each card's slot is derived from it.
+    private val ps = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, 0.002f)
+    private var pt = 0f
     var loader: ((Card) -> Unit)? = null
     var loaded = false; private set
     val item: ContentItem? get() = cards.getOrNull(col)?.item
@@ -174,15 +246,17 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         clipChildren = false; clipToPadding = false
         addView(header, LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left })
         addView(status, LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(Look.ROW_TITLE + 20) })
-        addView(strip, LayoutParams(MATCH_PARENT, l.px(ch)).apply { topMargin = l.px(Look.ROW_TITLE) })
+        addView(strip, LayoutParams(MATCH_PARENT, l.px(if (poster) Look.ROW_H else ch)).apply { topMargin = l.px(Look.ROW_TITLE) })
     }
 
     /** Fills the row; [bind] sets each card up. An empty list shows [emptyText] (or hides the row when null). */
     fun set(items: List<ContentItem>, emptyText: String? = null, bind: (Card, ContentItem) -> Unit) {
         strip.removeAllViews(); cards.clear()
         items.forEachIndexed { i, it ->
-            val c = Card(context, l, clock, l.px(cw), l.px(ch), titled); c.item = it; bind(c, it)
-            strip.addView(c, LayoutParams(l.px(cw), l.px(ch)).apply { leftMargin = l.left + i * pitch })
+            val c = if (poster) PosterCard(context, l, clock) else Card(context, l, clock, l.px(cw), l.px(ch), titled)
+            c.item = it; bind(c, it)
+            if (poster) strip.addView(c, LayoutParams(l.px(Look.WIDE_W), l.px(Look.ROW_H)).apply { leftMargin = l.left })
+            else strip.addView(c, LayoutParams(l.px(cw), l.px(ch)).apply { leftMargin = l.left + i * pitch })
             cards.add(c)
         }
         loaded = true
@@ -190,22 +264,70 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         status.visibility = if (items.isEmpty() && emptyText != null) VISIBLE else GONE
         visibility = if (items.isEmpty() && emptyText == null) GONE else VISIBLE
         col = col.coerceIn(0, max(0, cards.size - 1))
+        if (poster) { pt = col.toFloat(); ps.snapTo(pt); layoutPosters() }
         place(); ensureLoaded()
+    }
+
+    /** Back to the first title, without animation (the section was left). */
+    fun reset() {
+        col = 0; first = 0
+        if (poster) { pt = 0f; ps.snapTo(0f); layoutPosters() } else { sx.snapTo(0f); strip.translationX = 0f }
+        ensureLoaded()
+    }
+
+    /** Signed distance of card [i] from the focus position [p], wrapped so the loop has no ends (-1.5 ..< n-1.5). */
+    private fun slot(i: Int, p: Float): Float {
+        val n = cards.size
+        var d = ((i - p) % n + n) % n
+        if (n > 2 && d > n - 1.5f) d -= n
+        return d
+    }
+
+    /** Places every poster card for the current position: x and width follow from its distance to the focus. */
+    private fun layoutPosters() {
+        val pw = l.pxf(Look.POSTER_W.toFloat()); val ww = l.pxf(Look.WIDE_W.toFloat()); val gap = l.pxf(Look.ROW_GAP.toFloat())
+        val screen = l.pxf(1920f)
+        for ((i, card) in cards.withIndex()) {
+            val c = card as? PosterCard ?: continue
+            val d = slot(i, ps.value)
+            val x = l.left + (pw + gap) * d + (ww - pw) * d.coerceIn(0f, 1f)
+            val w = pw + (ww - pw) * (1f - kotlin.math.abs(d).coerceIn(0f, 1f))
+            c.translationX = x - l.left
+            c.shown = w
+            c.visibility = if (x < screen && x + w > -pw) VISIBLE else INVISIBLE
+        }
     }
 
     fun failed(text: String) { loaded = true; status.text = text; status.visibility = VISIBLE }
 
     fun focus(): Boolean { val c = cards.getOrNull(col) ?: return false; place(); c.requestFocus(); return true }
 
-    fun move(dx: Int): Boolean { val n = col + dx; if (n !in cards.indices) return false; col = n; focus(); return true }
+    fun move(dx: Int): Boolean {
+        if (poster) {
+            if (cards.size < 2) return false
+            pt += dx; col = ((Math.round(pt) % cards.size) + cards.size) % cards.size
+            focus(); return true
+        }
+        val n = col + dx; if (n !in cards.indices) return false; col = n; focus(); return true
+    }
 
     private fun place() {
+        if (poster) { ps.target = pt; clock.add(this); ensureLoaded(); return }
         first = (col - 1).coerceIn(0, max(0, cards.size - visible))
         sx.target = -(first * pitch).toFloat(); clock.add(this); ensureLoaded()
     }
 
     private fun ensureLoaded() {
         val ld = loader ?: return
+        if (poster) {
+            // The focus, one behind and the posters that fit after it; the rest give their artwork back.
+            val ahead = ((l.pxf(1920f) - l.left) / l.pxf((Look.POSTER_W + Look.ROW_GAP).toFloat())).toInt() + 1
+            for ((i, c) in cards.withIndex()) {
+                val d = slot(i, pt)
+                if (d >= -1f && d <= ahead) { if (!c.requested) { c.requested = true; ld(c) } } else if (d > ahead + 4) c.release()
+            }
+            return
+        }
         for (i in first until min(cards.size, first + visible + 2)) { val c = cards[i]; if (!c.requested) { c.requested = true; ld(c) } }
         // Cards well off screen give their artwork back, so memory doesn't grow with browsing.
         for (i in cards.indices) if (i < first - 4 || i > first + visible + 6) cards[i].release()
@@ -216,7 +338,10 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
     /** Loads the visible cards again after [releaseAll]. */
     fun reload() = ensureLoaded()
 
-    override fun tick(dt: Float): Boolean { sx.step(dt); strip.translationX = sx.value; return !sx.atRest() }
+    override fun tick(dt: Float): Boolean {
+        if (poster) { ps.step(dt); layoutPosters(); return !ps.atRest() }
+        sx.step(dt); strip.translationX = sx.value; return !sx.atRest()
+    }
 }
 
 /**
@@ -235,6 +360,13 @@ class ShelfStack(ctx: Context, private val l: Layout, private val clock: FrameCl
     init { clipChildren = false; clipToPadding = false; addView(holder, LayoutParams(MATCH_PARENT, MATCH_PARENT)) }
 
     fun clear() { holder.removeAllViews(); shelves.clear(); r = 0; sy.snapTo(0f); holder.translationY = 0f }
+
+    /** Every row back to its first title, the first row at the top, no animation. */
+    fun reset() {
+        shelves.forEach { it.reset() }
+        r = maxOf(0, firstNavigable()); sy.snapTo(0f); holder.translationY = 0f
+        place(); sy.snapTo(sy.target); holder.translationY = sy.value; tick(0f)
+    }
 
     fun add(s: Shelf): Shelf { shelves.add(s); holder.addView(s, LayoutParams(MATCH_PARENT, s.rowHeight)); relayout(); return s }
 
@@ -298,21 +430,23 @@ class ShelfStack(ctx: Context, private val l: Layout, private val clock: FrameCl
  */
 @SuppressLint("ViewConstructor")
 class Keyboard(ctx: Context, private val l: Layout, clock: FrameClock, private val onKey: (String) -> Unit) : FrameLayout(ctx) {
-    private val rows: List<List<String>> = listOf("abcdefghijklm".map { "$it" }, "nopqrstuvwxyz".map { "$it" },
-        "1234567890".map { "$it" } + listOf(SPACE, DEL, CLEAR))
+    // QWERTY, with digits on top and Space, Delete and Clear after the last letters; rows are staggered as on a keyboard.
+    private val rows: List<List<String>> = listOf("1234567890".map { "$it" }, "qwertyuiop".map { "$it" },
+        "asdfghjkl".map { "$it" }, "zxcvbnm".map { "$it" } + listOf(SPACE, DEL, CLEAR))
+    private val indent = floatArrayOf(0f, 0.5f, 1f, 1.5f)
     private val keys = ArrayList<List<Pill>>()
     var r = 0; var c = 0
 
     init {
         clipChildren = false
-        val k = l.px(72); val gap = l.px(12)
+        val k = l.px(60); val gap = l.px(10)
         rows.forEachIndexed { ri, row ->
-            val line = ArrayList<Pill>(); var x = 0
+            val line = ArrayList<Pill>(); var x = ((k + gap) * indent[ri]).toInt()
             row.forEach { v ->
                 val wide = v.length > 1
                 val w = if (wide) k * 2 + gap else k
                 val label = when (v) { SPACE -> "Space"; DEL -> "Delete"; CLEAR -> "Clear"; else -> v }
-                val p = Pill(ctx, label, l.pxf(if (wide) 24f else 30f), l.pxf(18f), 0, clock, Colors.FILL, Colors.WHITE, 0.12f)
+                val p = Pill(ctx, label, l.pxf(if (wide) 22f else 27f), l.pxf(16f), 0, clock, Colors.FILL, Colors.WHITE, 0.12f)
                 p.setOnClickListener { onKey(v) }
                 addView(p, LayoutParams(w, k).apply { leftMargin = x; topMargin = ri * (k + gap) })
                 line.add(p); x += w + gap
@@ -322,6 +456,7 @@ class Keyboard(ctx: Context, private val l: Layout, clock: FrameClock, private v
     }
 
     fun focus() { keys[r][c.coerceIn(0, keys[r].size - 1)].requestFocus() }
+    fun home() { r = 1; c = 0 }
 
     /** False when moving down from the last row or up from the first. */
     fun key(dx: Int, dy: Int): Boolean {

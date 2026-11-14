@@ -95,6 +95,24 @@ class Wallpapers(ctx: Context) {
     fun newest(): File? = files().lastOrNull()?.also { prefs.edit().putString("last", it.name).apply() }
 
     @Synchronized fun remove(f: File) { if (f.parentFile == dir) f.delete() }
+
+    /** A small 16:9 preview for the remove picker (decoded at a reduced size: a few hundred KB each). */
+    fun thumb(f: File, w: Int, h: Int): Bitmap? {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(f.path, o)
+        if (o.outWidth <= 0 || o.outHeight <= 0) return null
+        var s = 1
+        while (o.outWidth / (s * 2) >= w && o.outHeight / (s * 2) >= h) s *= 2
+        val src = BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = s }) ?: return null
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
+        val k = maxOf(w.toFloat() / src.width, h.toFloat() / src.height)
+        val m = Matrix().apply { setScale(k, k); postTranslate((w - src.width * k) / 2f, (h - src.height * k) / 2f) }
+        Canvas(out).drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG))
+        src.recycle(); out.prepareToDraw()
+        return out
+    }
+    /** The picture on screen now (the last one shown), if it is one of ours. */
+    fun current(): String? = prefs.getString("last", null)
     @Synchronized fun removeAll() { files().forEach { it.delete() } }
 
     /** The wallpaper as a full-screen backdrop: 1920x1080, centre-cropped, with the hero scrim painted in. */

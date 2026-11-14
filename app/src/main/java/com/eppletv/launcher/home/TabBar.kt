@@ -155,40 +155,33 @@ class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock
 @SuppressLint("ViewConstructor")
 class TabGlass(ctx: Context, private val l: Layout, private val backdrop: Backdrop, private val corner: Float = -1f) : View(ctx) {
     private val frost = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val tint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x6613151A }
+    private val tint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rect = RectF(); private val m = Matrix(); private val loc = IntArray(2)
     private var overlay: Bitmap? = null
+    private var overlayClear: Boolean? = null
     private val radius get() = if (corner < 0f) height / 2f else corner
 
-    init { backdrop.listeners.add { invalidate() } }
+    init { backdrop.listeners.add { invalidate() }; GlassStyle.register(this) }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         rect.set(0f, 0f, w.toFloat(), h.toFloat())
-        if (w <= 0 || h <= 0) return
-        overlay?.recycle()
-        overlay = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { b ->
-            val c = Canvas(b)
-            val rr = if (corner < 0f) h / 2f else corner
-            c.drawRoundRect(rect, rr, rr, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                shader = LinearGradient(0f, 0f, 0f, h.toFloat(), intArrayOf(0x1AFFFFFF, 0x05FFFFFF, 0x00FFFFFF), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP) })
-            val sw = l.pxf(1.5f).coerceAtLeast(1f)
-            c.drawRoundRect(RectF(sw / 2, sw / 2, w - sw / 2, h - sw / 2), rr - sw / 2, rr - sw / 2, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE; strokeWidth = sw
-                shader = LinearGradient(0f, 0f, 0f, h.toFloat(), intArrayOf(0x59FFFFFF, 0x1AFFFFFF, 0x26FFFFFF), null, Shader.TileMode.CLAMP) })
-            b.prepareToDraw()
-        }
+        overlay?.recycle(); overlay = null
     }
 
+    /** The shared glass material (see [GlassStyle]): frost unless Clear is chosen, the tint, then the edge light. */
     override fun onDraw(c: Canvas) {
+        if (width <= 0 || height <= 0) return
+        if (overlay == null || overlayClear != GlassStyle.clear) { overlay?.recycle(); overlay = GlassStyle.overlay(l, width, height, radius); overlayClear = GlassStyle.clear }
         val b = backdrop.currentBitmap
         val sw = rootView.width.toFloat(); val sh = rootView.height.toFloat()
-        if (b != null && sw > 0f) {
+        if (b != null && sw > 0f && !GlassStyle.clear) {
             getLocationInWindow(loc)
             val sh2 = Frost.shader(b)
             m.setScale(sw / 240f, sh / 135f); m.postTranslate(-loc[0].toFloat(), -loc[1].toFloat())
             sh2.setLocalMatrix(m); frost.shader = sh2
             c.drawRoundRect(rect, radius, radius, frost)
         }
+        tint.color = GlassStyle.tint
         c.drawRoundRect(rect, radius, radius, tint)
         overlay?.let { c.drawBitmap(it, 0f, 0f, null) }
     }

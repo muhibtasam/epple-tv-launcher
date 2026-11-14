@@ -354,7 +354,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         layers[front].a.target = 0f
         front = 1 - front
         val y = layers[front]
-        y.eyebrow.text = eyebrow; y.title.text = title; y.meta.set(meta)
+        y.eyebrow.text = Brand.eyebrow(eyebrow); y.title.text = title; y.meta.set(meta)
         // The logo replaces the typeset title; it keeps its own proportions inside a 760x200 box (never stretched).
         y.logo.setImageBitmap(logo)
         y.logo.visibility = if (logo != null) View.VISIBLE else View.GONE
@@ -382,7 +382,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
 
     private fun layer(ctx: Context): Layer {
         fun shadowed(t: TextView, r: Float) = t.apply { setShadowLayer(l.pxf(r), 0f, l.pxf(2f), 0x99000000.toInt()) }
-        val eyebrow = shadowed(TextView(ctx).apply { style(Txt.CAPTION, l.u, 0xD9FFFFFF.toInt()) }, 8f)
+        val eyebrow = shadowed(TextView(ctx).apply { style(Txt.CAPTION, l.u, 0xD9FFFFFF.toInt()); isAllCaps = false }, 8f)
         val title = shadowed(TextView(ctx).apply { style(Txt.HERO, l.u) }, 20f)
         val meta = MetaRow(ctx, l)
         val summary = shadowed(TextView(ctx).apply { style(Txt.BODY, l.u, 0xD9FFFFFF.toInt()) }, 10f)
@@ -463,5 +463,28 @@ object Scrim {
         val g = android.graphics.RadialGradient(0f, 0f, w * 0.78f, radial, radialAt, android.graphics.Shader.TileMode.CLAMP)
         g.setLocalMatrix(android.graphics.Matrix().apply { setScale(1f, (h * 0.86f) / (w * 0.78f)) })
         c.drawRect(0f, 0f, w, h, Paint().apply { isDither = true; shader = g })
+    }
+}
+
+/**
+ * "New on Netflix", "Trending on YouTube": the service's name in bold and its brand colour, the rest as the usual
+ * upper-case eyebrow. (Upper-cased here: the platform's all-caps transformation would drop the styling.)
+ */
+object Brand {
+    private val colors = linkedMapOf(
+        "Prime Video" to 0xFF1A98FF.toInt(), "Netflix" to 0xFFE50914.toInt(), "Crunchyroll" to 0xFFF47521.toInt(),
+        "YouTube" to 0xFFFF2D2D.toInt(), "Stremio" to 0xFF8F6BFF.toInt(), "tapmad" to 0xFF3BD16F.toInt(),
+    )
+    fun eyebrow(text: String): CharSequence {
+        val up = text.uppercase()
+        val out = android.text.SpannableString(up)
+        for ((name, color) in colors) {
+            val i = up.indexOf(name.uppercase()); if (i < 0) continue
+            val end = i + name.length
+            out.setSpan(android.text.style.ForegroundColorSpan(color), i, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            out.setSpan(android.text.style.TypefaceSpan(com.eppletv.launcher.ui.Type.of(800, com.eppletv.launcher.ui.Type.Face.HEAD)), i, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            break
+        }
+        return out
     }
 }

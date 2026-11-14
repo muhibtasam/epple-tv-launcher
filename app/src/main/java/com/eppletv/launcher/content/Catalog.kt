@@ -135,8 +135,10 @@ class Catalog(private val net: Net, private val key_: () -> String, private val 
                 genres.take(2).joinToString(", "), if (vote > 0) "★ %.1f".format(Locale.US, vote) else ""),
             "https://image.tmdb.org/t/p/original$backdrop", null, null, "", o.optString("overview"),
             weight = 0.15 + 0.85 * (ln(1 + o.optDouble("popularity", 0.0)) / ln(401.0)).coerceIn(0.0, 1.0),
-            origin = if (lang in INDIAN) "in" else "intl")
+            origin = if (lang in INDIAN) "in" else "intl", posterUrl = poster(o))
     }
+
+    private fun poster(o: JSONObject) = o.optString("poster_path").let { if (it.isEmpty() || it == "null") "" else "https://image.tmdb.org/t/p/w342$it" }
 
     @Volatile private var genres: Map<Int, String>? = null
     private fun genreNames(): Map<Int, String> = genres ?: HashMap<Int, String>().also { m ->

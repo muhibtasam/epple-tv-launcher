@@ -70,6 +70,8 @@ abstract class Screen(protected val nav: Nav) {
     abstract val view: View
     open fun show() {}
     open fun hide() {}
+    /** The section was left for another tab: back to its starting state (first titles, empty search). */
+    open fun reset() {}
     /** Puts focus back where the user left it. */
     abstract fun focus(): Boolean
     /** D-pad; returns false when the user leaves through the top edge (to the tab bar). */
@@ -162,12 +164,19 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
 
     private fun build() {
         built = true
-        sources.forEach { src -> stack.add(Shelf(view.context, l, nav.clock, src.title).apply { loader = { c -> loadThumb(c) } }) }
+        sources.forEach { src -> stack.add(Shelf(view.context, l, nav.clock, src.title, poster = true).apply { loader = { c -> loadThumb(c) } }) }
         // The first rows, plus every row built from the user's own lists (local, instant).
         sources.forEachIndexed { i, s -> if (i < 3 || s.dynamic) load(i) }
     }
 
-    protected open fun loadThumb(c: Card) { val it = c.item ?: return; nav.content.thumb(Catalog.cardUrl(it.imageUrl)) { b -> if (b != null) c.setBitmap(b) } }
+    protected open fun loadThumb(c: Card) {
+        val it = c.item ?: return
+        nav.content.thumb(Catalog.cardUrl(it.imageUrl)) { b -> if (b != null) c.setBitmap(b) }
+        if (c is PosterCard && it.posterUrl.isNotEmpty()) nav.content.thumb(it.posterUrl) { b -> if (b != null) c.setPoster(b) }
+    }
+
+    /** Leaving the section: every row goes back to its first title and the first row comes back to the top. */
+    override fun reset() { stack.reset() }
 
     private fun load(i: Int, force: Boolean = false) {
         if (!force && !requested.add(i)) return

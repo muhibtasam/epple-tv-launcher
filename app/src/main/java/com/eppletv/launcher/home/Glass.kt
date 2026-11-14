@@ -20,6 +20,35 @@ import com.eppletv.launcher.motion.Spring
 import java.util.WeakHashMap
 
 /**
+ * The one glass material used by the tab bar, the top row's platter, the clock badge and Control Center, so they always
+ * match. Settings > Glass chooses Frosted (the artwork behind, blurred, under a dark tint) or Clear (no blur: a light
+ * tint and brighter edges, like Apple's clear glass, and one textured draw fewer per surface).
+ */
+object GlassStyle {
+    private val views = java.util.Collections.newSetFromMap(WeakHashMap<View, Boolean>())
+    var clear = false
+        set(v) { if (field != v) { field = v; views.toList().forEach { it.invalidate() } } }
+    fun register(v: View) { views.add(v) }
+    val tint: Int get() = if (clear) 0x380E1014 else 0x660E1014
+
+    /** Edge light and inner highlight, pre-rendered once per size and style (drawn live they cost this GPU dearly). */
+    fun overlay(l: Layout, w: Int, h: Int, radius: Float): Bitmap {
+        val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(b); val r = RectF(0f, 0f, w.toFloat(), h.toFloat()); val hf = h.toFloat()
+        c.drawRoundRect(r, radius, radius, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = LinearGradient(0f, 0f, 0f, hf, intArrayOf(if (clear) 0x2EFFFFFF else 0x1AFFFFFF, 0x05FFFFFF, 0x00FFFFFF), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP) })
+        val sw = l.pxf(if (clear) 2f else 1.6f).coerceAtLeast(1f)
+        r.inset(sw / 2f, sw / 2f)
+        c.drawRoundRect(r, radius - sw / 2f, radius - sw / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = sw
+            shader = LinearGradient(0f, 0f, 0f, hf, if (clear) intArrayOf(0xA6FFFFFF.toInt(), 0x26FFFFFF, 0x4DFFFFFF) else intArrayOf(0x73FFFFFF, 0x1AFFFFFF, 0x33FFFFFF),
+                null, Shader.TileMode.CLAMP) })
+        b.prepareToDraw()
+        return b
+    }
+}
+
+/**
  * Liquid-glass platter behind the top row, drawn by one view with shaders only (no view clipping or layers, which this
  * GPU pays for on every frame):
  *  - body: the artwork behind the platter, magnified a few percent (lens), diffused and lifted in brightness. The
@@ -48,7 +77,8 @@ class GlassPlatter(ctx: Context, private val l: Layout, private val backdrop: Ba
     private val loc = IntArray(2)
     private val textures = WeakHashMap<Bitmap, BitmapShader>()
 
-    init { backdrop.listeners.add { invalidate() } }
+    init { backdrop.listeners.add { invalidate() }; GlassStyle.register(this) }
+    private var rimClear: Boolean? = null
 
     /** The page moved vertically: the glass must re-sample what is behind it. */
     fun moved() = invalidate()
@@ -79,12 +109,7 @@ class GlassPlatter(ctx: Context, private val l: Layout, private val backdrop: Ba
             floatArrayOf(0f, 0.25f, 0.8f, 1f), Shader.TileMode.CLAMP)
         if (w <= 0 || h <= 0) return
         rimBmp?.recycle()
-        rimBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { b ->
-            val c = Canvas(b)
-            c.drawRoundRect(ri, radius - l.pxf(4f), radius - l.pxf(4f), inner)
-            c.drawRoundRect(r, radius, radius, edge)
-            b.prepareToDraw()
-        }
+        rimBmp = GlassStyle.overlay(l, w, h, radius); rimClear = GlassStyle.clear
         // Glint: a white rim line, revealed only under a radial light that follows focus.
         val mask = Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8)
         Canvas(mask).drawRoundRect(r, radius, radius, Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = l.pxf(3f) })
@@ -93,14 +118,16 @@ class GlassPlatter(ctx: Context, private val l: Layout, private val backdrop: Ba
 
     private companion object { const val FROST = 0f } // Frost off: on the C6K any frost under the rim/glint costs ~15 ms a frame, whatever its strength.
 
-    private val tint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x4D13151A }
+    private val tint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     override fun onDraw(c: Canvas) {
         val sw = rootView.width.toFloat(); val sh = rootView.height.toFloat()
+        if (rimClear != GlassStyle.clear && width > 0) { rimBmp?.recycle(); rimBmp = GlassStyle.overlay(l, width, height, radius); rimClear = GlassStyle.clear }
+        tint.color = GlassStyle.tint
         // Frosted body, the same as the tab bar's: the current artwork's shared 240x135 frost texture, screen-aligned,
         // under a light tint. One textured draw plus one flat fill (the per-layer lens body stays off: see FROST).
         val b = backdrop.currentBitmap
-        if (b != null && sw > 0f) {
+        if (b != null && sw > 0f && !GlassStyle.clear) {
             getLocationInWindow(loc)
             val fs = Frost.shader(b)
             m.setScale(sw / 240f, sh / 135f); m.postTranslate(-loc[0].toFloat(), -loc[1].toFloat())

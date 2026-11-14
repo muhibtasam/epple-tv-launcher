@@ -70,6 +70,7 @@ class Cinemeta(private val pkgs: Set<String>) : ContentSource {
                     if (type == "movie") "Movie" else "Series", genres, rating),
                     "https://images.metahub.space/background/large/$id/img", link, Apps.STREMIO,
                     "Popular on Stremio", m.optString("description"), weight = 1.0 - i * 0.06, origin = "intl",
+                    posterUrl = m.optString("poster").let { if (it.startsWith("https://")) it else "" },
                     logoUrl = m.optString("logo").ifEmpty { "https://images.metahub.space/logo/medium/$id/img" }))
             }
         }
@@ -171,7 +172,8 @@ class Showcase(private val services: Map<String, Service>, private val keys: Key
                 join(year(date), if (movie) "Movie" else "Series", if (lang != "en") languageName(lang) else "",
                     g.take(2).joinToString(", "), if (vote > 0) "★ %.1f".format(Locale.US, vote) else ""),
                 "https://image.tmdb.org/t/p/original$backdrop", null, null, kind, o.optString("overview"),
-                weight = weight(o.optDouble("popularity", 0.0), date, trend), origin = if (lang in INDIAN) "in" else "intl"))
+                weight = weight(o.optDouble("popularity", 0.0), date, trend), origin = if (lang in INDIAN) "in" else "intl",
+                posterUrl = o.optString("poster_path").let { if (it.isEmpty() || it == "null") "" else "https://image.tmdb.org/t/p/w342$it" }))
         }
         return out
     }
