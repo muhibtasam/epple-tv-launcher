@@ -71,7 +71,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
     /** Providers step: the user chose to type keys with the remote instead of using the phone. */
     private var typeOnTv = false
     private val phone by lazy {
-        PhoneLink(ctx, nav.content.net, nav.wallpapers, nav.profile) { if (phoneMode) render() }.apply {
+        PhoneLink(ctx, nav.content.net, nav.wallpapers, nav.profile, nav.saverPictures) { if (phoneMode) render() }.apply {
             onSaved = { s -> if (s.check.ok) { checks[s.key] = s.check; changedProviders += s.key } }
         }
     }

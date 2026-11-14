@@ -171,7 +171,7 @@ class ConfigServer(
                 if (r.headers["content-type"]?.substringBefore(';')?.trim() != JPEG) return Reply(415, json("""{"error":"type"}"""))
                 if (r.body.isEmpty()) return Reply(400, json("""{"error":"empty"}"""))
                 gated(session.claimSave(r.headers["x-epple-session"], from, r.headers["x-epple-nonce"], photo = true)) {
-                    val kind = if (r.headers["x-epple-kind"] == "profile") "profile" else "wallpaper"
+                    val kind = when (r.headers["x-epple-kind"]) { "profile" -> "profile"; "screensaver" -> "screensaver"; else -> "wallpaper" }
                     listOf(try { handler.photo(r.body, kind) } catch (_: Exception) { Result("photo", false, "Couldn't save this picture") })
                 }
             }

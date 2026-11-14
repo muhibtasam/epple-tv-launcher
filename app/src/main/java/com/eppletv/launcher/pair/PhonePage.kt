@@ -35,6 +35,9 @@ label{display:block;font-weight:600;margin:16px 0 6px}
 input[type=password],input[type=text]{flex:1;min-width:0;font-size:16px;padding:13px 14px;border-radius:12px;border:1px solid #333845;background:#0f1116;color:#fff}
 input:focus{outline:2px solid #6aa8ff;outline-offset:1px}
 button,.pick{font-family:inherit;font-size:16px;font-weight:600;line-height:1;border:0;border-radius:12px;padding:14px 18px;background:#2a2f3a;color:#fff;cursor:pointer}
+.seg{display:flex;gap:6px;background:#1b1f27;border-radius:12px;padding:4px;margin-top:14px}
+.seg button{flex:1;background:transparent;color:#a3a8b3;padding:12px 8px}
+.seg button.on{background:#f2f3f5;color:#0b0c10}
 button.main,.pick{background:#f2f3f5;color:#0b0c10;width:100%;margin-top:18px;display:block;text-align:center}
 button:disabled{opacity:.5}
 .small{font-size:14px;color:#8d93a0}
@@ -97,8 +100,12 @@ ul{padding-left:20px;margin:8px 0;color:#aeb3bd;word-break:break-word}
 </form>
 
 <section id="photos" class="card hide">
- <h2>Home wallpapers</h2>
- <p>Pictures for your TV's Home screen. This phone resizes them and sends them only to your TV.</p>
+ <h2>Pictures</h2>
+ <p>For your TV's Home screen or its screensaver. This phone resizes them and sends them only to your TV.</p>
+ <div class="seg" role="radiogroup" aria-label="Add pictures to">
+  <button type="button" id="toHome" class="on" aria-pressed="true">Home wallpapers</button>
+  <button type="button" id="toSaver" aria-pressed="false">Screensaver</button>
+ </div>
  <label class="pick" for="files">Choose Pictures</label>
  <input id="files" type="file" accept="image/*" multiple>
  <div class="st" id="photoSt"></div>
@@ -241,6 +248,11 @@ function send(b,li,name,tries,kind){
   });
  });
 }
+var dest='wallpaper';
+function pickDest(d){dest=d;var h=d==='wallpaper';el('toHome').className=h?'on':'';el('toSaver').className=h?'':'on';
+ el('toHome').setAttribute('aria-pressed',h);el('toSaver').setAttribute('aria-pressed',!h);}
+el('toHome').addEventListener('click',function(){pickDest('wallpaper');});
+el('toSaver').addEventListener('click',function(){pickDest('screensaver');});
 el('files').addEventListener('change',function(){
  var list=Array.prototype.slice.call(el('files').files||[]);el('files').value='';
  if(!list.length)return;
@@ -252,7 +264,7 @@ el('files').addEventListener('change',function(){
   var f=list[i++],name=(f.name||'Picture').slice(0,60),li=line(name+': preparing…');
   shrink(f).then(function(b){
    if(b.size>6000000){li.textContent=name+': too large';li.className='no';return false;}
-   return send(b,li,name,0);
+   return send(b,li,name,0,dest);
   },function(){li.textContent=name+': this phone couldn’t open it';li.className='no';return false;})
   .then(function(ok){if(ok)added++;},function(){release(null);li.textContent=name+': lost the connection';li.className='no';})
   .then(next);

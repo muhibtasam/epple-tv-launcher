@@ -459,6 +459,9 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
             nav.content.clearLists(); nav.toast("Content will refresh") }
         header("Screensaver")
         choice(Prefs.SAVER, "Shows full-screen artwork after Epple TV has been idle. Any button returns where you were.")
+        choice(Prefs.SAVER_SOURCE, "The pictures the screensaver shows: the same ones as Home's wallpapers, or its own (Screensaver pictures, below).")
+        row("Screensaver pictures", "The screensaver's own pictures, used when Screensaver shows is set to Its own pictures. Add them from your phone (choose Screensaver there).", {
+            nav.saverPictures.count().let { if (it == 0) "None yet" else if (it == 1) "1 picture" else "$it pictures" } }) { saverMenu() }
         choice(Prefs.SAVER_STYLE, "Slow pan moves gently across each picture; Still shows it unmoving.")
         row("Preview screensaver", "Starts the screensaver now.", { "" }) { nav.startSaver() }
         header("About")
@@ -483,6 +486,18 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
                 "Remove All" to { nav.wallpapers.removeAll(); nav.nextWallpaper(); refreshValues(); nav.toast("Pictures removed") }))
         })
         nav.menu("Wallpapers", items)
+    }
+
+    private fun saverMenu() {
+        val n = nav.saverPictures.count()
+        val items = ArrayList<Pair<String, () -> Unit>>()
+        items.add("Add from Phone" to { nav.openPhone() })
+        if (n > 0) items.add("Remove a Picture…" to { picker.open(nav.saverPictures) })
+        if (n > 1) items.add("Remove All Pictures" to {
+            nav.menu("Remove all $n screensaver pictures?", listOf("Cancel" to {},
+                "Remove All" to { nav.saverPictures.removeAll(); refreshValues(); nav.toast("Pictures removed") }))
+        })
+        nav.menu("Screensaver Pictures", items)
     }
 
     private fun isHome(): Boolean {
@@ -545,6 +560,7 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
     private val fade = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 0.3f)
     private val show = Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS)
     private var files: List<java.io.File> = emptyList()
+    private var store: Wallpapers = nav.wallpapers
     private var n = 0
     private var front = a
     private var t = 0f
@@ -577,7 +593,10 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
 
     fun start() {
         if (showing) return
-        files = nav.wallpapers.files().shuffled()
+        // Its own pictures when chosen (and there are some), else Home's wallpapers.
+        val own = nav.prefs.get(Prefs.SAVER_SOURCE) == 1 && nav.saverPictures.count() > 0
+        store = if (own) nav.saverPictures else nav.wallpapers
+        files = store.files().shuffled()
         showing = true; n = 0
         view.visibility = View.VISIBLE; show.target = 1f
         stamp(); h.post(minute)
@@ -592,7 +611,8 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
 
     private fun advance() {
         val f = files.getOrNull(n++ % maxOf(1, files.size)) ?: return
-        nav.content.run({ nav.wallpapers.load(f, scrim = false) ?: throw IllegalStateException() }) { bmp ->
+        val s = store
+        nav.content.run({ s.load(f, scrim = false) ?: throw IllegalStateException() }) { bmp ->
             if (!showing || bmp == null) return@run
             val back = if (front === a) b else a
             back.setImageBitmap(bmp); back.alpha = 0f; back.scaleX = 1f; back.scaleY = 1f; back.translationX = 0f
@@ -686,8 +706,12 @@ class WallpaperPicker(private val nav: Nav) : FrameClock.Tick {
         view.addView(frame, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
     }
 
-    fun open() {
-        files = nav.wallpapers.files()
+    /** The pictures being edited: Home's wallpapers or the screensaver's own. */
+    private var store: Wallpapers = nav.wallpapers
+
+    fun open(of: Wallpapers = nav.wallpapers) {
+        store = of
+        files = store.files()
         if (files.isEmpty()) return
         active = true; i = 0; sy.snapTo(0f); grid.translationY = 0f
         build(); view.visibility = View.VISIBLE; onOpen(); focus()
@@ -705,7 +729,7 @@ class WallpaperPicker(private val nav: Nav) : FrameClock.Tick {
         tiles.forEach { it.release() }; tiles.clear(); grid.removeAllViews()
         heading.text = "REMOVE A PICTURE  ·  ${files.size}"
         grid.addView(heading, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(190) })
-        val cur = nav.wallpapers.current()
+        val cur = (if (store === nav.wallpapers) nav.wallpapers.current() else null)
         files.forEachIndexed { n, f ->
             val t = Thumb(nav.ctx, l, nav.clock, f.name == cur)
             t.setOnClickListener { confirm(n) }
@@ -718,7 +742,7 @@ class WallpaperPicker(private val nav: Nav) : FrameClock.Tick {
         Thread {
             files.forEachIndexed { n, f ->
                 if (g != gen) return@Thread
-                val b = nav.wallpapers.thumb(f, w, h)
+                val b = store.thumb(f, w, h)
                 main.post { if (g == gen) tiles.getOrNull(n)?.set(b) else b?.recycle() }
             }
         }.apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 }.start()
@@ -729,11 +753,11 @@ class WallpaperPicker(private val nav: Nav) : FrameClock.Tick {
         nav.menu("Remove this picture?", listOf(
             "Cancel" to { focus() },                                  // first, so a stray OK keeps it
             "Remove" to {
-                val wasShown = f.name == nav.wallpapers.current()
-                nav.wallpapers.remove(f)
+                val wasShown = f.name == (if (store === nav.wallpapers) nav.wallpapers.current() else null)
+                store.remove(f)
                 nav.toast("Picture removed")
                 if (wasShown) nav.nextWallpaper()
-                files = nav.wallpapers.files()
+                files = store.files()
                 if (files.isEmpty()) close()
                 else { i = i.coerceAtMost(files.size - 1); build(); focus() }
             }))

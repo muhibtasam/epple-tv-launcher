@@ -13,7 +13,8 @@ import com.eppletv.launcher.content.Net
  * A new code (or stop) bumps a generation number, so late events from an old code are ignored.
  */
 class PhoneLink(private val ctx: Context, private val net: Net, private val wallpapers: com.eppletv.launcher.home.Wallpapers,
-                private val profile: com.eppletv.launcher.home.Profile, private val onChange: () -> Unit) {
+                private val profile: com.eppletv.launcher.home.Profile, private val saver: com.eppletv.launcher.home.Wallpapers,
+                private val onChange: () -> Unit) {
     enum class Phase { IDLE, STARTING, NO_NETWORK, FAILED, WAITING, CONFIRMING, PAIRED, DENIED, EXPIRED, LOST, DONE }
     class Saved(val key: Credentials.Key, val check: Credentials.Check)
 
@@ -124,7 +125,7 @@ class PhoneLink(private val ctx: Context, private val net: Net, private val wall
                 post(g) { if (r.ok) { profileSet = true; photoError = null } else photoError = r.message }
                 return ConfigServer.Result("photo", r.ok, r.message)
             }
-            val r = wallpapers.add(bytes)
+            val r = if (kind == "screensaver") saver.add(bytes).let { if (it.ok) com.eppletv.launcher.home.Wallpapers.Result(true, "Added to the screensaver") else it } else wallpapers.add(bytes)
             post(g) { if (r.ok) { photos++; photosTotal++; photoError = null } else photoError = r.message }
             return ConfigServer.Result("photo", r.ok, r.message)
         }

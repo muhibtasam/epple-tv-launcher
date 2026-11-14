@@ -71,6 +71,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override lateinit var user: UserLibrary; private set
     override lateinit var prefs: Prefs; private set
     override lateinit var wallpapers: Wallpapers; private set
+    override lateinit var saverPictures: Wallpapers; private set
     override lateinit var profile: Profile; private set
     override lateinit var launcher: com.eppletv.launcher.system.LauncherMode; private set
     private var wallBmp: Bitmap? = null
@@ -165,6 +166,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         prefs = Prefs(this)
         GlassStyle.amount = prefs.glass / 100f
         wallpapers = Wallpapers(this)
+        saverPictures = Wallpapers(this, "screensaver")
         profile = Profile(this)
         launcher = com.eppletv.launcher.system.LauncherMode(this)
         guardCrashes()

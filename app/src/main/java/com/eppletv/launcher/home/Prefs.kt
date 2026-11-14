@@ -18,6 +18,7 @@ class Prefs(ctx: Context) {
         val REGION = Choice("region", "Content region", listOf("Automatic", "Pakistan", "India", "United States", "United Kingdom"), 0, restart = true)
         val INDIAN = Choice("indian", "Indian titles", listOf("Balanced", "More Indian", "More Hollywood", "Hollywood only"), 0)
         val SAVER = Choice("saver", "Start screensaver after", listOf("Off", "2 minutes", "5 minutes", "10 minutes", "15 minutes", "30 minutes"), 2)
+        val SAVER_SOURCE = Choice("saver_source", "Screensaver shows", listOf("Home wallpapers", "Its own pictures"), 0)
         val SAVER_STYLE = Choice("saver_style", "Screensaver motion", listOf("Slow pan", "Still"), 0)
         private val REGION_CODES = listOf("", "PK", "IN", "US", "GB")
         private val SAVER_MIN = listOf(0, 2, 5, 10, 15, 30)

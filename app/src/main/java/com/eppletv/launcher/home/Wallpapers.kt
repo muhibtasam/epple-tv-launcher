@@ -19,10 +19,10 @@ import java.security.SecureRandom
  * Every picture is decoded, checked and re-encoded as a fresh JPEG of at most 1920x1080 in the app's private storage,
  * so nothing from the original file (metadata, odd formats, huge sizes) is kept. Worker threads only, except [count].
  */
-class Wallpapers(ctx: Context) {
-    private val dir = File(ctx.filesDir, "wallpapers").apply { mkdirs() }
-    private val drop: File? = try { ctx.getExternalFilesDir("wallpapers") } catch (_: Exception) { null }
-    private val prefs = ctx.getSharedPreferences("wallpapers", Context.MODE_PRIVATE)
+class Wallpapers(ctx: Context, folder: String = "wallpapers") {
+    private val dir = File(ctx.filesDir, folder).apply { mkdirs() }
+    private val drop: File? = try { ctx.getExternalFilesDir(folder) } catch (_: Exception) { null }
+    private val prefs = ctx.getSharedPreferences(folder, Context.MODE_PRIVATE)
     private val random = SecureRandom()
 
     class Result(val ok: Boolean, val message: String)
@@ -34,7 +34,7 @@ class Wallpapers(ctx: Context) {
 
     /** Re-encodes and stores one picture. Rejects anything that isn't a decodable image of a sensible size. */
     @Synchronized fun add(bytes: ByteArray): Result {
-        if (files().size >= MAX) return Result(false, "Already $MAX wallpapers. Remove some on the TV first")
+        if (files().size >= MAX) return Result(false, "Already $MAX pictures. Remove some on the TV first")
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
         val w = o.outWidth; val h = o.outHeight

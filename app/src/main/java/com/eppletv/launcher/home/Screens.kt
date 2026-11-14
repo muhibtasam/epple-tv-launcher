@@ -52,6 +52,8 @@ interface Nav {
     fun openSetup(step: Int, one: Boolean)
     /** Home's own pictures, and the phone screen that adds them. */
     val wallpapers: Wallpapers
+    /** The screensaver's own pictures (Settings > Screensaver pictures), when it doesn't use the wallpapers. */
+    val saverPictures: Wallpapers
     val profile: Profile
     /** The profile picture changed (set or removed). */
     fun profileChanged()
