@@ -63,6 +63,24 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     private fun rowSize(row: Int) = if (row == 0) dock.size else minOf(Layout.COLS, grid.size - (row - 1) * Layout.COLS)
     private fun tile(): Tile? = if (r == 0) dock.getOrNull(c) else grid.getOrNull((r - 1) * Layout.COLS + c)
 
+    /**
+     * Before the apps are in: the top row's glass bar with [n] tile-shaped placeholders in the tiles' places, so Home's
+     * structure is there from the first frame. [setApps] replaces them.
+     */
+    fun skeleton(n: Int) {
+        if (dock.isNotEmpty() || n <= 0) return
+        view.removeAllViews(); strip.removeAllViews()
+        val p = l.platterPad
+        view.addView(platter, FrameLayout.LayoutParams(l.px(1920) - 2 * (l.left - p), l.tileH + 2 * p).apply { leftMargin = l.left - p; topMargin = l.dockY - p })
+        platter.visibility = View.VISIBLE
+        view.addView(strip, FrameLayout.LayoutParams(MATCH_PARENT, l.tileH).apply { topMargin = l.dockY })
+        repeat(minOf(n, Layout.COLS)) { i ->
+            strip.addView(View(view.context).apply { background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = l.corner.toFloat(); setColor(0x1FFFFFFF) } },
+                FrameLayout.LayoutParams(l.tileW, l.tileH).apply { leftMargin = l.left + i * l.pitchX })
+        }
+    }
+
     fun setApps(pinned: List<AppEntry>, rest: List<AppEntry>) {
         val keep = tile()?.entry?.packageName
         view.removeAllViews(); strip.removeAllViews(); dock.clear(); grid.clear()

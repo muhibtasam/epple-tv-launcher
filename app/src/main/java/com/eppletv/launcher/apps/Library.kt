@@ -22,6 +22,9 @@ class Library(ctx: Context) {
         if (Apps.DEFAULT_PINS.any { it in have }) Apps.DEFAULT_PINS else apps.take(5).map { it.packageName }
     }
 
+    /** The top row's packages as saved (or the defaults), without needing the app list. Any thread. */
+    fun wanted(): List<String> = stored() ?: Apps.DEFAULT_PINS
+
     fun pinned(apps: List<AppEntry>): List<AppEntry> { val by = apps.associateBy { it.packageName }; return order(apps).mapNotNull { by[it] } }
     fun rest(apps: List<AppEntry>): List<AppEntry> { val p = pinned(apps).map { it.packageName }.toSet(); return apps.filter { it.packageName !in p } }
     fun isPinned(apps: List<AppEntry>, pkg: String) = pkg in order(apps) && apps.any { it.packageName == pkg }

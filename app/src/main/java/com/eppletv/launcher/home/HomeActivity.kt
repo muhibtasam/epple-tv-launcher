@@ -264,6 +264,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         setup.behind = listOf(anchor, homeLayer, sectionLayer, tabs, pill)
 
         setContentView(root)
+        startLog("view tree built")
+        root.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
+            var done = false
+            override fun onDraw() { if (done) return; done = true; main.post { startLog("first frame"); root.viewTreeObserver.removeOnDrawListener(this) } }
+        })
         // Home tab selected, its wallpaper behind: posters appear only once a streaming app is focused.
         tabsP.target = 1f; animateShell()
         showWallpaper(); nextWallpaper()
@@ -274,11 +279,27 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         val artScale = l.px(300) / l.tileW.toFloat()     // art is rendered larger than the tile, so it stays sharp when focused
         repo = AppRepository(this, l.px(300), l.px(169), { onApps(it) }, repeat,
             decorate = { c, w, h -> paintTileSurface(c, w, h, l.corner * artScale, l.pxf(2f).coerceAtLeast(1f) * artScale) },
-            backdropFilter = { b -> Scrim.paint(b); Frost.prepare(b) })
+            backdropFilter = { b -> Scrim.paint(b) },
+            warm = { list -> library.pinned(list) + library.rest(list) }, warmOne = { e -> Frost.prepare(e.backdrop) },
+            first = { library.wanted() }, onFirst = { part -> onFirstApps(part) })
+        // The top row's frame and tile shapes right away (no waiting for the apps); the real tiles replace them.
+        page.skeleton(library.wanted().size)
         repo.start()
     }
 
+    /** Startup timeline in logcat (tag EppleStart): milliseconds since the process started. */
+    private fun startLog(what: String) = android.util.Log.i("EppleStart", "$what +${android.os.SystemClock.uptimeMillis() - android.os.Process.getStartUptimeMillis()} ms")
+    private var appsShown = false
+
+    /** The top row's apps, ahead of the full list (first load only): shown at once if the full list isn't in yet. */
+    private fun onFirstApps(part: List<AppEntry>) {
+        if (appsShown) return
+        appsShown = true; main.post { startLog("app row shown (${part.size} first apps)") }
+        page.setApps(library.pinned(part), emptyList()); restoreFocus()
+    }
+
     private fun onApps(list: List<AppEntry>) {
+        if (!appsShown) { appsShown = true; main.post { startLog("app row shown (${list.size} apps)") } }
         apps = list
         content.run({ Brand.learn(list); true }) {}             // brand colours for the hero's "New on …" names
         refresh(null)

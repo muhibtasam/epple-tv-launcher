@@ -49,6 +49,15 @@ class AppRepository(
     private val debugRepeat: Int = 1,   // debug builds only: repeats the list so scrolling can be tested on an emulator
     private val decorate: ((Canvas, Int, Int) -> Unit)? = null,   // static tile surface baked into the art (saves a layer per tile)
     private val backdropFilter: ((Bitmap) -> Unit)? = null,       // e.g. the hero scrim, baked into the app's backdrop field
+    /** Work for each app that can wait until the list is on screen (e.g. the glass frost of its backdrop), in this order. */
+    private val warm: ((List<AppEntry>) -> List<AppEntry>)? = null,
+    private val warmOne: ((AppEntry) -> Unit)? = null,
+    /**
+     * Packages wanted on screen first (Home's top row). On the first load they are built before the others and handed
+     * over at once through [onFirst], so the top row doesn't wait for every installed app.
+     */
+    private val first: (() -> Collection<String>)? = null,
+    private val onFirst: ((List<AppEntry>) -> Unit)? = null,
 ) {
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -90,8 +99,12 @@ class AppRepository(
     private fun load() {
         if (worker.isShutdown) return
         worker.execute {
+            val t0 = android.os.SystemClock.uptimeMillis()
             val apps = try { query() } catch (e: RuntimeException) { Log.w(TAG, "app query failed", e); null }
+            Log.i("EppleStart", "app query ${android.os.SystemClock.uptimeMillis() - t0} ms (${apps?.size} apps, ${cache.size} cached)")
             if (apps != null) main.post { if (started) onApps(apps) }
+            // Only after the list is handed over: preparing all of this first held the app row back by about 2 s.
+            if (apps != null && warmOne != null) for (e in warm?.invoke(apps) ?: apps) { if (worker.isShutdown) break; warmOne.invoke(e) }
         }
     }
 
@@ -108,7 +121,12 @@ class AppRepository(
         }
         val out = ArrayList<AppEntry>(found.size)
         val seen = HashSet<String>()
-        for ((pkg, v) in found) {
+        val initial = cache.isEmpty()
+        val want = if (initial && onFirst != null) first?.invoke()?.toSet().orEmpty() else emptySet()
+        val ordered = found.entries.sortedBy { if (it.key in want) 0 else 1 }      // stable: wanted ones first
+        var told = want.isEmpty()
+        for ((pkg, v) in ordered) {
+            if (!told && pkg !in want) { told = true; val part = ArrayList(out); main.post { if (started) onFirst?.invoke(part) } }
             val (ai, cat) = v
             seen.add(pkg)
             val pi = try { pm.getPackageInfo(pkg, 0) } catch (_: PackageManager.NameNotFoundException) { continue }
