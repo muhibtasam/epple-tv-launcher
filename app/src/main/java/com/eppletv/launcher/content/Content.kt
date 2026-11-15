@@ -239,6 +239,15 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
 
     fun prefetch(url: String) = image(url) {}
 
+    /** Main thread. A backdrop made from a card picture already in memory (scrim painted in), or null at once if none. */
+    fun cardBackdrop(cardUrl: String, cb: (Bitmap?) -> Unit) {
+        val t = thumbs.get(cardUrl) ?: return cb(null)
+        io.execute {
+            val b = try { Bitmap.createScaledBitmap(t, 960, 540, true).copy(Bitmap.Config.RGB_565, true)?.also { backdropFilter?.invoke(it); it.prepareToDraw() } } catch (_: Throwable) { null }
+            main.post { cb(b) }
+        }
+    }
+
     /** Main thread. Card artwork, decoded once at card size (no scrim), from the shared disk cache. */
     fun thumb(url: String, cb: (Bitmap?) -> Unit) {
         if (url.isEmpty()) return cb(null)

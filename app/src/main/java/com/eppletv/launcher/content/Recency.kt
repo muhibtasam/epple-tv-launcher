@@ -27,7 +27,8 @@ object Recency {
         val e = p.edit().putLong("a:$pkg", now).putString("pending", pkg)
         // Opening the app itself right after one of its titles (the title had no link of its own) keeps that title.
         if (title.isNullOrBlank() && p.getString("pending", null) != pkg) e.remove("pendingKey")
-        if (!title.isNullOrBlank()) e.putLong("t:" + key(pkg, title), now).putString("pendingKey", key(pkg, title))
+        // Opening a title again from Epple TV is choosing it: a title removed from Continue Watching comes back.
+        if (!title.isNullOrBlank()) e.putLong("t:" + key(pkg, title), now).putString("pendingKey", key(pkg, title)).remove("x:" + key(pkg, title))
         e.apply()
         Log.i(TAG, "opened ${title ?: "(app)"} in $pkg at $now")
     }
@@ -54,6 +55,16 @@ object Recency {
         if (was != null) { val t = System.currentTimeMillis(); e.putLong("t:" + key(pkg, title), t); Log.i(TAG, "new at the front of $pkg: $title at $t") }
         e.apply()
     }
+
+    /**
+     * Removed from Continue Watching by the user: hidden whatever reports it again (Watch Next, the app's own row, an
+     * old list), until the user opens that title from Epple TV again ([opened] clears it).
+     */
+    fun remove(c: Context, pkg: String?, title: String) {
+        prefs(c).edit().putLong("x:" + key(pkg, title), System.currentTimeMillis()).apply()
+        Log.i(TAG, "removed ${key(pkg, title)}")
+    }
+    fun removed(c: Context, pkg: String?, title: String) = prefs(c).contains("x:" + key(pkg, title))
 
     fun appTime(c: Context, pkg: String?): Long = if (pkg == null) 0 else prefs(c).getLong("a:$pkg", 0)
     fun titleTime(c: Context, pkg: String?, title: String): Long = prefs(c).getLong("t:" + key(pkg, title), 0)

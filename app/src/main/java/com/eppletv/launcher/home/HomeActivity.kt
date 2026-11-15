@@ -195,6 +195,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         content.indianMode = prefs.get(Prefs.INDIAN)
         catalog = Catalog(content.net, { com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.TMDB) }) { Sources.region }
         titles = TitleLauncher(this, content.net, { com.eppletv.launcher.content.Credentials.get(com.eppletv.launcher.content.Credentials.Key.WATCHMODE) }) { Sources.region }
+        // No link to the title itself: say so, instead of passing the app's home screen off as the title.
+        titles.onAppOnly = { pkg, title -> toast("$title can't be opened directly in ${apps.firstOrNull { it.packageName == pkg }?.label ?: "the app"}: opened the app") }
         shadowBmp = makeShadow(l)
         neutral = neutralBackdrop()
 
@@ -546,7 +548,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         artBmp?.let { hero.backdrop.show(it); artBmp = null; return@Runnable }
         val it = artItem ?: return@Runnable
         val gen = artGen
-        content.image(it.imageUrl) { b -> if (b != null && gen == artGen) hero.backdrop.show(b) }
+        var full = false
+        content.image(it.imageUrl) { b -> if (b != null && gen == artGen) { full = true; hero.backdrop.show(b) } }
+        // Large artwork (Crunchyroll sends 2-3 MB PNGs) takes a moment: meanwhile the title's own card picture, enlarged,
+        // stands in, so the backdrop never keeps showing the previous title's artwork under this one's name.
+        if (!full) content.cardBackdrop(com.eppletv.launcher.content.Catalog.cardUrl(it.imageUrl)) { b -> if (b != null && gen == artGen && !full) hero.backdrop.show(b) }
     }
     /** The backdrop follows the focused title after a short pause (fast scrolling doesn't churn full-screen images). */
     override fun art(item: ContentItem?, immediate: Boolean) {
@@ -943,7 +949,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
                 dy > 0 && page.atTop() -> enterFeed()
                 !page.move(dx, dy) -> if (hero.hasItems) enterHero() else enterHint()
             }
-            Zone.HERO -> if (dx != 0) { if (!hero.step(dx) && dx < 0) openMenu() } else if (dy < 0) enterHint() else enterContent()
+            Zone.HERO -> if (dx != 0) hero.step(dx, wrap = true) else if (dy < 0) enterHint() else enterContent()
             // The clock: Right moves to the profile orb, Left back to Control Center and then to the menu; Down leaves.
             // The clock (top right): Right selects the profile orb, Left goes back to Control Center, then to the menu's hint;
             // Down goes into the page below it.

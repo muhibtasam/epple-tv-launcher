@@ -322,7 +322,9 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
             pt += dx; col = ((Math.round(pt) % cards.size) + cards.size) % cards.size
             focus(); return true
         }
-        val n = col + dx; if (n !in cards.indices) return false; col = n; focus(); return true
+        // Rows of cards wrap at both ends like the poster rows (Left on the first title reaches the last).
+        if (cards.size < 2) return cards.isNotEmpty() && dx != 0
+        col = ((col + dx) % cards.size + cards.size) % cards.size; focus(); return true
     }
 
     private fun place() {

@@ -60,7 +60,8 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
                 "crunchyroll://${if (it.groupValues[1] == "watch") "episode" else "series"}/${it.groupValues[2]}"
             }
         }),
-        Provider(Apps.APPLE_TV, Regex("^apple tv\\+?$", RegexOption.IGNORE_CASE), { u ->
+        // Watchmode writes it "AppleTV+" (and "AppleTV+ Amazon Channel", which plays inside Prime Video, not this app).
+        Provider(Apps.APPLE_TV, Regex("^apple ?tv\\+?$", RegexOption.IGNORE_CASE), { u ->
             Regex("https://tv\\.apple\\.com/[^?#]+").find(u)?.value                     // the app declares tv.apple.com links
         }, freshTask = true),
         Provider(Apps.YOUTUBE, null, { it }),
@@ -72,18 +73,24 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
      * Opens [item] (shown for [appPkg]) at the title when possible, else the app ([openApp]). Main thread.
      * Returns immediately; a Watchmode lookup, when needed, finishes in the background.
      */
-    fun open(item: ContentItem?, appPkg: String, openApp: () -> Unit) {
+    /** Told when a title had to fall back to opening its app's home screen (no link to the title itself was found). */
+    var onAppOnly: ((pkg: String, title: String) -> Unit)? = null
+
+    fun open(item: ContentItem?, appPkg: String, openApp0: () -> Unit) {
         if (busy) return
-        if (item == null) return openApp()
+        if (item == null) return openApp0()
+        val openApp = { Log.i(TAG, "opened ${item.title} as the app only ($appPkg)"); onAppOnly?.invoke(appPkg, item.title); openApp0() }
         Recency.opened(app, appPkg, item.title)                // what was opened, for Continue Watching's order
         // 1. The item carries its own link (YouTube, Tapmad's YouTube videos, Stremio).
         item.linkUri?.let { uri -> return if (start(item.linkPkg ?: appPkg, uri)) Unit else openApp() }
         // 2. A TMDB title on a service Watchmode knows: look its link up (cached).
         val p = providers[appPkg]
         val m = Regex("^(movie|tv):(\\d+)$").find(item.id)
-        if (p?.watchmodeName == null || m == null || watchmodeKey.isEmpty()) return openApp()
-        val key = "${m.value}|$appPkg"
-        cached(key)?.let { url -> return if (url.isNotEmpty() && start(appPkg, url)) Unit else openApp() }
+        if (p?.watchmodeName == null || m == null || watchmodeKey.isEmpty()) {
+            Log.i(TAG, "no title link for ${item.id} in $appPkg (provider=${p != null}, tmdb=${m != null}, key=${watchmodeKey.isNotEmpty()})"); return openApp()
+        }
+        val key = "${m.value}|$appPkg|2"                     // |2: links cached before the AppleTV+ name fix are looked up again
+        cached(key)?.let { url -> Log.i(TAG, "cached link for ${item.id}: ${url.ifEmpty { "(none)" }}"); return if (url.isNotEmpty() && start(appPkg, url)) Unit else openApp() }
         if (System.currentTimeMillis() < pauseUntil) return openApp()
         busy = true
         io.execute {
@@ -91,6 +98,7 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
                 Log.w(TAG, "lookup failed: ${e.javaClass.simpleName} ${e.message}"); pauseUntil = System.currentTimeMillis() + 10 * 60_000L; null
             }
             if (url != null) prefs.edit().putString(key, JSONObject().put("url", url).put("at", System.currentTimeMillis()).toString()).apply()
+            Log.i(TAG, "Watchmode link for ${item.id}: ${url?.ifEmpty { "(none)" } ?: "(failed)"}")
             main.post { busy = false; if (url.isNullOrEmpty() || !start(appPkg, url)) openApp() }
         }
     }
@@ -109,6 +117,7 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
         if (found == null || found.length() == 0) return ""
         val sources = JSONArray(net.text("https://api.watchmode.com/v1/title/${found.getJSONObject(0).getInt("id")}/sources/?apiKey=$watchmodeKey"))
         val usable = (0 until sources.length()).map { sources.getJSONObject(it) }
+            .also { all -> Log.i(TAG, "sources: " + all.map { it.optString("name") + "/" + it.optString("type") + "/" + it.optString("region") }.distinct().take(12)) }
             .filter { it.optString("type") in setOf("sub", "free") && p.watchmodeName!!.matches(it.optString("name").trim()) }
             .mapNotNull { s -> p.toAppLink(s.optString("web_url"))?.let { s.optString("region") to it } }
         return usable.sortedBy { (r, _) -> regions.indexOf(r).let { i -> if (i < 0) regions.size else i } }.firstOrNull()?.second ?: ""
