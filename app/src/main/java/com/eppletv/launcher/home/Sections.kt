@@ -470,9 +470,9 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         header("Content")
         choice(Prefs.REGION, "Which country's streaming catalogues and availability are shown. Automatic uses this TV's region (${Sources.region}).")
         choice(Prefs.INDIAN, "The mix of Bollywood and regional Indian titles against Hollywood titles in the top row's showcases.")
-        choice(Prefs.RECS, "Top Picks for You, Because you watched … and Trending Now on Home, and For You on Movies and TV Shows. " +
-            "Worked out on this TV (no AI) from titles you watch from Epple TV, your Favourites, Watchlist and Continue Watching, refreshed once a day. " +
-            "Titles confirmed on your pinned apps name the app; others make no claim. Availability: JustWatch.")
+        // Kept short: the help area shows six lines, and the JustWatch credit must be visible.
+        choice(Prefs.RECS, "Top Picks, Because you watched …, New on your apps and Trending on Home; For You on Movies and TV Shows. " +
+            "Worked out on this TV (no AI) from what you watch and keep, refreshed daily. Availability: JustWatch.")
         row("Reset recommendations", "Forgets what recommendations learned: titles watched, Not for me and More like this. " +
             "Your Favourites, Watchlist, Continue Watching and settings stay.", {
             val t = com.eppletv.launcher.content.Recommender.lastRefresh(nav.ctx)
