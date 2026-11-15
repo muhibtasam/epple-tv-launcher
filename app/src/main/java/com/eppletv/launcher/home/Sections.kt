@@ -75,8 +75,16 @@ class DetailScreen(nav: Nav, private val item: ContentItem) : Screen(nav), Frame
         details = d
         info.show(ContentItem(d.item.id, d.item.title, d.meta, d.item.imageUrl.ifEmpty { item.imageUrl }, null, null, "", d.item.summary), d.tagline.ifEmpty { if (type == "tv") "Series" else "Movie" })
         val installed = nav.apps.map { it.packageName }.toSet()
-        where.text = if (d.providers.isEmpty()) "Not on a streaming service in your region" else "Streaming on " + d.providers.joinToString(", ") { it.name }
-        addButtons(d.providers.filter { it.pkg != null && it.pkg in installed }.distinctBy { it.pkg }.map { it.name to it.pkg!! } +
+        // The region's TMDB entry only (data by JustWatch). No entry: unknown, so no claim either way.
+        val A = com.eppletv.launcher.content.Availability
+        where.text = when {
+            !d.known -> "Where it streams in your region isn't known"
+            d.providers.isEmpty() -> "No streaming offer listed in your region  ·  ${A.ATTRIBUTION}"
+            else -> "Streaming on " + d.providers.joinToString(", ") { it.name } + "  ·  ${A.ATTRIBUTION}"
+        }
+        // An app button for each listed provider an installed app matches by name (nothing hardcoded).
+        val byApp = A.map(d.providers.associate { it.id to it.name }, nav.apps.map { it.packageName to it.label })
+        addButtons(d.providers.mapNotNull { p -> byApp[p.id]?.takeIf { it in installed }?.let { p.name to it } }.distinctBy { it.second } +
             (if (Apps.STREMIO in installed && d.imdb.isNotEmpty()) listOf("Stremio" to Apps.STREMIO) else emptyList()))
         stack.clear()
         if (d.seasons.isNotEmpty()) {
@@ -463,7 +471,8 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         choice(Prefs.REGION, "Which country's streaming catalogues and availability are shown. Automatic uses this TV's region (${Sources.region}).")
         choice(Prefs.INDIAN, "The mix of Bollywood and regional Indian titles against Hollywood titles in the top row's showcases.")
         choice(Prefs.RECS, "Top Picks for You, Because you watched … and Trending Now on Home, and For You on Movies and TV Shows. " +
-            "Worked out on this TV (no AI) from titles you watch from Epple TV, your Favourites, Watchlist and Continue Watching, refreshed once a day.")
+            "Worked out on this TV (no AI) from titles you watch from Epple TV, your Favourites, Watchlist and Continue Watching, refreshed once a day. " +
+            "Titles confirmed on your pinned apps name the app; others make no claim. Availability: JustWatch.")
         row("Reset recommendations", "Forgets what recommendations learned: titles watched, Not for me and More like this. " +
             "Your Favourites, Watchlist, Continue Watching and settings stay.", {
             val t = com.eppletv.launcher.content.Recommender.lastRefresh(nav.ctx)

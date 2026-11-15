@@ -105,6 +105,8 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
     private val title = TextView(ctx).apply { style(Txt.HERO, l.u); shadow(this, 20f) }
     private val logo = ImageView(ctx).apply { adjustViewBounds = true; maxWidth = l.px(720); maxHeight = l.px(180); scaleType = ImageView.ScaleType.FIT_START; visibility = GONE }
     private val meta = MetaRow(ctx, l)
+    /** A recommendation confirmed on a pinned app: "On Netflix · Availability: JustWatch". Nothing otherwise. */
+    private val avail = TextView(ctx).apply { style(Txt.META, l.u, 0xD9FFFFFF.toInt()); setShadowLayer(l.pxf(8f), 0f, l.pxf(2f), 0x99000000.toInt()); visibility = GONE }
     val summary = TextView(ctx).apply { style(Txt.BODY, l.u, 0xD9FFFFFF.toInt()); maxLines = summaryLines; shadow(this, 10f) }
     private val hints = KeyHints(ctx, l).apply { visibility = GONE; alpha = 0f }
     private val a = Spring(1f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)
@@ -118,14 +120,17 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
         addView(title, LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(10) })
         addView(logo, LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(16); bottomMargin = l.px(4) })
         addView(meta, LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(12) })
+        addView(avail, LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(10) })
         addView(summary, LayoutParams(l.px(860), WRAP_CONTENT).apply { topMargin = l.px(12) })
         addView(hints, LayoutParams(MATCH_PARENT, l.px(56)).apply { topMargin = l.px(20) })
     }
 
     /** [play]: the label of the Play chip ("Play", "Resume") when OK launches this title; null shows no chip. */
-    fun show(item: ContentItem?, kind: String, play: String? = null) {
+    fun show(item: ContentItem?, kind: String, play: String? = null, service: String? = null) {
         if (item == null) { visibility = INVISIBLE; return }
         visibility = VISIBLE
+        avail.text = service?.let { "On $it  ·  ${com.eppletv.launcher.content.Availability.ATTRIBUTION}" }.orEmpty()
+        avail.visibility = if (service == null) GONE else VISIBLE
         playLabel = play
         play?.let { hints.set(it) }
         reveal()
@@ -134,7 +139,9 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
         val fresh = item.id != shownId
         shownId = item.id
         eyebrow.text = Brand.eyebrow(kind); eyebrow.visibility = if (kind.isEmpty()) GONE else VISIBLE
-        title.text = item.title; meta.set(item.meta); summary.sentences(item.summary, l.px(860), summaryLines)
+        // The availability line takes one summary line's place, so the block keeps its height above the rows.
+        title.text = item.title; meta.set(item.meta); if (service != null) maxOf(1, summaryLines - 1).let { n -> summary.sentences(item.summary, l.px(860), n, longest = n) }
+        else summary.sentences(item.summary, l.px(860), summaryLines)
         summary.visibility = if (item.summary.isEmpty()) GONE else VISIBLE
         if (!fresh) return
         logo.setImageBitmap(null); logo.visibility = GONE; title.visibility = VISIBLE
@@ -243,8 +250,11 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
                 it.meta.split("  ·  ").filter { p -> p.trim() != app }.joinToString("  ·  "), it.imageUrl, it.linkUri, it.linkPkg,
                 it.kind, it.summary, it.weight, it.origin, it.logoUrl, it.posterUrl)
             // A recommendation's reason ("Because you watched …") is its eyebrow; nothing is added to the posters.
-            val why = if (sources.getOrNull(stack.shelves.indexOf(s))?.rec == true) it?.kind.orEmpty() else ""
-            info.show(shown, app?.let { a -> "Continue in $a" } ?: why, play = playLabel(s, it))
+            val rec = sources.getOrNull(stack.shelves.indexOf(s))?.rec == true
+            val why = if (rec) it?.kind.orEmpty() else ""
+            // Only a title the saved deck confirms on a pinned app names its service (with JustWatch's credit).
+            info.show(shown, app?.let { a -> "Continue in $a" } ?: why, play = playLabel(s, it),
+                service = if (rec) it?.let { x -> com.eppletv.launcher.content.Recommender.badge(x.id) } else null)
             nav.art(c.item)
         }
         stack.onRow = { r -> for (i in r..minOf(sources.size - 1, r + 3)) load(i) }
@@ -435,7 +445,11 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
     // Personal rows when the deck has them ("Because you watched …", "More from …", "With …"), then what is trending.
     *(0 until 4).map { k -> Rows.rec(nav, "", 6, label = { d -> d.rows.getOrNull(k)?.first }) { d ->
         d.rows.getOrNull(k)?.let { com.eppletv.launcher.content.Recommender.items(nav.ctx, d, it.second) } ?: emptyList() } }.toTypedArray(),
-    Rows.rec(nav, "Trending Now", 6) { d -> com.eppletv.launcher.content.Recommender.items(nav.ctx, d, d.trending) },
+    // Recent releases TMDB confirms on your pinned apps (hidden under six), then trending: "on your apps" only when
+    // at least six trending titles are confirmed there, otherwise general trending with no availability claim.
+    Rows.rec(nav, "New on your apps", com.eppletv.launcher.content.Availability.MIN_NEW) { d -> com.eppletv.launcher.content.Recommender.items(nav.ctx, d, d.fresh) },
+    Rows.rec(nav, "Trending Now", 6, label = { d -> if (d.trendingApps.size >= 6) "Trending on your apps" else "Trending Now" }) { d ->
+        com.eppletv.launcher.content.Recommender.items(nav.ctx, d, if (d.trendingApps.size >= 6) d.trendingApps else d.trending) },
     Rows.user(nav, "Your Watchlist", UserLibrary.Kind.WATCHLIST),
 )) {
     override fun wire(c: Card) {
