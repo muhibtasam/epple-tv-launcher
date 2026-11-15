@@ -132,7 +132,17 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
             icon(ic, l.px(24), l.px(8)); setOnClickListener { category = i } } }
     private val clear = com.eppletv.launcher.ui.Pill(ctx, "Clear All", l.pxf(22f), l.pxf(30f), l.px(20), clock, Colors.FILL, Colors.WHITE, 0.03f).apply {
         icon(I.TRASH, l.px(26), l.px(10)); setOnClickListener { onClearAll?.invoke() } }
-    private val listBox = FrameLayout(ctx).apply { clipChildren = true }
+    /**
+     * The list's window under the tabs. The list scrolls by translation, and Android clips a child only to its own
+     * (translated) bounds, while the panel lets its children draw outside it: so the window clips itself to its own
+     * bounds (its outline), and lets the list measure its full height (not capped at the window's) so no row is cut.
+     */
+    private val listBox = object : FrameLayout(ctx) {
+        override fun onMeasure(w: Int, h: Int) {
+            super.onMeasure(w, h)
+            list.measure(MeasureSpec.makeMeasureSpec(rightW, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        }
+    }.apply { outlineProvider = android.view.ViewOutlineProvider.BOUNDS; clipToOutline = true }
     private val list = android.widget.LinearLayout(ctx).apply { orientation = android.widget.LinearLayout.VERTICAL }
     private val empty = android.widget.TextView(ctx).apply {
         style(Txt.META, l.u, Colors.TEXT_DIM); gravity = android.view.Gravity.CENTER
