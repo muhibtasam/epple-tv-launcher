@@ -19,6 +19,7 @@ import android.widget.LinearLayout
 import com.eppletv.launcher.motion.FrameClock
 import com.eppletv.launcher.motion.Motion
 import com.eppletv.launcher.motion.Spring
+import com.eppletv.launcher.ui.EppleIcons
 import com.eppletv.launcher.ui.Colors
 import com.eppletv.launcher.ui.Type
 
@@ -115,7 +116,7 @@ class SideBar(ctx: Context, private val l: Layout, private val clock: FrameClock
             val ink = Colors.lerp(Colors.WHITE, Colors.INK, h)
             val cx = l.pxf(15f) + chip / 2f; val cy = ph / 2f
             chipPaint.color = Colors.lerp(0x38FFFFFF, 0x14000000, h); chipPaint.alpha = ((chipPaint.color ushr 24) * a).toInt(); c.drawCircle(cx, cy, chip / 2f, chipPaint)
-            stroke.color = ink; stroke.alpha = (255 * a).toInt(); TabIcons.draw(icons[selected], c, cx, cy, l.pxf(36f), stroke, 1f)
+            stroke.color = ink; stroke.alpha = (255 * a).toInt(); EppleIcons.draw(icons[selected], c, cx, cy, l.pxf(36f), stroke, 1f)
             val tx = l.pxf(15f) + chip + l.pxf(18f)
             title.color = ink; sub.color = ink
             title.alpha = (255 * a).toInt(); sub.alpha = (200 * a).toInt()
@@ -162,7 +163,7 @@ class SideItem(ctx: Context, private val l: Layout, private val clock: FrameCloc
         val d = l.pxf(58f); val cx = (h - d) / 2f + d / 2f; val cy = h / 2f
         fill.color = Colors.lerp(if (sv > 0.5f) 0x5CFFFFFF else 0x38FFFFFF, 0x14000000, fv); c.drawCircle(cx, cy, d / 2f, fill)
         val ink = Colors.lerp(Colors.WHITE, Colors.INK, fv)
-        stroke.color = ink; TabIcons.draw(icon, c, cx, cy, l.pxf(36f), stroke, maxOf(fv, sv))
+        stroke.color = ink; EppleIcons.draw(icon, c, cx, cy, l.pxf(36f), stroke, maxOf(fv, sv))
         text.color = ink
         c.drawText(label, cx + d / 2f + l.pxf(20f), cy - (text.descent() + text.ascent()) / 2f, text)
     }
@@ -244,23 +245,14 @@ class ClockPill(ctx: Context, private val l: Layout, private val clock: FrameClo
             fill.color = 0xFFE4E4E8.toInt()
             fill.alpha = (255 * fv * (1f - pv)).toInt(); if (fill.alpha > 2) c.drawCircle(ix, cy, l.pxf(25f), fill)
             fill.alpha = (255 * fv * pv).toInt(); if (fill.alpha > 2) c.drawCircle(ox, cy, d / 2f + l.pxf(4f), fill)
-            icon.color = Colors.INK; icon.alpha = (255 * fv).toInt(); icon.strokeWidth = l.pxf(2.2f)
-            drawSwitches(c, ix, cy + (1f - fv) * l.pxf(8f), l.pxf(30f))
+            icon.color = Colors.INK; icon.alpha = (255 * fv).toInt()
+            EppleIcons.draw(EppleIcons.TOGGLES, c, ix, cy + (1f - fv) * l.pxf(8f), l.pxf(30f), icon, 1f - pv)
             fill.color = 0x24000000; fill.alpha = (0x24 * fv).toInt()
             c.drawRect(ix + l.pxf(30f), cy - l.pxf(17f), ix + l.pxf(31f), cy + l.pxf(17f), fill)
         }
         drawOrb(c, ox, cy, d)
         if (dot) { val x = ox + d * 0.36f; val y = cy - d * 0.36f; val r = d * 0.15f
             dotPaint.color = 0xFF111114.toInt(); c.drawCircle(x, y, r + l.pxf(2.5f), dotPaint); dotPaint.color = Colors.WHITE; c.drawCircle(x, y, r, dotPaint) }
-    }
-
-    /** Control Center: two switches, one on, one off. */
-    private fun drawSwitches(c: Canvas, cx: Float, cy: Float, s: Float) {
-        val u = s / 24f
-        r2.set(cx - 9.5f * u, cy - 8f * u, cx + 9.5f * u, cy - 1f * u); c.drawRoundRect(r2, 3.5f * u, 3.5f * u, icon)
-        r2.set(cx - 9.5f * u, cy + 1f * u, cx + 9.5f * u, cy + 8f * u); c.drawRoundRect(r2, 3.5f * u, 3.5f * u, icon)
-        fill.color = Colors.INK; fill.alpha = icon.alpha
-        c.drawCircle(cx + 6f * u, cy - 4.5f * u, 1.8f * u, fill); c.drawCircle(cx - 6f * u, cy + 4.5f * u, 1.8f * u, fill)
     }
 
     /** The profile orb: the picture, or a graphite sphere with a fine silhouette, inside a brushed-metal ring. */
@@ -280,10 +272,8 @@ class ClockPill(ctx: Context, private val l: Layout, private val clock: FrameClo
         }
         sm.setTranslate(cx, cy); sphereShader!!.setLocalMatrix(sm); sphere.shader = sphereShader
         c.drawCircle(cx, cy, inner, sphere)
-        val u = inner * 2 / 24f
-        glyph.strokeWidth = maxOf(l.pxf(1.6f), 1.5f * u)
-        c.drawCircle(cx, cy - 2.6f * u, 3.6f * u, glyph)
-        path.reset(); path.moveTo(cx - 6.4f * u, cy + 7f * u); path.quadTo(cx, cy - 0.2f * u, cx + 6.4f * u, cy + 7f * u); c.drawPath(path, glyph)
+        // No picture: the Epple TV profile icon, sized to the sphere.
+        EppleIcons.draw(EppleIcons.PROFILE, c, cx, cy, inner * 1.25f, glyph, 0f)
     }
 
     override fun tick(dt: Float): Boolean {

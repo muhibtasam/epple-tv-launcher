@@ -22,7 +22,11 @@ object TvListings {
         val type: Int, val watchNext: Boolean, val episode: String?, val description: String?, val year: String?,
         val position: Long = 0, val duration: Long = 0, val engaged: Long = 0,
         val thumb: String? = null, val thumbRatio: Int = -1, val posterRatio: Int = -1,
+        /** Watch Next's own kind: 0 continue (left half-way), 1 next episode, 2 new, 3 watchlist; -1 unknown or a channel row. */
+        val nextType: Int = -1,
     ) {
+        /** Something the user actually watched (left half-way, or its next episode), not a "new" or watchlist entry. */
+        val watched: Boolean get() = nextType == -1 || nextType == 0 || nextType == 1
         /** The landscape picture for a wide card: one published as 16:9, 3:2 or 4:3, else one with no stated ratio. https only. */
         val wide: String? get() = listOf(thumb to thumbRatio, poster to posterRatio).let { l ->
             l.firstOrNull { (u, r) -> u?.startsWith("https://") == true && r in WIDE }?.first
@@ -46,7 +50,7 @@ object TvListings {
         "short_description", "release_date", "episode_display_number", "browsable", "poster_art_aspect_ratio", "thumbnail_aspect_ratio")
     private val WATCH_NEXT = arrayOf("package_name", "title", "type", "poster_art_uri", "thumbnail_uri", "intent_uri", "short_description",
         "release_date", "episode_display_number", "last_playback_position_millis", "duration_millis", "last_engagement_time_utc_millis", "browsable",
-        "poster_art_aspect_ratio", "thumbnail_aspect_ratio")
+        "poster_art_aspect_ratio", "thumbnail_aspect_ratio", "watch_next_type")
 
     /** Everything readable. Throws when the provider can't be read (callers keep what they had). */
     fun read(c: Context, watchNext: Boolean = true, previews: Boolean = true): List<Program> {
@@ -72,7 +76,8 @@ object TvListings {
             out += Program(r["package_name"] ?: return@rows, "Watch Next", r["title"] ?: return@rows, r["thumbnail_uri"] ?: r["poster_art_uri"],
                 r["poster_art_uri"], r["intent_uri"], r["type"]?.toIntOrNull() ?: -1, true, r["episode_display_number"], r["short_description"],
                 year(r["release_date"]), num(r["last_playback_position_millis"]), num(r["duration_millis"]), num(r["last_engagement_time_utc_millis"]),
-                thumb = r["thumbnail_uri"], thumbRatio = r["thumbnail_aspect_ratio"]?.toIntOrNull() ?: -1, posterRatio = r["poster_art_aspect_ratio"]?.toIntOrNull() ?: -1)
+                thumb = r["thumbnail_uri"], thumbRatio = r["thumbnail_aspect_ratio"]?.toIntOrNull() ?: -1, posterRatio = r["poster_art_aspect_ratio"]?.toIntOrNull() ?: -1,
+                nextType = r["watch_next_type"]?.toIntOrNull() ?: -1)
         }
         Log.i(TAG, "read ${out.size} programs: " + out.groupBy { it.pkg }.entries.joinToString { (p, l) ->
             "${p.substringAfterLast('.')} ${l.count { !it.watchNext }}+${l.count { it.watchNext }} [${l.mapNotNull { it.channel }.distinct().joinToString("/")}]" })

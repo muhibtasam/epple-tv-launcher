@@ -42,7 +42,7 @@ interface Nav {
     fun launch(e: AppEntry)
     fun play(item: ContentItem, pkg: String, appName: String)
     fun appMenu(e: AppEntry)
-    fun menu(title: String, items: List<Pair<String, () -> Unit>>)
+    fun menu(title: String, items: List<Pair<String, () -> Unit>>, icons: List<Int> = emptyList())
     fun toast(msg: String)
     fun appsChanged()
     fun restartUi()
@@ -94,13 +94,14 @@ abstract class Screen(protected val nav: Nav) {
 
 /** Title block over the artwork: eyebrow, logo (or typeset title), metadata and a two-line summary. */
 @SuppressLint("ViewConstructor")
-class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClock, private val content: ContentRepository, summaryLines: Int = 2) :
+class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClock, private val content: ContentRepository, private val summaryLines: Int = 2) :
     LinearLayout(ctx), FrameClock.Tick {
     private val eyebrow = TextView(ctx).apply { style(Txt.CAPTION, l.u, 0xD9FFFFFF.toInt()); shadow(this, 8f) }
     private val title = TextView(ctx).apply { style(Txt.HERO, l.u); shadow(this, 20f) }
     private val logo = ImageView(ctx).apply { adjustViewBounds = true; maxWidth = l.px(720); maxHeight = l.px(180); scaleType = ImageView.ScaleType.FIT_START; visibility = GONE }
     private val meta = MetaRow(ctx, l)
     val summary = TextView(ctx).apply { style(Txt.BODY, l.u, 0xD9FFFFFF.toInt()); maxLines = summaryLines; shadow(this, 10f) }
+    private val hints = KeyHints(ctx, l).apply { visibility = GONE }
     private val a = Spring(1f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)
     private var shownId: String? = null
 
@@ -113,11 +114,15 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
         addView(logo, LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(16); bottomMargin = l.px(4) })
         addView(meta, LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(12) })
         addView(summary, LayoutParams(l.px(860), WRAP_CONTENT).apply { topMargin = l.px(12) })
+        addView(hints, LayoutParams(MATCH_PARENT, l.px(56)).apply { topMargin = l.px(20) })
     }
 
-    fun show(item: ContentItem?, kind: String) {
+    fun show(item: ContentItem?, kind: String, hints: Boolean = false) {
         if (item == null) { visibility = INVISIBLE; return }
         visibility = VISIBLE
+        this.hints.visibility = if (hints) VISIBLE else GONE
+        // With the key hints the block keeps to the same height: a one-line summary and a slightly smaller logo.
+        summary.maxLines = if (hints) 1 else summaryLines; logo.maxHeight = l.px(if (hints) 130 else 180)
         val fresh = item.id != shownId
         shownId = item.id
         eyebrow.text = kind; eyebrow.visibility = if (kind.isEmpty()) GONE else VISIBLE
@@ -143,8 +148,39 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
     override fun tick(dt: Float): Boolean { a.step(dt); alpha = a.value; return !a.atRest() }
 }
 
+/**
+ * What the remote does on the focused title, as two small chips in the Epple TV icon style: OK resumes it, holding OK
+ * opens its options. Not focusable: it describes the keys, it isn't a button.
+ */
+@SuppressLint("ViewConstructor")
+class KeyHints(ctx: Context, private val l: Layout) : View(ctx) {
+    private val I = com.eppletv.launcher.ui.EppleIcons
+    private val chips = listOf(Triple(I.PLAY, "Resume", true), Triple(I.MORE, "Hold OK for more", false))
+    private val text = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = l.pxf(24f) * com.eppletv.launcher.ui.Type.scale; typeface = com.eppletv.launcher.ui.Type.of(700) }
+    private val bg = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val icon = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val r = android.graphics.RectF()
+
+    override fun onDraw(c: android.graphics.Canvas) {
+        val h = height.toFloat(); val pad = l.pxf(20f); val ic = l.pxf(28f); val gap = l.pxf(10f)
+        var x = 0f
+        for ((id, label, primary) in chips) {
+            val w = pad + ic + gap + text.measureText(label) + pad
+            r.set(x, 0f, x + w, h)
+            bg.color = if (primary) Colors.WHITE else 0x2EFFFFFF; c.drawRoundRect(r, l.pxf(10f), l.pxf(10f), bg)
+            val ink = if (primary) Colors.INK else Colors.WHITE
+            icon.color = ink; com.eppletv.launcher.ui.EppleIcons.draw(id, c, x + pad + ic / 2f, h / 2f, ic, icon, 1f)
+            text.color = ink; c.drawText(label, x + pad + ic + gap, h / 2f - (text.descent() + text.ascent()) / 2f, text)
+            x += w + l.pxf(14f)
+        }
+    }
+}
+
 /** A source of one row: [load] calls back with the items, or null on failure. */
-class RowSource(val title: String, val dynamic: Boolean = false, val emptyText: String? = null, val load: ((List<ContentItem>?) -> Unit) -> Unit)
+class RowSource(val title: String, val dynamic: Boolean = false, val emptyText: String? = null,
+                /** Drawn as Continue Watching (design B): landscape cards with logos and progress. */
+                val cont: Boolean = false, val load: ((List<ContentItem>?) -> Unit) -> Unit)
 
 /**
  * Browse layout shared by Home's feed, Movies, TV Shows and Library: the focused title's artwork fills the screen,
@@ -155,7 +191,10 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
     final override val view = FrameLayout(nav.ctx).apply { clipChildren = false }
     protected val info = InfoBlock(view.context, l, nav.clock, nav.content)
     protected val stack = ShelfStack(view.context, l, nav.clock, l.px(Look.ROWS_TOP))
-    private val empty = TextView(view.context).apply { style(Txt.ROW, l.u, Colors.TEXT_DIM); text = emptyAll ?: ""; gravity = Gravity.CENTER; visibility = View.GONE }
+    private val empty = TextView(view.context).apply { style(Txt.ROW, l.u, Colors.TEXT_DIM); text = emptyAll ?: ""; gravity = Gravity.CENTER; visibility = View.GONE
+        // Empty state: the Epple TV icon for watching above the line.
+        setCompoundDrawablesRelative(null, com.eppletv.launcher.ui.IconDrawable(com.eppletv.launcher.ui.EppleIcons.TV, l.px(72), 0f).apply { setBounds(0, 0, l.px(72), l.px(72)); color = Colors.TEXT_DIM }, null, null)
+        compoundDrawablePadding = l.px(20) }
     private val requested = HashSet<Int>()
     private var built = false
     private var version = -1
@@ -165,19 +204,35 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
         view.addView(info, FrameLayout.LayoutParams(l.px(1300), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(Look.INFO_TOP) })
         view.addView(stack, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         view.addView(empty, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
-        stack.onFocus = { s, c -> info.show(c.item, ""); nav.art(c.item) }
+        stack.onFocus = { s, c ->
+            // Continue Watching names the app to go back to and shows what OK and a long OK do.
+            val app = if (s.cont) c.item?.kind?.removePrefix("Continue in ")?.takeIf { it.isNotEmpty() } else null
+            val it = c.item
+            // The eyebrow names the app, so the meta line doesn't repeat it.
+            val shown = if (app == null || it == null) it else ContentItem(it.id, it.title,
+                it.meta.split("  ·  ").filter { p -> p.trim() != app }.joinToString("  ·  "), it.imageUrl, it.linkUri, it.linkPkg,
+                it.kind, it.summary, it.weight, it.origin, it.logoUrl, it.posterUrl)
+            info.show(shown, app?.let { a -> "Continue in $a".uppercase() } ?: "", hints = s.cont)
+            nav.art(c.item)
+        }
         stack.onRow = { r -> for (i in r..minOf(sources.size - 1, r + 3)) load(i) }
     }
 
     private fun build() {
         built = true
-        sources.forEach { src -> stack.add(Shelf(view.context, l, nav.clock, src.title, poster = true).apply { loader = { c -> loadThumb(c) } }) }
+        sources.forEach { src -> stack.add(Shelf(view.context, l, nav.clock, src.title, poster = true, cont = src.cont).apply { loader = { c -> loadThumb(c) } }) }
         // The first rows, plus every row built from the user's own lists (local, instant).
         sources.forEachIndexed { i, s -> if (i < 3 || s.dynamic) load(i) }
     }
 
     protected open fun loadThumb(c: Card) {
         val it = c.item ?: return
+        if (c is ContinueCard) {
+            // Decoded at the focused card's size (no upscaling), from the same disk cache; the logo from the shared cache.
+            nav.content.thumb(Catalog.cardUrl(it.imageUrl), nav.content.WIDE_THUMB) { b -> if (b != null && c.item?.id == it.id) c.setBitmap(b) }
+            nav.content.logo(it) { b -> if (c.item?.id == it.id) c.setLogo(b) }
+            return
+        }
         nav.content.thumb(Catalog.cardUrl(it.imageUrl)) { b -> if (b != null) c.setBitmap(b) }
         if (c is PosterCard && it.posterUrl.isNotEmpty()) nav.content.thumb(it.posterUrl) { b -> if (b != null) c.setPoster(b) }
     }
@@ -235,14 +290,18 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
     protected fun itemMenu(it: ContentItem) {
         val u = nav.user
         val inList = u.contains(UserLibrary.Kind.WATCHLIST, it.id); val fav = u.contains(UserLibrary.Kind.FAVOURITES, it.id)
+        val I = com.eppletv.launcher.ui.EppleIcons
+        val extra = extraMenu(it)
         nav.menu(it.title, listOf(
             "Details" to { nav.details(it) },
             (if (inList) "Remove from Watchlist" else "Add to Watchlist") to { u.toggle(UserLibrary.Kind.WATCHLIST, it); Unit },
             (if (fav) "Remove from Favourites" else "Add to Favourites") to { u.toggle(UserLibrary.Kind.FAVOURITES, it); Unit },
-        ) + extraMenu(it))
+        ) + extra.map { e -> e.first to e.third },
+            listOf(I.INFO, if (inList) I.WATCHLIST_ON else I.WATCHLIST, if (fav) I.FAVOURITE_ON else I.FAVOURITE) + extra.map { e -> e.second })
     }
 
-    protected open fun extraMenu(it: ContentItem): List<Pair<String, () -> Unit>> = emptyList()
+    /** More actions for [it]: label, [com.eppletv.launcher.ui.EppleIcons] id, action. */
+    protected open fun extraMenu(it: ContentItem): List<Triple<String, Int, () -> Unit>> = emptyList()
 
     override fun featured(): ContentItem? = stack.current?.item ?: stack.shelves.getOrNull(stack.firstNavigable())?.item
 
@@ -275,7 +334,7 @@ object Rows {
 /** Home's rows under the top row: Continue Watching, Recently Added, Trending, For You and the Watchlist. */
 class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
     // What you left half-way in any app (the TV's own Watch Next list, as Google TV shows it), then titles opened from Epple TV.
-    RowSource("Continue Watching", dynamic = true) { cb ->
+    RowSource("Continue Watching", dynamic = true, cont = true) { cb ->
         // Twice: at once with the apps' own pictures, then again once TMDB posters are found (cached after the first time).
         for (posters in listOf(false, true)) nav.content.run({ ContinueWatching.load(nav.ctx, nav.content.net, posters) }) { tv ->
             cb(ContinueWatching.merge(nav.ctx, tv.orEmpty(), nav.user.items(UserLibrary.Kind.CONTINUE)))
@@ -308,7 +367,7 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
 
     /** Every title in Continue Watching can be removed, wherever it came from (Watch Next, an app's row, Epple's list). */
     override fun extraMenu(it: ContentItem) =
-        if (stack.current?.title == "Continue Watching") listOf("Remove from Continue Watching" to { removeContinue(it) }) else emptyList()
+        if (stack.current?.title == "Continue Watching") listOf(Triple("Remove from Continue Watching", com.eppletv.launcher.ui.EppleIcons.REMOVE, { removeContinue(it) })) else emptyList()
 
     private fun removeContinue(it: ContentItem) {
         com.eppletv.launcher.content.Recency.remove(nav.ctx, it.linkPkg, it.title)
@@ -342,13 +401,18 @@ object ContinueWatching {
         val rank = HashMap<String, Int>()
         for (it in tv) {
             if (R.removed(ctx, it.linkPkg, it.title) || !seen.add(norm(it.title))) continue
-            val own = maxOf(engaged[it.id] ?: 0L, R.titleTime(ctx, it.linkPkg, it.title))
+            val wn = R.acceptedTime(ctx, it.linkPkg, it.title, engaged[it.id] ?: 0L)
+            if (wn < 0) continue                                  // appeared without verified viewing
+            val own = maxOf(wn, R.titleTime(ctx, it.linkPkg, it.title))
             if (own > 0) { keyed += it to own; continue }
             val k = rank.merge(it.linkPkg ?: "", 1, Int::plus)!!
             if (k <= UNTIMED_PER_APP) keyed += it to R.appTime(ctx, it.linkPkg) - 1000L * k
         }
-        mine.forEachIndexed { i, it ->
-            if (!R.removed(ctx, it.linkPkg, it.title) && seen.add(norm(it.title))) keyed += it to R.titleTime(ctx, it.linkPkg, it.title).let { t -> if (t > 0) t else -1L - i }
+        // Titles opened from Epple TV count only once their app reported 30 seconds of playing (a verified stamp);
+        // the rest stay in the history underneath, unshown.
+        for (it in mine) {
+            val t = R.titleTime(ctx, it.linkPkg, it.title)
+            if (t > 0 && !R.removed(ctx, it.linkPkg, it.title) && seen.add(norm(it.title))) keyed += it to t
         }
         val sorted = keyed.sortedByDescending { it.second }.take(SHOWN)
         val fmt = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.ROOT)
@@ -364,7 +428,7 @@ object ContinueWatching {
         val pm = ctx.packageManager
         val label = HashMap<String, String>()
         fun app(pkg: String) = label.getOrPut(pkg) { try { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { pkg } }
-        val rows = all.filter { (it.watchNext || com.eppletv.launcher.content.TvListings.isContinueChannel(it.channel)) &&
+        val rows = all.filter { ((it.watchNext && it.watched) || com.eppletv.launcher.content.TvListings.isContinueChannel(it.channel)) &&
             it.wide != null && com.eppletv.launcher.content.TvListings.linkAllowed(it.link, it.pkg) &&
             (pm.getLeanbackLaunchIntentForPackage(it.pkg) ?: pm.getLaunchIntentForPackage(it.pkg)) != null }
             .sortedByDescending { it.engaged }

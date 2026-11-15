@@ -241,7 +241,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
 
     /** Main thread. A backdrop made from a card picture already in memory (scrim painted in), or null at once if none. */
     fun cardBackdrop(cardUrl: String, cb: (Bitmap?) -> Unit) {
-        val t = thumbs.get(cardUrl) ?: return cb(null)
+        val t = thumbs.get("$cardUrl#$WIDE_THUMB") ?: thumbs.get(cardUrl) ?: return cb(null)
         io.execute {
             val b = try { Bitmap.createScaledBitmap(t, 960, 540, true).copy(Bitmap.Config.RGB_565, true)?.also { backdropFilter?.invoke(it); it.prepareToDraw() } } catch (_: Throwable) { null }
             main.post { cb(b) }
@@ -249,15 +249,21 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     }
 
     /** Main thread. Card artwork, decoded once at card size (no scrim), from the shared disk cache. */
-    fun thumb(url: String, cb: (Bitmap?) -> Unit) {
+    fun thumb(url: String, cb: (Bitmap?) -> Unit) = thumb(url, 380, cb)
+    /** The width Continue Watching cards decode at (their focused card is 528 px wide). */
+    val WIDE_THUMB = 560
+
+    /** [thumb] decoded [width] px wide (a card shown larger than the usual 380 px, so it isn't upscaled and soft). */
+    fun thumb(url: String, width: Int, cb: (Bitmap?) -> Unit) {
         if (url.isEmpty()) return cb(null)
-        thumbs.get(url)?.let { return cb(it) }
-        thumbWaiters[url]?.let { it.add(cb); return }
-        thumbWaiters[url] = arrayListOf(cb)
+        val key = if (width == 380) url else "$url#$width"
+        thumbs.get(key)?.let { return cb(it) }
+        thumbWaiters[key]?.let { it.add(cb); return }
+        thumbWaiters[key] = arrayListOf(cb)
         io.execute {
             // w780 artwork decodes at 390 px: card size, a quarter of the pixels.
-            val bmp = try { decodeScaled(fetch(url), 380) } catch (e: Exception) { Log.w(TAG, "thumb failed: ${e.javaClass.simpleName}"); null }
-            main.post { if (bmp != null) thumbs.put(url, bmp); thumbWaiters.remove(url)?.forEach { it(bmp) } }
+            val bmp = try { decodeScaled(fetch(url), width) } catch (e: Exception) { Log.w(TAG, "thumb failed: ${e.javaClass.simpleName}"); null }
+            main.post { if (bmp != null) thumbs.put(key, bmp); thumbWaiters.remove(key)?.forEach { it(bmp) } }
         }
     }
 

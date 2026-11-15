@@ -119,12 +119,20 @@ open class Pill(
         f.target = if (gain) 1f else 0f; clock.add(this)
     }
 
+    private var iconD: IconDrawable? = null
+    /** A leading Epple TV icon ([EppleIcons] id; -1 removes it), coloured like the label; its accent lights on focus. */
+    fun icon(id: Int, sizePx: Int, gapPx: Int) {
+        iconD = if (id < 0) null else IconDrawable(id, sizePx, 0f).apply { setBounds(0, 0, sizePx, sizePx); color = currentTextColor }
+        setCompoundDrawablesRelative(iconD, null, null, null); compoundDrawablePadding = gapPx
+    }
+
     override fun tick(dt: Float): Boolean {
         f.step(dt); s.step(dt)
         val sc = 1f + focusScale * f.value
         scaleX = sc; scaleY = sc
         bg.setColor(Colors.lerp(Colors.lerp(restBg, Colors.FILL_SELECTED, s.value), Colors.WHITE, f.value))
         setTextColor(Colors.lerp(Colors.lerp(restText, Colors.WHITE, s.value), Colors.INK, f.value))
+        iconD?.let { it.color = currentTextColor; it.accent = maxOf(f.value, s.value).coerceIn(0f, 1f); it.invalidateSelf() }
         return !(f.atRest() && s.atRest())
     }
 }

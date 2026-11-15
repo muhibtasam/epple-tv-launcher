@@ -43,7 +43,12 @@ object Look {
     const val PLACEHOLDER = 0xFF2A2D35.toInt()
     // Netflix-style rows: portrait posters at rest; the focused title opens into a wide card of the same height.
     const val ROW_H = 300; const val POSTER_W = 200; const val WIDE_W = 533; const val ROW_GAP = 18
+    // Continue Watching (design B): landscape cards with the title's logo; the focused one grows, a progress line under each.
+    const val CW_W = 408; const val CW_WIDE = 528; const val CW_ART_H = 297; const val CW_GAP = 21; const val CW_H = 366
 }
+
+/** A card whose drawn width the row sets as it moves (posters opening into wide cards, Continue Watching growing). */
+interface Widening { var shown: Float }
 
 /**
  * A card in a Netflix-style row. At rest it shows the title's portrait poster; the focused card widens (driven by its
@@ -52,10 +57,10 @@ object Look {
  */
 @SuppressLint("ViewConstructor")
 class PosterCard(ctx: Context, private val l: Layout, private val clock: FrameClock) :
-    Card(ctx, l, clock, l.px(Look.WIDE_W), l.px(Look.ROW_H), titled = false) {
+    Card(ctx, l, clock, l.px(Look.WIDE_W), l.px(Look.ROW_H), titled = false), Widening {
     private val posterW = l.pxf(Look.POSTER_W.toFloat()); private val wideW = l.pxf(Look.WIDE_W.toFloat())
     /** The width drawn now, between the poster and the wide card. */
-    var shown = posterW
+    override var shown = posterW
         set(v) { if (field != v) { field = v; invalidate() } }
     private var poster: Bitmap? = null
     private var wide: Bitmap? = null
@@ -107,6 +112,115 @@ class PosterCard(ctx: Context, private val l: Layout, private val clock: FrameCl
         c.restore()
         val f = fv.value.coerceIn(0f, 1f)
         if (f > 0.01f) { rim.alpha = (255 * f).toInt(); r.inset(rim.strokeWidth / 2f, rim.strokeWidth / 2f); c.drawRoundRect(r, radius, radius, rim) }
+    }
+}
+
+/**
+ * Continue Watching card (design B): the title's landscape artwork with its logo (or name) over a soft shade at the
+ * bottom, and a progress line underneath. The focused card grows (the row drives [shown]), gets a white rim, full
+ * brightness and a caption under the line (episode, how much is watched). One view draws all of it.
+ */
+@SuppressLint("ViewConstructor")
+class ContinueCard(ctx: Context, private val l: Layout, private val clock: FrameClock) :
+    Card(ctx, l, clock, l.px(Look.CW_WIDE), l.px(Look.CW_H), titled = false), Widening {
+    private val restW = l.pxf(Look.CW_W.toFloat()); private val wideW = l.pxf(Look.CW_WIDE.toFloat())
+    override var shown = restW
+        set(v) { if (field != v) { field = v; invalidate() } }
+    private var picture: Bitmap? = null
+    private var logo: Bitmap? = null
+    private var pct = -1f
+    private var caption = ""
+    private val fv = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Look.PLACEHOLDER }
+    private val shade = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = android.graphics.LinearGradient(0f, 0f, 0f, 1f, 0x00000000, 0xC0000000.toInt(), Shader.TileMode.CLAMP) }
+    private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = l.pxf(4f); color = Colors.WHITE }
+    private val bar = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val logoPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val name = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = com.eppletv.launcher.ui.Type.of(800); color = Colors.WHITE
+        setShadowLayer(l.pxf(8f), 0f, l.pxf(2f), 0x99000000.toInt()) }
+    private val cap = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(24f) * com.eppletv.launcher.ui.Type.scale; typeface = com.eppletv.launcher.ui.Type.of(600); color = 0xC7FFFFFF.toInt() }
+    private val r = RectF(); private val m = Matrix(); private val sm = Matrix(); private val clip = android.graphics.Path()
+    private val radius = l.pxf(12f)
+
+    init { removeAllViews(); setWillNotDraw(false); clipChildren = true }
+
+    /** Reads the progress and the caption from the item's meta line ("App  ·  Episode 1  ·  3% watched"). */
+    fun describe(it: ContentItem) {
+        val app = it.kind.removePrefix("Continue in ")
+        val parts = it.meta.split("  ·  ").map { p -> p.trim() }.filter { p -> p.isNotEmpty() && p != app }
+        pct = parts.firstNotNullOfOrNull { p -> PCT.find(p)?.groupValues?.get(1)?.toFloatOrNull() }?.div(100f) ?: -1f
+        caption = parts.filter { p -> !p.startsWith("★") }.take(2).joinToString("  ·  ").ifEmpty { "Resume in $app" }
+        invalidate()
+    }
+
+    override fun setBitmap(b: Bitmap?) { picture = b; paint.shader = b?.let { BitmapShader(it, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP) }; invalidate() }
+    fun setLogo(b: Bitmap?) { logo = b; invalidate() }
+    override fun release() { if (picture != null || logo != null || requested) { requested = false; setBitmap(null); logo = null; invalidate() } }
+
+    override fun onFocusChanged(gain: Boolean, direction: Int, prev: android.graphics.Rect?) {
+        super.onFocusChanged(gain, direction, prev)
+        fv.target = if (gain) 1f else 0f; clock.add(this)
+    }
+    override fun tick(dt: Float): Boolean { fv.step(dt); invalidate(); return !fv.atRest() }
+
+    override fun onDraw(c: Canvas) {
+        val w = shown; if (w < 1f) return
+        val t = ((w - restW) / (wideW - restW)).coerceIn(0f, 1f)
+        val h = w * 9f / 16f
+        val top = (l.pxf(Look.CW_ART_H.toFloat()) - h) / 2f
+        r.set(0f, top, w, top + h)
+        clip.reset(); clip.addRoundRect(r, radius, radius, android.graphics.Path.Direction.CW)
+        c.save(); c.clipPath(clip)
+        val b = picture
+        if (b == null) c.drawRect(r, fill)
+        else {
+            val s = maxOf(w / b.width, h / b.height)
+            m.setScale(s, s); m.postTranslate((w - b.width * s) / 2f, top + (h - b.height * s) / 2f)
+            paint.shader?.setLocalMatrix(m); paint.alpha = (190 + 65 * t).toInt(); c.drawRect(r, paint)
+        }
+        // The shade under the logo: the lower 55 % of the card.
+        val sh = h * 0.55f
+        sm.setScale(1f, sh); sm.postTranslate(0f, top + h - sh); shade.shader.setLocalMatrix(sm)
+        c.drawRect(0f, top + h - sh, w, top + h, shade)
+        val pad = l.pxf(16f + 4f * t)
+        val lg = logo
+        if (titledArt) Unit                                // the app's artwork already carries the title
+        else if (lg != null) {
+            val mw = l.pxf(196f + 64f * t); val mh = l.pxf(60f + 20f * t)
+            val k = minOf(mw / lg.width, mh / lg.height)
+            m.setScale(k, k); m.postTranslate(pad, top + h - pad - lg.height * k)
+            c.drawBitmap(lg, m, logoPaint)
+        } else item?.title?.let { tx ->
+            name.textSize = l.pxf(26f + 8f * t) * com.eppletv.launcher.ui.Type.scale
+            c.drawText(ellipsize(tx, name, w - 2 * pad), pad, top + h - pad, name)
+        }
+        c.restore()
+        val f = fv.value.coerceIn(0f, 1f)
+        if (f > 0.01f) { rim.alpha = (255 * f).toInt(); r.inset(rim.strokeWidth / 2f, rim.strokeWidth / 2f); c.drawRoundRect(r, radius, radius, rim) }
+        // Progress line under the card (only when the app reports one), then the caption under the focused card.
+        val y = top + h + l.pxf(16f); val bh = l.pxf(4f + 2f * t)
+        if (pct >= 0f) {
+            bar.color = 0x38FFFFFF; r.set(0f, y, w, y + bh); c.drawRoundRect(r, bh / 2f, bh / 2f, bar)
+            bar.color = Colors.WHITE; bar.alpha = (180 + 75 * t).toInt(); r.set(0f, y, maxOf(bh, w * pct), y + bh); c.drawRoundRect(r, bh / 2f, bh / 2f, bar)
+        }
+        if (t > 0.02f) { cap.alpha = (199 * t).toInt(); c.drawText(ellipsize(caption, cap, w), 0f, y + bh + l.pxf(14f) - cap.ascent(), cap) }
+    }
+
+    private fun ellipsize(s: String, p: Paint, max: Float): String {
+        if (p.measureText(s) <= max) return s
+        var n = s.length
+        while (n > 1 && p.measureText(s, 0, n) + p.measureText("…") > max) n--
+        return s.take(n).trimEnd() + "…"
+    }
+
+    /** Prime Video draws the title into its Watch Next artwork: no second logo on top. */
+    private val titledArt get() = item?.linkPkg in TITLED_ART
+
+    private companion object {
+        val PCT = Regex("(\\d+)% watched")
+        val TITLED_ART = setOf("com.amazon.amazonvideo.livingroom")
     }
 }
 
@@ -224,7 +338,15 @@ open class Card(ctx: Context, private val l: Layout, private val clock: FrameClo
 class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, val title: String,
             val cw: Int = Look.CARD_W, val ch: Int = Look.CARD_H, private val titled: Boolean = true,
             /** Netflix-style: posters with a wide focused card, and an endless loop (after the last title comes the first). */
-            val poster: Boolean = false) : FrameLayout(ctx), FrameClock.Tick {
+            poster: Boolean = false,
+            /** Continue Watching (design B): landscape cards that grow when focused, on the same endless loop. */
+            val cont: Boolean = false) : FrameLayout(ctx), FrameClock.Tick {
+    val poster = poster || cont
+    // Card widths at rest and focused, and the gap, for the looping rows.
+    private val restPx = l.pxf((if (cont) Look.CW_W else Look.POSTER_W).toFloat())
+    private val widePx = l.pxf((if (cont) Look.CW_WIDE else Look.WIDE_W).toFloat())
+    private val gapPx = l.pxf((if (cont) Look.CW_GAP else Look.ROW_GAP).toFloat())
+    private val stripH = if (cont) Look.CW_H else Look.ROW_H
     private val header = TextView(ctx).apply { style(Txt.TITLE, l.u); text = title }
     private val status = TextView(ctx).apply { style(Txt.META, l.u, Colors.TEXT_DIM); text = "Loading…" }
     private val strip = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
@@ -234,7 +356,7 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
     private val sx = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
     private val pitch = l.px(cw + Look.GAP)
     private val visible = max(1, (l.px(1920) - l.left) / pitch)
-    val rowHeight = if (poster) l.px(Look.ROW_TITLE) + l.px(Look.ROW_H) + l.px(44) else l.px(Look.ROW_TITLE) + l.px(ch) + l.px(if (titled) Look.CARD_LABEL + 44 else 46)
+    val rowHeight = if (poster) l.px(Look.ROW_TITLE) + l.px(stripH) + l.px(44) else l.px(Look.ROW_TITLE) + l.px(ch) + l.px(if (titled) Look.CARD_LABEL + 44 else 46)
     // Poster mode: a continuous position (in titles, unbounded) springs to [pt]; each card's slot is derived from it.
     private val ps = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, 0.002f)
     private var pt = 0f
@@ -246,18 +368,25 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         clipChildren = false; clipToPadding = false
         addView(header, LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left })
         addView(status, LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(Look.ROW_TITLE + 20) })
-        addView(strip, LayoutParams(MATCH_PARENT, l.px(if (poster) Look.ROW_H else ch)).apply { topMargin = l.px(Look.ROW_TITLE) })
+        addView(strip, LayoutParams(MATCH_PARENT, l.px(if (poster) stripH else ch)).apply { topMargin = l.px(Look.ROW_TITLE) })
     }
 
     /** Fills the row; [bind] sets each card up. An empty list shows [emptyText] (or hides the row when null). */
     fun set(list: List<ContentItem>, emptyText: String? = null, bind: (Card, ContentItem) -> Unit) {
+        // Cards of titles still in the row are kept with their artwork (a reload after one title changed or left the row
+        // rebuilds nothing else and fetches nothing again); only new titles get new cards.
+        val old = HashMap<String, ArrayDeque<Card>>()
+        if (poster) cards.forEach { c -> c.item?.id?.let { id -> old.getOrPut(id) { ArrayDeque() }.add(c) } }
+        val focused = cards.getOrNull(col)?.hasFocus() == true
         strip.removeAllViews(); cards.clear()
         // A loop needs enough cards to fill the screen: a short row repeats its titles (2 titles -> 2,2,2,...).
         val items = if (poster && list.size in 2 until FILL) List(((FILL + list.size - 1) / list.size) * list.size) { list[it % list.size] } else list
         items.forEachIndexed { i, it ->
-            val c = if (poster) PosterCard(context, l, clock) else Card(context, l, clock, l.px(cw), l.px(ch), titled)
+            val kept = old[it.id]?.removeFirstOrNull()?.takeIf { k -> k.item?.imageUrl == it.imageUrl }
+            val c = kept ?: if (cont) ContinueCard(context, l, clock) else if (poster) PosterCard(context, l, clock) else Card(context, l, clock, l.px(cw), l.px(ch), titled)
             c.item = it; bind(c, it)
-            if (poster) strip.addView(c, LayoutParams(l.px(Look.WIDE_W), l.px(Look.ROW_H)).apply { leftMargin = l.left })
+            if (c is ContinueCard) c.describe(it)
+            if (poster) strip.addView(c, LayoutParams(widePx.toInt(), l.px(stripH)).apply { leftMargin = l.left })
             else strip.addView(c, LayoutParams(l.px(cw), l.px(ch)).apply { leftMargin = l.left + i * pitch })
             cards.add(c)
         }
@@ -268,6 +397,7 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         col = col.coerceIn(0, max(0, cards.size - 1))
         if (poster) { pt = col.toFloat(); ps.snapTo(pt); layoutPosters() }
         place(); ensureLoaded()
+        if (focused) cards.getOrNull(col)?.requestFocus()
     }
 
     /** Back to the first title, animated (the row was left for another one). */
@@ -295,20 +425,20 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
 
     /** Places every poster card for the current position: x and width follow from its distance to the focus. */
     private fun layoutPosters() {
-        val pw = l.pxf(Look.POSTER_W.toFloat()); val ww = l.pxf(Look.WIDE_W.toFloat()); val gap = l.pxf(Look.ROW_GAP.toFloat())
+        val pw = restPx; val ww = widePx; val gap = gapPx
         val screen = l.pxf(1920f)
         for ((i, card) in cards.withIndex()) {
-            val c = card as? PosterCard ?: continue
+            val c = card as? Widening ?: continue
             val d = slot(i, ps.value)
             val x = l.left + (pw + gap) * d + (ww - pw) * d.coerceIn(0f, 1f)
             val w = pw + (ww - pw) * (1f - kotlin.math.abs(d).coerceIn(0f, 1f))
-            c.translationX = x - l.left
+            card.translationX = x - l.left
             c.shown = w
             // The previous title peeks in on the left as usual, except a title that is only there because the row
             // wraps: on the first title the left side stays empty (Left still goes round to the last title).
             val wrapped = d < 0f && i > col
-            c.alpha = if (wrapped) 0f else 1f
-            c.visibility = if (i == col || (!wrapped && x < screen && x + w > -pw)) VISIBLE else INVISIBLE   // an invisible view can't take focus
+            card.alpha = if (wrapped) 0f else 1f
+            card.visibility = if (i == col || (!wrapped && x < screen && x + w > -pw)) VISIBLE else INVISIBLE   // an invisible view can't take focus
         }
     }
 
@@ -337,7 +467,7 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         val ld = loader ?: return
         if (poster) {
             // The focus, one behind and the posters that fit after it; the rest give their artwork back.
-            val ahead = ((l.pxf(1920f) - l.left) / l.pxf((Look.POSTER_W + Look.ROW_GAP).toFloat())).toInt() + 1
+            val ahead = ((l.pxf(1920f) - l.left) / (restPx + gapPx)).toInt() + 1
             for ((i, c) in cards.withIndex()) {
                 val d = slot(i, pt)
                 if (d >= -1f && d <= ahead) { if (!c.requested) { c.requested = true; ld(c) } } else if (d > ahead + 4) c.release()

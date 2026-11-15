@@ -38,6 +38,7 @@ import com.eppletv.launcher.content.UserLibrary
 import com.eppletv.launcher.motion.FrameClock
 import com.eppletv.launcher.motion.Motion
 import com.eppletv.launcher.motion.Spring
+import com.eppletv.launcher.ui.EppleIcons
 import com.eppletv.launcher.ui.Colors
 import com.eppletv.launcher.ui.Pill
 import com.eppletv.launcher.ui.Txt
@@ -394,13 +395,15 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     /** Control Center / Settings: the profile picture's choices. */
     override fun profileMenu() {
         val items = ArrayList<Pair<String, () -> Unit>>()
+        val icons = arrayListOf(EppleIcons.PROFILE)
         items.add("Add from Phone" to { openPhone() })
+        if (profile.exists()) icons += EppleIcons.TRASH
         if (profile.exists()) items.add("Remove Picture" to {
             menu("Remove your profile picture?", listOf(
                 "Cancel" to {},                                   // first, so a stray OK keeps it
                 "Remove" to { content.run({ profile.remove() }) { profileChanged() } }))
         })
-        menu("Profile Picture", items)
+        menu("Profile Picture", items, icons)
     }
     override fun wallpapersAdded() { nextWallpaper(newest = true); (screens[SETTINGS] as? SettingsScreen)?.show() }
 
@@ -592,20 +595,21 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     override fun appMenu(e: AppEntry) {
         val pkg = e.packageName
-        val items = ArrayList<Pair<String, () -> Unit>>()
-        items.add(getString(R.string.menu_open) to { launch(e) })
+        val items = ArrayList<Pair<String, () -> Unit>>(); val icons = ArrayList<Int>()
+        fun add(icon: Int, label: String, action: () -> Unit) { items.add(label to action); icons.add(icon) }
+        add(EppleIcons.OPEN, getString(R.string.menu_open)) { launch(e) }
         if (library.isPinned(apps, pkg)) {
-            if (library.canMove(apps, pkg, -1)) items.add(getString(R.string.menu_left) to { library.move(apps, pkg, -1); appsChanged() })
-            if (library.canMove(apps, pkg, 1)) items.add(getString(R.string.menu_right) to { library.move(apps, pkg, 1); appsChanged() })
-            items.add(getString(R.string.menu_unpin) to { library.remove(apps, pkg); appsChanged() })
-        } else items.add(getString(R.string.menu_pin) to { library.add(apps, pkg); appsChanged() })
-        items.add(getString(R.string.menu_info) to { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)), e.label); Unit })
-        items.add("Uninstall" to { open(Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null)), e.label); Unit })
-        menu(e.label, items)
+            if (library.canMove(apps, pkg, -1)) add(EppleIcons.LEFT, getString(R.string.menu_left)) { library.move(apps, pkg, -1); appsChanged() }
+            if (library.canMove(apps, pkg, 1)) add(EppleIcons.RIGHT, getString(R.string.menu_right)) { library.move(apps, pkg, 1); appsChanged() }
+            add(EppleIcons.PIN, getString(R.string.menu_unpin)) { library.remove(apps, pkg); appsChanged() }
+        } else add(EppleIcons.PIN, getString(R.string.menu_pin)) { library.add(apps, pkg); appsChanged() }
+        add(EppleIcons.INFO, getString(R.string.menu_info)) { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)), e.label) }
+        add(EppleIcons.TRASH, "Uninstall") { open(Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null)), e.label) }
+        menu(e.label, items, icons)
     }
 
-    override fun menu(title: String, items: List<Pair<String, () -> Unit>>) {
-        panel.show(listOf<View>(TextView(this).apply { text = title; style(Txt.TITLE, l.u) }), items, atCorner = false)
+    override fun menu(title: String, items: List<Pair<String, () -> Unit>>, icons: List<Int>) {
+        panel.show(listOf<View>(TextView(this).apply { text = title; style(Txt.TITLE, l.u) }), items, atCorner = false, icons = icons)
     }
 
     override fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
@@ -784,20 +788,20 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private fun buildControlCenter() {
         fun act(a: () -> Unit) = { cc.hide(); a() }
         cc.build(listOf(
-            ControlCenter.Item(Glyphs.POWER, "Standby", big = true) { cc.hide(); content.run({ tv.standby() ?: "" }) { e -> if (!e.isNullOrEmpty()) toast(e) } },
-            ControlCenter.Item(Glyphs.WIFI, "Wi-Fi", action = act { open(Intent(Settings.ACTION_WIFI_SETTINGS), "Wi-Fi") }),
-            ControlCenter.Item(Glyphs.INPUT, "Inputs", action = act { inputsMenu() }),
-            ControlCenter.Item(Glyphs.VOLUME, "Volume") {
+            ControlCenter.Item(EppleIcons.POWER, "Standby", big = true) { cc.hide(); content.run({ tv.standby() ?: "" }) { e -> if (!e.isNullOrEmpty()) toast(e) } },
+            ControlCenter.Item(EppleIcons.WIFI, "Wi-Fi", action = act { open(Intent(Settings.ACTION_WIFI_SETTINGS), "Wi-Fi") }),
+            ControlCenter.Item(EppleIcons.INPUT, "Inputs", action = act { inputsMenu() }),
+            ControlCenter.Item(EppleIcons.VOLUME, "Volume") {
                 getSystemService(android.media.AudioManager::class.java)?.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,
                     android.media.AudioManager.ADJUST_SAME, android.media.AudioManager.FLAG_SHOW_UI)
                 ccRefresh()
             },
-            ControlCenter.Item(Glyphs.MOON, "Sleep Timer") { cycleSleep() },
-            ControlCenter.Item(Glyphs.PICTURE, "Screensaver", round = true, action = act { startSaver() }),
-            ControlCenter.Item(Glyphs.BLUETOOTH, "Bluetooth & Accessories", round = true, action = act { open(Intent(Settings.ACTION_BLUETOOTH_SETTINGS), "Accessories") }),
-            ControlCenter.Item(Glyphs.BELL, "Notifications", round = true, action = act { notificationsMenu() }),
-            ControlCenter.Item(Glyphs.GEAR, "Epple TV Settings", round = true, action = act { goTab(SETTINGS) }),
-            ControlCenter.Item(Glyphs.SLIDERS, "TV Settings", round = true, action = act { open(Intent(Settings.ACTION_SETTINGS), "Settings") }),
+            ControlCenter.Item(EppleIcons.MOON, "Sleep Timer") { cycleSleep() },
+            ControlCenter.Item(EppleIcons.PICTURE, "Screensaver", round = true, action = act { startSaver() }),
+            ControlCenter.Item(EppleIcons.BLUETOOTH, "Bluetooth & Accessories", round = true, action = act { open(Intent(Settings.ACTION_BLUETOOTH_SETTINGS), "Accessories") }),
+            ControlCenter.Item(EppleIcons.BELL, "Notifications", round = true, action = act { notificationsMenu() }),
+            ControlCenter.Item(EppleIcons.SETTINGS, "Epple TV Settings", round = true, action = act { goTab(SETTINGS) }),
+            ControlCenter.Item(EppleIcons.SLIDERS, "TV Settings", round = true, action = act { open(Intent(Settings.ACTION_SETTINGS), "Settings") }),
         ))
         ccWifi = cc.tiles[1]; ccInputs = cc.tiles[2]; ccVolume = cc.tiles[3]; ccSleep = cc.tiles[4]
     }
@@ -1012,7 +1016,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         // Library was removed: Watchlist and Favourites stay reachable from Home's rows below the top row.
         // Indexed by section; the side menu lists MENU_ORDER (Search at the bottom; Settings is not in it).
         val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Apps", "Search", "Settings")
-        val TAB_ICONS = listOf(TabIcons.HOME, TabIcons.MOVIES, TabIcons.TV, TabIcons.APPS, TabIcons.SEARCH, TabIcons.SETTINGS)
+        val TAB_ICONS = listOf(EppleIcons.HOME, EppleIcons.MOVIES, EppleIcons.TV, EppleIcons.APPS, EppleIcons.SEARCH, EppleIcons.SETTINGS)
         val MENU_ORDER = listOf(0, 1, 2, 3, 4)
         const val PILL = 6
         const val APPS = 3

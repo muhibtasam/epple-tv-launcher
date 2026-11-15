@@ -36,11 +36,13 @@ class MenuPanel(ctx: Context, private val l: Layout, private val clock: FrameClo
 
     fun params() = FrameLayout.LayoutParams(l.px(520), WRAP_CONTENT)
 
-    fun show(header: List<View>, items: List<Pair<String, () -> Unit>>, atCorner: Boolean, footer: View? = null) {
+    /** [icons]: an [com.eppletv.launcher.ui.EppleIcons] id per item (same order), or empty for text-only rows. */
+    fun show(header: List<View>, items: List<Pair<String, () -> Unit>>, atCorner: Boolean, footer: View? = null, icons: List<Int> = emptyList()) {
         panel.removeAllViews(); rows.clear()
         header.forEach { panel.addView(it) }
         items.forEachIndexed { i, (label, action) ->
             val row = Pill(panel.context, label, l.pxf(30f), l.pxf(22f), l.px(28), clock, Colors.FILL, Colors.WHITE, 0.03f, startAligned = true)
+            icons.getOrNull(i)?.let { if (it >= 0) row.icon(it, l.px(34), l.px(18)) }
             row.setOnClickListener { hide(); action() }
             panel.addView(row, LinearLayout.LayoutParams(MATCH_PARENT, l.px(84)).apply { topMargin = if (i == 0) l.px(26) else l.px(14) })
             rows.add(row)

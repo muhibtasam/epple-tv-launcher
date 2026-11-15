@@ -13,67 +13,8 @@ import com.eppletv.launcher.motion.FrameClock
 import com.eppletv.launcher.motion.Motion
 import com.eppletv.launcher.motion.Spring
 import com.eppletv.launcher.ui.Colors
+import com.eppletv.launcher.ui.EppleIcons
 import com.eppletv.launcher.ui.Type
-
-/**
- * Monochrome glyphs for Control Center, drawn from paths on a 24-unit grid in one weight (1.9 stroke, round ends),
- * solid where a shape reads better filled (speaker, moon, gear, picture). One colour, no backgrounds.
- */
-internal object Glyphs {
-    const val POWER = 0; const val WIFI = 1; const val INPUT = 2; const val VOLUME = 3; const val MOON = 4
-    const val PICTURE = 5; const val BLUETOOTH = 6; const val SEARCH = 7; const val GEAR = 8; const val SLIDERS = 9; const val BELL = 10
-    private val p = Path(); private val q = Path(); private val r = RectF()
-
-    fun draw(id: Int, c: Canvas, cx: Float, cy: Float, size: Float, color: Int, stroke: Paint, fill: Paint) {
-        stroke.color = color; fill.color = color
-        stroke.style = Paint.Style.STROKE; stroke.strokeCap = Paint.Cap.ROUND; stroke.strokeJoin = Paint.Join.ROUND; stroke.strokeWidth = 1.9f
-        fill.style = Paint.Style.FILL
-        c.save(); c.translate(cx - size / 2f, cy - size / 2f); c.scale(size / 24f, size / 24f)
-        p.reset(); q.reset()
-        when (id) {
-            POWER -> { r.set(4.5f, 5.5f, 19.5f, 20.5f); c.drawArc(r, -55f, 290f, false, stroke); c.drawLine(12f, 3f, 12f, 11.5f, stroke) }
-            WIFI -> {
-                for ((i, rad) in floatArrayOf(4.2f, 8.4f, 12.6f).withIndex()) { r.set(12f - rad, 19f - rad, 12f + rad, 19f + rad); c.drawArc(r, 225f, 90f, false, stroke.apply { strokeWidth = if (i == 0) 2.1f else 1.9f }) }
-                c.drawCircle(12f, 19f, 1.7f, fill)
-            }
-            INPUT -> {
-                r.set(3f, 4.5f, 21f, 16.5f); c.drawRoundRect(r, 2.2f, 2.2f, stroke); c.drawLine(8.5f, 20f, 15.5f, 20f, stroke)
-                p.moveTo(8f, 10.5f); p.lineTo(14.5f, 10.5f); p.moveTo(12f, 8f); p.lineTo(14.5f, 10.5f); p.lineTo(12f, 13f); c.drawPath(p, stroke)
-            }
-            VOLUME -> {
-                p.moveTo(3.5f, 9.3f); p.lineTo(7f, 9.3f); p.lineTo(11.6f, 5.4f); p.lineTo(11.6f, 18.6f); p.lineTo(7f, 14.7f); p.lineTo(3.5f, 14.7f); p.close(); c.drawPath(p, fill)
-                r.set(10.5f, 8.5f, 17.5f, 15.5f); c.drawArc(r, -50f, 100f, false, stroke)
-                r.set(9f, 5f, 21f, 19f); c.drawArc(r, -50f, 100f, false, stroke)
-            }
-            MOON -> { p.addCircle(12f, 12f, 8.5f, Path.Direction.CW); q.addCircle(16.8f, 7.6f, 7.4f, Path.Direction.CW); p.op(q, Path.Op.DIFFERENCE); c.drawPath(p, fill) }
-            PICTURE -> {
-                r.set(3f, 4.5f, 21f, 19.5f); c.drawRoundRect(r, 2.4f, 2.4f, stroke)
-                p.moveTo(5.5f, 17f); p.lineTo(10f, 11.5f); p.lineTo(13f, 14.8f); p.lineTo(15f, 12.8f); p.lineTo(18.5f, 17f); p.close(); c.drawPath(p, fill)
-                c.drawCircle(15.8f, 8.8f, 1.6f, fill)
-            }
-            BLUETOOTH -> { p.moveTo(6.8f, 7.6f); p.lineTo(16.8f, 16.4f); p.lineTo(12f, 20.6f); p.lineTo(12f, 3.4f); p.lineTo(16.8f, 7.6f); p.lineTo(6.8f, 16.4f); c.drawPath(p, stroke) }
-            SEARCH -> { c.drawCircle(10.4f, 10.4f, 6.6f, stroke); c.drawLine(15.4f, 15.4f, 20.6f, 20.6f, stroke.apply { strokeWidth = 2.2f }) }
-            GEAR -> {
-                p.addCircle(12f, 12f, 6.9f, Path.Direction.CW)
-                for (i in 0 until 8) {
-                    q.reset(); q.addRoundRect(RectF(10.3f, 1.8f, 13.7f, 6.5f), 1f, 1f, Path.Direction.CW)
-                    val m = android.graphics.Matrix(); m.setRotate(i * 45f, 12f, 12f); q.transform(m); p.op(q, Path.Op.UNION)
-                }
-                q.reset(); q.addCircle(12f, 12f, 3f, Path.Direction.CW); p.op(q, Path.Op.DIFFERENCE); c.drawPath(p, fill)
-            }
-            BELL -> {
-                p.moveTo(5.5f, 16.5f); p.lineTo(18.5f, 16.5f)
-                p.moveTo(7f, 16.5f); p.lineTo(7f, 11f); p.cubicTo(7f, 7.6f, 9.2f, 5.4f, 12f, 5.4f); p.cubicTo(14.8f, 5.4f, 17f, 7.6f, 17f, 11f); p.lineTo(17f, 16.5f)
-                c.drawPath(p, stroke); c.drawLine(10.3f, 19.6f, 13.7f, 19.6f, stroke); c.drawLine(12f, 3.6f, 12f, 5.4f, stroke)
-            }
-            SLIDERS -> {
-                c.drawLine(3.5f, 7f, 20.5f, 7f, stroke); c.drawLine(3.5f, 12f, 20.5f, 12f, stroke); c.drawLine(3.5f, 17f, 20.5f, 17f, stroke)
-                c.drawCircle(15.5f, 7f, 2.4f, fill); c.drawCircle(8.5f, 12f, 2.4f, fill); c.drawCircle(13.5f, 17f, 2.4f, fill)
-            }
-        }
-        c.restore()
-    }
-}
 
 /**
  * One Control Center control: a frosted tile (or round button) with a glyph, a title and a status line. Focused, it
@@ -111,14 +52,14 @@ class CcTile(ctx: Context, private val l: Layout, private val clock: FrameClock,
         val ink = Colors.lerp(Colors.WHITE, Colors.INK, fv)
         val dim = Colors.lerp(0xB8FFFFFF.toInt(), 0xFF5A5F69.toInt(), fv)
         when {
-            round -> Glyphs.draw(glyph, c, w / 2f, h / 2f, l.pxf(34f), ink, gs, gf)
+            round -> icon(c, w / 2f, h / 2f, l.pxf(34f), ink)
             big -> {
-                Glyphs.draw(glyph, c, w / 2f, h * 0.42f, l.pxf(60f), ink, gs, gf)
+                icon(c, w / 2f, h * 0.42f, l.pxf(60f), ink)
                 t1.color = ink; t1.textAlign = Paint.Align.CENTER; c.drawText(title, w / 2f, h * 0.78f, t1)
             }
             else -> {
                 val gx = l.pxf(22f) + l.pxf(17f)
-                Glyphs.draw(glyph, c, gx, h / 2f, l.pxf(32f), ink, gs, gf)
+                icon(c, gx, h / 2f, l.pxf(32f), ink)
                 val tx = l.pxf(78f)
                 t1.color = ink; t1.textAlign = Paint.Align.LEFT
                 if (sub.isEmpty()) c.drawText(title, tx, h / 2f - (t1.descent() + t1.ascent()) / 2f, t1)
@@ -129,6 +70,9 @@ class CcTile(ctx: Context, private val l: Layout, private val clock: FrameClock,
             }
         }
     }
+
+    /** The tile's icon in the Epple TV style; a control is always "active", so its accent shows in full. */
+    private fun icon(c: Canvas, x: Float, y: Float, size: Float, ink: Int) { gs.color = ink; EppleIcons.draw(glyph, c, x, y, size, gs, 1f) }
 
     private fun ellipsize(s: String, max: Float): String {
         if (t2.measureText(s) <= max) return s

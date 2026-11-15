@@ -162,5 +162,7 @@ class Catalog(private val net: Net, private val key_: () -> String, private val 
         fun languageName(code: String) = if (code.isEmpty()) "" else Locale(code).getDisplayLanguage(Locale.ENGLISH).takeIf { it != code } ?: ""
         /** Card-sized artwork for an item image (TMDB w780 instead of the original). */
         fun cardUrl(url: String) = url.replace("/t/p/original/", "/t/p/w780/")
+            // Crunchyroll's image service allows a few sizes: 640x360 for a card (about 0.3 MB), not the 1920 px backdrop (2-3 MB).
+            .replace(Regex("(crunchyroll\\.com/imgsrv/display/thumbnail/)1920x1080/"), "$1640x360/")
     }
 }

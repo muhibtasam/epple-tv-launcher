@@ -17,8 +17,12 @@ import android.service.notification.StatusBarNotification
  * for the popup, the dot on the clock and the list in Control Center.
  */
 class EppleNotifications : NotificationListenerService() {
-    override fun onListenerConnected() { NotificationHub.connected(this, activeNotifications.orEmpty().toList()) }
-    override fun onListenerDisconnected() { NotificationHub.disconnected() }
+    override fun onListenerConnected() {
+        NotificationHub.connected(this, activeNotifications.orEmpty().toList())
+        // The same access lets Epple TV read the apps' media sessions: verified viewing time for Continue Watching.
+        com.eppletv.launcher.content.Playback.start(this, NotificationHub.component(this))
+    }
+    override fun onListenerDisconnected() { NotificationHub.disconnected(); com.eppletv.launcher.content.Playback.stop() }
     override fun onNotificationPosted(sbn: StatusBarNotification) { NotificationHub.posted(this, sbn) }
     override fun onNotificationRemoved(sbn: StatusBarNotification) { NotificationHub.removed(sbn.key) }
 }

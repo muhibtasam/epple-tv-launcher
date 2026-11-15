@@ -126,24 +126,29 @@ class DetailScreen(nav: Nav, private val item: ContentItem) : Screen(nav), Frame
     private fun addButtons(play: List<Pair<String, String>>?) {
         targets = play ?: emptyList()
         buttons.removeAllViews(); pills.clear()
-        fun pill(label: String, action: (Pill) -> Unit) {
-            val p = Pill(nav.ctx, label, l.pxf(27f), l.pxf(36f), l.px(34), nav.clock, Colors.FILL, Colors.WHITE, 0.06f)
+        val I = com.eppletv.launcher.ui.EppleIcons
+        fun pill(label: String, icon: Int, action: (Pill) -> Unit) {
+            val p = Pill(nav.ctx, label, l.pxf(27f), l.pxf(36f), l.px(30), nav.clock, Colors.FILL, Colors.WHITE, 0.06f)
+            p.icon(icon, l.px(32), l.px(12))
             p.setOnClickListener { action(p) }
             buttons.addView(p, LinearLayout.LayoutParams(WRAP_CONTENT, l.px(72)).apply { if (pills.isNotEmpty()) leftMargin = l.px(18) })
             pills.add(p)
         }
         play?.forEach { (name, pkg) ->
-            pill(if (pkg == Apps.STREMIO) "Open in Stremio" else "▶  Watch on $name") {
+            pill(if (pkg == Apps.STREMIO) "Open in Stremio" else "Watch on $name", if (pkg == Apps.STREMIO) I.OPEN else I.PLAY) {
                 val d = details ?: return@pill
                 if (pkg == Apps.STREMIO) nav.play(stremio(d), pkg, name) else nav.play(plain(d.item), pkg, name)
             }
         }
         val u = nav.user
-        pill(if (u.contains(UserLibrary.Kind.WATCHLIST, item.id)) "✓  In Watchlist" else "+  Watchlist") { p ->
-            val on = u.toggle(UserLibrary.Kind.WATCHLIST, plain(details?.item ?: item)); p.text = if (on) "✓  In Watchlist" else "+  Watchlist"
+        val inList = u.contains(UserLibrary.Kind.WATCHLIST, item.id)
+        pill(if (inList) "In Watchlist" else "Watchlist", if (inList) I.WATCHLIST_ON else I.WATCHLIST) { p ->
+            val on = u.toggle(UserLibrary.Kind.WATCHLIST, plain(details?.item ?: item))
+            p.text = if (on) "In Watchlist" else "Watchlist"; p.icon(if (on) I.WATCHLIST_ON else I.WATCHLIST, l.px(32), l.px(12))
         }
-        pill(if (u.contains(UserLibrary.Kind.FAVOURITES, item.id)) "♥  Favourite" else "♡  Favourite") { p ->
-            val on = u.toggle(UserLibrary.Kind.FAVOURITES, plain(details?.item ?: item)); p.text = if (on) "♥  Favourite" else "♡  Favourite"
+        val fav = u.contains(UserLibrary.Kind.FAVOURITES, item.id)
+        pill("Favourite", if (fav) I.FAVOURITE_ON else I.FAVOURITE) { p ->
+            val on = u.toggle(UserLibrary.Kind.FAVOURITES, plain(details?.item ?: item)); p.icon(if (on) I.FAVOURITE_ON else I.FAVOURITE, l.px(32), l.px(12))
         }
         b = b.coerceIn(0, pills.size - 1)
         // Rebuilding removed the focused button; give focus to its replacement while this page is the one on screen.
@@ -282,7 +287,9 @@ class AppsScreen(nav: Nav) : Screen(nav), TileHost, FrameClock.Tick {
 class SearchScreen(nav: Nav) : Screen(nav) {
     override val view = FrameLayout(nav.ctx).apply { clipChildren = false }
     private val query = TextView(nav.ctx).apply { style(Txt.HERO, l.u); text = "" }
-    private val hint = TextView(nav.ctx).apply { style(Txt.META, l.u, Colors.TEXT_DIM); text = "Search apps, movies and TV shows" }
+    private val hint = TextView(nav.ctx).apply { style(Txt.META, l.u, Colors.TEXT_DIM); text = "Search apps, movies and TV shows"
+        setCompoundDrawablesRelative(com.eppletv.launcher.ui.IconDrawable(com.eppletv.launcher.ui.EppleIcons.SEARCH, l.px(30), 0f).apply { setBounds(0, 0, l.px(30), l.px(30)); color = Colors.TEXT_DIM }, null, null, null)
+        compoundDrawablePadding = l.px(12) }
     private val keyboard = Keyboard(nav.ctx, l, nav.clock) { k -> type(k) }
     private val stack = ShelfStack(nav.ctx, l, nav.clock, l.px(610))
     private val appsRow = Shelf(nav.ctx, l, nav.clock, "Apps", Look.SMALL_W, Look.SMALL_H)
@@ -688,7 +695,7 @@ class WifiBadge(ctx: android.content.Context, private val l: Layout) : View(ctx)
     private val icon get() = l.pxf(40f)
     override fun onMeasure(w: Int, h: Int) = setMeasuredDimension((icon + l.pxf(16f) + text.measureText(name) + l.pxf(12f)).toInt(), MeasureSpec.getSize(h))
     override fun onDraw(c: android.graphics.Canvas) {
-        Glyphs.draw(Glyphs.WIFI, c, icon / 2f + l.pxf(4f), height / 2f, icon, Colors.WHITE, stroke, fill)
+        stroke.color = Colors.WHITE; com.eppletv.launcher.ui.EppleIcons.draw(com.eppletv.launcher.ui.EppleIcons.WIFI, c, icon / 2f + l.pxf(4f), height / 2f, icon, stroke, 1f)
         c.drawText(name, icon + l.pxf(16f), height / 2f - (text.descent() + text.ascent()) / 2f, text)
     }
 }

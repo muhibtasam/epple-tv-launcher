@@ -22,6 +22,7 @@ import com.eppletv.launcher.motion.FrameClock
 import com.eppletv.launcher.motion.Motion
 import com.eppletv.launcher.motion.Spring
 import com.eppletv.launcher.ui.Colors
+import com.eppletv.launcher.ui.EppleIcons
 import com.eppletv.launcher.ui.Type
 import java.util.WeakHashMap
 
@@ -65,63 +66,6 @@ internal object Frost {
 }
 
 /**
- * Epple TV's tab icons, drawn from paths on a 24-unit grid (no image assets). One duotone style for all of them: a
- * rounded 2-unit outline plus one solid accent shape (Home's door, the clapper's top, the play mark on the TV, one
- * Apps tile, the Search lens). [accent] 0..1 lights the accent: the open tab and the focused one show it in full.
- */
-internal object TabIcons {
-    const val HOME = 0; const val MOVIES = 1; const val TV = 2; const val LIBRARY = 3; const val APPS = 4; const val SEARCH = 5; const val SETTINGS = 6
-    private val path = Path()
-    private val r = RectF()
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-
-    fun draw(icon: Int, c: Canvas, cx: Float, cy: Float, size: Float, p: Paint, accent: Float = 0f) {
-        val u = size / 24f
-        c.save(); c.translate(cx - size / 2f, cy - size / 2f); c.scale(u, u)
-        p.strokeWidth = 2.1f; p.strokeCap = Paint.Cap.ROUND; p.strokeJoin = Paint.Join.ROUND
-        fill.color = p.color; fill.alpha = (p.alpha * (0.55f + 0.45f * accent.coerceIn(0f, 1f))).toInt()
-        path.reset()
-        fun rr(l: Float, t: Float, rt: Float, b: Float, rad: Float, paint: Paint = p) { r.set(l, t, rt, b); c.drawRoundRect(r, rad, rad, paint) }
-        when (icon) {
-            HOME -> {
-                path.moveTo(3.2f, 11.2f); path.lineTo(12f, 3.9f); path.lineTo(20.8f, 11.2f)
-                path.moveTo(5.6f, 9.6f); path.lineTo(5.6f, 18.4f); path.quadTo(5.6f, 20.6f, 7.8f, 20.6f); path.lineTo(16.2f, 20.6f)
-                path.quadTo(18.4f, 20.6f, 18.4f, 18.4f); path.lineTo(18.4f, 9.6f); c.drawPath(path, p)
-                rr(9.7f, 13.6f, 14.3f, 20.6f, 1.6f, fill)
-            }
-            MOVIES -> {
-                rr(3.4f, 9.8f, 20.6f, 20.4f, 2.6f)
-                // The clapper, tilted open, as the solid accent.
-                path.moveTo(3.4f, 8.6f); path.lineTo(20.2f, 4.6f); path.lineTo(19.3f, 1.4f); path.lineTo(2.5f, 5.4f); path.close()
-                c.drawPath(path, fill); path.reset()
-                path.moveTo(3.4f, 13.6f); path.lineTo(20.6f, 13.6f); c.drawPath(path, p)
-            }
-            TV -> {
-                rr(2.6f, 5.4f, 21.4f, 17.4f, 3f)
-                path.moveTo(8.2f, 20.8f); path.lineTo(15.8f, 20.8f); c.drawPath(path, p); path.reset()
-                path.moveTo(10.2f, 8.6f); path.lineTo(15.4f, 11.4f); path.lineTo(10.2f, 14.2f); path.close(); c.drawPath(path, fill)
-            }
-            LIBRARY -> { rr(4f, 9.5f, 20f, 20.5f, 2.5f)
-                         path.moveTo(6.5f, 6.5f); path.lineTo(17.5f, 6.5f); path.moveTo(9f, 3.5f); path.lineTo(15f, 3.5f); c.drawPath(path, p) }
-            APPS -> {
-                rr(3.4f, 3.4f, 10.6f, 10.6f, 2.4f); rr(3.4f, 13.4f, 10.6f, 20.6f, 2.4f); rr(13.4f, 13.4f, 20.6f, 20.6f, 2.4f)
-                c.drawCircle(17f, 7f, 3.8f, fill)
-            }
-            SEARCH -> {
-                c.drawCircle(10.4f, 10.4f, 4.6f, fill)
-                c.drawCircle(10.4f, 10.4f, 6.8f, p)
-                p.strokeWidth = 2.8f; path.moveTo(15.4f, 15.4f); path.lineTo(20.6f, 20.6f); c.drawPath(path, p); p.strokeWidth = 2.1f
-            }
-            SETTINGS -> { c.drawCircle(12f, 12f, 3.2f, fill); c.drawCircle(12f, 12f, 7f, p)
-                          for (i in 0 until 8) { val a = Math.toRadians(i * 45.0); val ca = Math.cos(a).toFloat(); val sa = Math.sin(a).toFloat()
-                              path.moveTo(12f + ca * 7f, 12f + sa * 7f); path.lineTo(12f + ca * 10f, 12f + sa * 10f) }
-                          c.drawPath(path, p) }
-        }
-        c.restore()
-    }
-}
-
-/**
  * One tab of the glass capsule (tvOS 26 style): a text label, or for Search only its icon. The open section's tab sits
  * on a soft capsule; the focused tab becomes a solid white capsule with dark text and grows slightly.
  * Each tab keeps its own fixed width, so focus changes never move the others.
@@ -133,7 +77,7 @@ class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(27f) * Type.scale; typeface = Type.of(600); textAlign = Paint.Align.CENTER }
-    private val iconOnly = icon == TabIcons.SEARCH
+    private val iconOnly = icon == EppleIcons.SEARCH
     private val iconSize = l.pxf(30f)
     private val pad = l.pxf(30f)
     private val rect = RectF()
@@ -156,7 +100,7 @@ class TabItem(ctx: Context, private val l: Layout, private val clock: FrameClock
         val bg = Colors.lerp(Colors.lerp(0x00FFFFFF, 0x2EFFFFFF, sv), Colors.WHITE, fv)
         if ((bg ushr 24) > 0) { fill.color = bg; c.drawRoundRect(rect, h / 2f, h / 2f, fill) }
         val ink = Colors.lerp(Colors.lerp(0xD1FFFFFF.toInt(), Colors.WHITE, sv), Colors.INK, fv)
-        if (iconOnly) { stroke.color = ink; TabIcons.draw(icon, c, w / 2f, h / 2f, iconSize, stroke) }
+        if (iconOnly) { stroke.color = ink; EppleIcons.draw(icon, c, w / 2f, h / 2f, iconSize, stroke) }
         else { text.color = ink; c.drawText(label, w / 2f, h / 2f - (text.descent() + text.ascent()) / 2f, text) }
     }
 
