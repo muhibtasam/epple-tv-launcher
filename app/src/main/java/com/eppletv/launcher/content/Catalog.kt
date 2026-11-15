@@ -96,6 +96,16 @@ class Catalog(private val net: Net, private val key_: () -> String, private val 
     fun show(tvId: Int): JSONObject = get("show-$tvId", 12, "tv/$tvId")
     /** A movie's TMDB record, the same request and cache entry as its details page (so no second request). */
     fun movieRecord(id: Int): JSONObject = get("details-movie-$id", 72, "movie/$id?append_to_response=watch/providers,external_ids,recommendations")
+    // For recommendations: the same requests and cache entries as the details pages and rows where they exist.
+    /** A title's TMDB record (genres, language, franchise, recommendations): the details page's own cache entry. */
+    fun record(type: String, id: Int): JSONObject = get("details-$type-$id", 72, "$type/$id?append_to_response=watch/providers,external_ids,recommendations")
+    fun credits(type: String, id: Int): JSONObject = get("credits-$type-$id", 72, "$type/$id/credits")
+    fun personCredits(personId: Int): JSONObject = get("person-$personId", 72, "person/$personId/combined_credits")
+    /** A row's raw TMDB results (same cache entry as [row]). */
+    fun rawRow(spec: RowSpec): JSONArray = get("row-" + spec.path.replace(Regex("[^A-Za-z0-9]+"), "_"), spec.ttlH, spec.path).optJSONArray("results") ?: JSONArray()
+    fun item(o: JSONObject, type: String): ContentItem? = toItem(o, type)
+    fun genreName(id: Int): String = genreNames()[id] ?: ""
+
     /** A franchise (TMDB collection) and its movies with their release dates; cached 24 hours. */
     fun collection(id: Int): JSONObject = get("collection-$id", 24, "collection/$id")
 
