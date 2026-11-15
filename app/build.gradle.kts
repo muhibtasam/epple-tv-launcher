@@ -17,7 +17,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "0.2.0"
+        versionName = "1.0.0"
         // Optional content keys; without them those providers fall back gracefully. Never committed (local.properties is ignored).
         fun prop(vararg names: String) = names.firstNotNullOfOrNull { local.getProperty(it)?.trim()?.takeIf { v -> v.isNotEmpty() } } ?: ""
         buildConfigField("String", "TMDB_KEY", "\"${prop("tmdb_key", "tmdb.key")}\"")
@@ -42,7 +42,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Private sideload build for the owner's TV. Replace with a private release key before any wider use.
+            // v1.0.0 is signed with the debug key; later updates must use the same key (or users reinstall).
             signingConfig = signingConfigs.getByName("debug")
         }
     }
