@@ -502,28 +502,26 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
 object ContinueWatching {
     /** Shown in the row; the TV's lists and Epple's own history are kept whole underneath. */
     const val SHOWN = 10
-    /** Titles an app lists without any time (its own row): at most this many each, so one app can't fill the row. */
-    private const val UNTIMED_PER_APP = 3; private const val MAX = 60
+    private const val MAX = 60
     fun norm(t: String) = t.trim().lowercase(java.util.Locale.ROOT).replace(Regex("\\s+"), " ")
 
     /**
      * The apps' rows and the titles opened from Epple TV in one list, the most recent first. Each title's time is the
-     * newest of: when the TV's Watch Next says it was watched, and when it was last watched from Epple TV (by app and
-     * name, see Recency). Titles with neither follow their app's last use, in the app's own order, behind any title
-     * of that app that has its own time; titles never watched from here keep the list's order at the end.
+     * newest of: when the TV's Watch Next says it was watched, when it was last watched (by app and name, see Recency),
+     * and when its app's player last stopped on it (see Resume). Titles with none of these are not shown.
      */
     fun merge(ctx: android.content.Context, tv: List<ContentItem>, mine: List<ContentItem>): List<ContentItem> {
         val R = com.eppletv.launcher.content.Recency
         val keyed = ArrayList<Pair<ContentItem, Long>>(); val seen = HashSet<String>()
-        val rank = HashMap<String, Int>()
+        val untimed = ArrayList<String>()
         for (it in tv) {
             if (R.removed(ctx, it.linkPkg, it.title) || !seen.add(norm(it.title))) continue
             val wn = R.acceptedTime(ctx, it.linkPkg, it.title, engaged[it.id] ?: 0L)
             if (wn < 0) continue                                  // appeared without verified viewing
             val own = maxOf(wn, R.titleTime(ctx, it.linkPkg, it.title), Resume.saved(ctx, it.linkPkg, it.title)?.at ?: 0L)
-            if (own > 0) { keyed += it to own; continue }
-            val k = rank.merge(it.linkPkg ?: "", 1, Int::plus)!!
-            if (k <= UNTIMED_PER_APP) keyed += it to R.appTime(ctx, it.linkPkg) - 1000L * k
+            // Only the title's own activity counts: a row with no time of its own (an app's channel lists old titles
+            // too) can't show it was watched in the last 14 days, so the app's last use is never lent to it.
+            if (own > 0) keyed += it to own else untimed += it.title
         }
         // Titles opened from Epple TV count only once their app reported 30 seconds of playing (a verified stamp);
         // the rest stay in the history underneath, unshown.
@@ -534,6 +532,7 @@ object ContinueWatching {
         // Only titles watched today or in the 13 days before (display only: the history underneath is kept).
         val now = System.currentTimeMillis()
         val old = keyed.filter { !Resume.inWindow(it.second, now) }
+        if (untimed.isNotEmpty()) android.util.Log.i("EppleContinue", "no activity time: " + untimed.joinToString())
         if (old.isNotEmpty()) android.util.Log.i("EppleContinue", "older than ${Resume.DAYS} days: " + old.joinToString { it.first.title })
         val sorted = (keyed - old.toSet()).sortedByDescending { it.second }.take(SHOWN)
         val fmt = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.ROOT)
