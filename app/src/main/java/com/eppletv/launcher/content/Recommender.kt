@@ -225,13 +225,17 @@ object Recommender {
      */
     fun refresh(c: Context, content: ContentRepository, catalog: Catalog, user: UserLibrary, indianMode: Int,
                 watchNext: () -> List<String>, force: Boolean = false, done: (Boolean) -> Unit = {}) {
-        if (!catalog.ready) return
+        if (!catalog.ready) { Log.i(TAG, "refresh skipped: no catalogue key"); return }
         val p = prefs(c); val now = System.currentTimeMillis()
         val due = force || p.getBoolean("dirty", false) || now - p.getLong("done", 0) >= DAY
-        if (!due || (!force && now - p.getLong("try", 0) < HOUR)) return
-        if (now - p.getLong("lease", 0) in 0 until LEASE) return
+        // A failed refresh waits an hour; one cut short by the process dying (no outcome recorded) does not.
+        if (!due || (!force && now - p.getLong("try", 0) < HOUR)) { Log.i(TAG, "refresh skipped: ${if (due) "failed recently" else "not due"}"); return }
+        // The lease belongs to this process: one left by a process that was killed mid-refresh is stale.
+        val pid = android.os.Process.myPid()
+        if (p.getInt("leasePid", 0) == pid && now - p.getLong("lease", 0) in 0 until LEASE) return
         if (!running.compareAndSet(false, true)) return
-        p.edit().putLong("lease", now).putLong("try", now).apply()
+        Log.i(TAG, "refresh started")
+        p.edit().putLong("lease", now).putInt("leasePid", pid).apply()
         val run = runId.incrementAndGet()
         val keep = user.items(UserLibrary.Kind.FAVOURITES) to user.items(UserLibrary.Kind.WATCHLIST)
         content.run({
@@ -242,6 +246,7 @@ object Recommender {
             running.set(false)
             val e = p.edit().putLong("lease", 0)
             if (ok == true && run == runId.get()) { e.putLong("done", System.currentTimeMillis()).putBoolean("dirty", false); version++ }
+            else if (ok != true) e.putLong("try", System.currentTimeMillis())
             e.apply()
             Log.i(TAG, "refresh ${if (ok == true) "saved a new deck" else "kept the last deck"}")
             done(ok == true)
