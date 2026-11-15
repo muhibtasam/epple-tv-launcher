@@ -454,7 +454,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         fun shadowed(t: TextView, r: Float) = t.apply { setShadowLayer(l.pxf(r), 0f, l.pxf(2f), 0x99000000.toInt()) }
         val eyebrow = shadowed(TextView(ctx).apply { style(Txt.CAPTION, l.u, 0xD9FFFFFF.toInt()); isAllCaps = false }, 8f)
         val title = shadowed(TextView(ctx).apply { style(Txt.HERO, l.u) }, 20f)
-        val meta = MetaRow(ctx, l)
+        val meta = MetaRow(ctx, l).apply { backdrop = this@Hero.backdrop }
         val summary = shadowed(TextView(ctx).apply { style(Txt.BODY, l.u, 0xD9FFFFFF.toInt()) }, 10f)
         val logo = ImageView(ctx).apply {
             adjustViewBounds = true; maxWidth = l.px(760); maxHeight = l.px(200)

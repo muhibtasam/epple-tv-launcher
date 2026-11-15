@@ -711,16 +711,17 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
 class WifiBadge(ctx: android.content.Context, private val l: Layout) : View(ctx) {
     var name = ""
         set(v) { if (field != v) { field = v; requestLayout(); invalidate() } }
-    private val stroke = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-    private val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    // The icon has the text's soft shadow, so it reads on bright pictures too.
+    private val stroke = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { setShadowLayer(l.pxf(10f), 0f, 0f, 0x80000000.toInt()) }
     private val text = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xEBFFFFFF.toInt(); textSize = l.pxf(28f); typeface = com.eppletv.launcher.ui.Type.of(500)
         setShadowLayer(l.pxf(10f), 0f, 0f, 0x80000000.toInt()) }
-    private val icon get() = l.pxf(40f)
-    override fun onMeasure(w: Int, h: Int) = setMeasuredDimension((icon + l.pxf(16f) + text.measureText(name) + l.pxf(12f)).toInt(), MeasureSpec.getSize(h))
+    /** The Home menu's icon treatment (see EppleIcons.well), at rest: white duotone in a soft circle. */
+    private val well get() = l.pxf(52f)
+    override fun onMeasure(w: Int, h: Int) = setMeasuredDimension((well + l.pxf(16f) + text.measureText(name) + l.pxf(12f)).toInt(), MeasureSpec.getSize(h))
     override fun onDraw(c: android.graphics.Canvas) {
-        stroke.color = Colors.WHITE; com.eppletv.launcher.ui.EppleIcons.draw(com.eppletv.launcher.ui.EppleIcons.WIFI, c, icon / 2f + l.pxf(4f), height / 2f, icon, stroke, 1f)
-        c.drawText(name, icon + l.pxf(16f), height / 2f - (text.descent() + text.ascent()) / 2f, text)
+        com.eppletv.launcher.ui.EppleIcons.well(com.eppletv.launcher.ui.EppleIcons.WIFI, c, well / 2f, height / 2f, well, l.pxf(30f), stroke, 0f, 0f, 0.92f)
+        c.drawText(name, well + l.pxf(16f), height / 2f - (text.descent() + text.ascent()) / 2f, text)
     }
 }
 

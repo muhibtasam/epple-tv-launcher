@@ -1,5 +1,6 @@
 package com.eppletv.launcher.home
 
+import com.eppletv.launcher.ui.EppleIcons
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
@@ -18,70 +19,19 @@ import com.eppletv.launcher.ui.Type
  */
 internal object MetaIcons {
     const val STAR = 0; const val MOVIE = 1; const val SERIES = 2; const val YEAR = 3
-    private fun lg(y0: Float, y1: Float, vararg c: Int) = LinearGradient(0f, y0, 0f, y1, c, null, Shader.TileMode.CLAMP)
-    private val starFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = LinearGradient(0f, 4f, 0f, 34f, intArrayOf(0xFFFFF1A6.toInt(), 0xFFFFC21A.toInt(), 0xFFC46A00.toInt()), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP) }
-    private val starEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.2f; strokeJoin = Paint.Join.ROUND; color = 0xFF9A5200.toInt() }
-    private val shine = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = lg(6f, 21f, 0xB3FFFFFF.toInt(), 0x00FFFFFF) }
-    private val slate = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = lg(10f, 36f, 0xFF5B6474.toInt(), 0xFF1B1F27.toInt()) }
-    private val slateEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; color = 0xFF0E1116.toInt() }
-    private val clap = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = LinearGradient(5f, 0f, 35f, 0f, 0xFFF4F6FA.toInt(), 0xFFB9C1CE.toInt(), Shader.TileMode.CLAMP) }
-    private val stripe = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f; color = 0xFF20252D.toInt() }
-    private val screen = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = lg(12f, 28f, 0xFF8FD3FF.toInt(), 0xFF1667C9.toInt()) }
-    private val paper = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = lg(8f, 36f, 0xFFFFFFFF.toInt(), 0xFFCDD3DD.toInt()) }
-    private val paperEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; color = 0xFF8C95A3.toInt() }
-    private val band = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = lg(8f, 16f, 0xFFFF7A6E.toInt(), 0xFFD3261C.toInt()) }
-    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF6B7380.toInt() }
-    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2f; strokeCap = Paint.Cap.ROUND; color = 0xFF2B3038.toInt() }
-    private val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x66000000 }
-    private val star = Path().apply {
-        moveTo(20f, 3.5f); lineTo(24.9f, 13.7f); lineTo(36.1f, 15.1f); lineTo(27.9f, 22.9f); lineTo(30f, 34f)
-        lineTo(20f, 28.6f); lineTo(10f, 34f); lineTo(12.1f, 22.9f); lineTo(3.9f, 15.1f); lineTo(15.1f, 13.7f); close()
-    }
-    private val starShine = Path().apply { moveTo(20f, 7f); lineTo(23.8f, 14.9f); lineTo(32.2f, 16f); lineTo(20f, 20.5f); lineTo(7.8f, 16f); lineTo(16.2f, 14.9f); close() }
-    private val r = RectF(); private val p = Path(); private val m = Matrix()
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFFFFF.toInt() }
+    private val ids = intArrayOf(EppleIcons.STAR, EppleIcons.MOVIES, EppleIcons.TV, EppleIcons.CALENDAR)
 
+    /** The chip's icon from Epple TV's own set (white duotone, like the Home menu), [size] px square at [x],[y]. */
     fun draw(id: Int, c: Canvas, x: Float, y: Float, size: Float) {
-        c.save(); c.translate(x, y); c.scale(size / 40f, size / 40f)
-        // Soft contact shadow under every icon (a blurred ellipse would cost a layer; an offset translucent copy is enough).
-        when (id) {
-            STAR -> {
-                c.save(); c.translate(0.6f, 2.2f); c.drawPath(star, shadow); c.restore()
-                c.drawPath(star, starFill); c.drawPath(star, starEdge); c.drawPath(starShine, shine)
-            }
-            MOVIE -> {
-                r.set(5f, 17f, 35f, 37f); c.drawRoundRect(r, 3.5f, 3.5f, shadow)
-                r.set(5f, 15f, 35f, 35f); c.drawRoundRect(r, 3.5f, 3.5f, slate); c.drawRoundRect(r, 3.5f, 3.5f, slateEdge)
-                r.set(7f, 17f, 33f, 20f); c.drawRoundRect(r, 1.5f, 1.5f, shine)
-                c.save(); c.rotate(-14f, 6f, 13f)
-                r.set(5f, 7f, 35f, 14f); c.drawRoundRect(r, 2f, 2f, clap)
-                p.reset(); for (sx in intArrayOf(10, 17, 24, 31)) { p.moveTo(sx.toFloat(), 7f); p.lineTo(sx - 4f, 14f) }
-                c.save(); c.clipRect(r); c.drawPath(p, stripe); c.restore()
-                c.restore()
-            }
-            SERIES -> {
-                r.set(4f, 11f, 36f, 33f); c.drawRoundRect(r, 4f, 4f, shadow)
-                r.set(4f, 9f, 36f, 31f); c.drawRoundRect(r, 4f, 4f, slate); c.drawRoundRect(r, 4f, 4f, slateEdge)
-                r.set(7.5f, 12f, 32.5f, 27.5f); c.drawRoundRect(r, 2f, 2f, screen)
-                r.set(8.5f, 13f, 31.5f, 17.5f); c.drawRoundRect(r, 1.5f, 1.5f, shine)
-                c.drawLine(14f, 35f, 26f, 35f, line.apply { color = 0xFF9AA3B0.toInt(); strokeWidth = 2.4f })
-                line.color = 0xFF2B3038.toInt(); line.strokeWidth = 2f
-            }
-            YEAR -> {
-                r.set(5f, 10f, 35f, 38f); c.drawRoundRect(r, 5f, 5f, shadow)
-                r.set(5f, 8f, 35f, 36f); c.drawRoundRect(r, 5f, 5f, paper); c.drawRoundRect(r, 5f, 5f, paperEdge)
-                p.reset(); p.addRoundRect(r, 5f, 5f, Path.Direction.CW)
-                c.save(); c.clipPath(p); c.drawRect(5f, 8f, 35f, 16f, band); c.restore()
-                r.set(12f, 4f, 15f, 12f); c.drawRoundRect(r, 1.5f, 1.5f, ring); r.set(25f, 4f, 28f, 12f); c.drawRoundRect(r, 1.5f, 1.5f, ring)
-                c.drawLine(11f, 23f, 29f, 23f, line); c.drawLine(11f, 29f, 23f, 29f, line)
-            }
-        }
-        c.restore()
+        stroke.color = 0xFFFFFFFF.toInt()
+        EppleIcons.draw(ids[id], c, x + size / 2f, y + size / 2f, size, stroke, 0f)
     }
 }
 
 /**
- * A title's facts as glass chips (Info design 1): rating with a gold star, Movie or Series with its icon, the year
- * with a calendar, then the rest (language, runtime, genres) as plain text. The facts come from the "  ·  "-joined
+ * A title's facts as glass chips (Info design 1): rating with a star, Movie or Series with its icon, the year with a
+ * calendar (all from Epple TV's duotone icon set), then the rest (language, runtime, genres) as plain text. The facts come from the "  ·  "-joined
  * meta line every source builds; a line with none of them (a YouTube video) is drawn as plain text.
  */
 @SuppressLint("ViewConstructor")
@@ -100,6 +50,25 @@ class MetaRow(ctx: Context, private val l: Layout) : View(ctx) {
     private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = l.pxf(1.2f).coerceAtLeast(1f); color = 0x38FFFFFF }
     private val rect = RectF()
     private val chipH = l.pxf(50f)
+
+    /**
+     * Set by screens drawn over artwork: the chips become the launcher's one glass material (see [GlassStyle]) over
+     * this backdrop, like the tab bar, the clock badge and Control Center. Cost per chip: one draw of the shared,
+     * pre-blurred 240x135 frost texture, a tint, and the edge light as a cached bitmap. Unset: plain translucent chips.
+     */
+    var backdrop: Backdrop? = null
+        set(v) { if (field == null && v != null) { v.listeners.add { invalidate() }; GlassStyle.register(this) }; field = v; invalidate() }
+    private val frost = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val tint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val m = Matrix(); private val loc = IntArray(2)
+    /** Edge light per chip size and glass step: chip widths are rounded up to 8 px so the few sizes are reused. */
+    private val edges = HashMap<Long, android.graphics.Bitmap>()
+    private fun edge(w: Int, h: Int): android.graphics.Bitmap {
+        val k = (w.toLong() shl 32) or (h.toLong() shl 8) or GlassStyle.key.toLong()
+        edges[k]?.let { return it }
+        if (edges.size >= 24) { edges.values.forEach { it.recycle() }; edges.clear() }
+        return GlassStyle.overlay(l, w, h, h / 2f).also { edges[k] = it }
+    }
 
     fun set(meta: String) {
         val parts = meta.split("  ·  ").map { it.trim() }.filter { it.isNotEmpty() }
@@ -126,13 +95,28 @@ class MetaRow(ctx: Context, private val l: Layout) : View(ctx) {
         var x = 0f
         val top = l.pxf(3f)
         val icon = l.pxf(34f); val pad = l.pxf(10f); val gap = l.pxf(10f); val padR = l.pxf(18f)
+        val bd = backdrop; val art = bd?.currentBitmap
+        if (art != null && !GlassStyle.clear) {
+            // The frost texture mapped to the screen once for the row; each chip just draws its shape with it.
+            getLocationInWindow(loc)
+            val sh = Frost.shader(art)
+            m.setScale(rootView.width / 240f, rootView.height / 135f); m.postTranslate(-loc[0].toFloat(), -loc[1].toFloat())
+            sh.setLocalMatrix(m); frost.shader = sh; frost.alpha = GlassStyle.frostAlpha
+        } else frost.shader = null
         for (ch in chips) {
             val p = if (ch.numeric) num else word
-            val w = pad + icon + gap + p.measureText(ch.text) + padR
+            var w = pad + icon + gap + p.measureText(ch.text) + padR
+            if (bd != null) w = Math.ceil(w / 8.0).toFloat() * 8f
             rect.set(x, top, x + w, top + chipH)
-            c.drawRoundRect(rect, chipH / 2f, chipH / 2f, glass)
-            c.save(); c.translate(0f, top); rect.offset(0f, -top); c.drawRoundRect(rect, chipH / 2f, chipH / 2f, gloss); rect.offset(0f, top); c.restore()
-            c.drawRoundRect(rect, chipH / 2f, chipH / 2f, rim)
+            if (bd != null) {
+                if (frost.shader != null) c.drawRoundRect(rect, chipH / 2f, chipH / 2f, frost)
+                tint.color = GlassStyle.tint; c.drawRoundRect(rect, chipH / 2f, chipH / 2f, tint)
+                c.drawBitmap(edge(w.toInt(), chipH.toInt()), rect.left, rect.top, null)
+            } else {
+                c.drawRoundRect(rect, chipH / 2f, chipH / 2f, glass)
+                c.save(); c.translate(0f, top); rect.offset(0f, -top); c.drawRoundRect(rect, chipH / 2f, chipH / 2f, gloss); rect.offset(0f, top); c.restore()
+                c.drawRoundRect(rect, chipH / 2f, chipH / 2f, rim)
+            }
             MetaIcons.draw(ch.icon, c, x + pad, top + (chipH - icon) / 2f, icon)
             c.drawText(ch.text, x + pad + icon + gap, top + chipH / 2f - (p.descent() + p.ascent()) / 2f, p)
             x += w + l.pxf(12f)

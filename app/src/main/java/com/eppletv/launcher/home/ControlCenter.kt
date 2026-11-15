@@ -70,24 +70,35 @@ class CcTile(ctx: Context, private val l: Layout, private val clock: FrameClock,
             }
             else -> {
                 val gx = l.pxf(22f) + l.pxf(17f)
-                icon(c, gx, h / 2f, l.pxf(32f), ink)
+                // The Home menu's treatment: the icon sits in a soft circle (an app's logo mark keeps its own shape).
+                if (art == null) EppleIcons.well(glyph, c, gx, h / 2f, l.pxf(52f), l.pxf(30f), gs, fv, 0f) else icon(c, gx, h / 2f, l.pxf(32f), ink)
                 val tx = l.pxf(78f)
                 t1.color = ink; t1.textAlign = Paint.Align.LEFT
                 if (sub.isEmpty()) c.drawText(title, tx, h / 2f - (t1.descent() + t1.ascent()) / 2f, t1)
                 else {
                     c.drawText(title, tx, h / 2f - l.pxf(4f), t1)
-                    t2.color = dim; c.drawText(ellipsize(if (adjusting) "◀  $sub  ▶" else sub, w - tx - l.pxf(16f)), tx, h / 2f + l.pxf(24f), t2)
+                    t2.color = dim
+                    val by = h / 2f + l.pxf(24f)
+                    if (!adjusting) c.drawText(ellipsize(sub, w - tx - l.pxf(16f)), tx, by, t2)
+                    else {
+                        // Left and right adjust the value: the set's own arrows either side of it (not text glyphs).
+                        val a = l.pxf(22f); val gap = l.pxf(8f); val cy = by + (t2.descent() + t2.ascent()) / 2f
+                        val v = ellipsize(sub, w - tx - l.pxf(16f) - 2 * (a + gap))
+                        gs.color = dim; EppleIcons.draw(EppleIcons.LEFT, c, tx + a / 2f, cy, a, gs, 1f)
+                        c.drawText(v, tx + a + gap, by, t2)
+                        EppleIcons.draw(EppleIcons.RIGHT, c, tx + a + gap + t2.measureText(v) + gap + a / 2f, cy, a, gs, 1f)
+                    }
                 }
             }
         }
     }
 
-    /** The tile's icon in the Epple TV style; a control is always "active", so its accent shows in full. */
+    /** The tile's icon in the Epple TV style, as in the Home menu: accent at 55 % at rest, in full when focused. */
     private fun icon(c: Canvas, x: Float, y: Float, size: Float, ink: Int) {
         val a = art
         // The app's logo mark (transparent, its own shading kept) takes the button's ink: white at rest, dark focused.
         if (a != null) { val s = if (round) (height * 0.66f).toInt() else size.toInt(); a.setTint(ink); a.setBounds((x - s / 2f).toInt(), (y - s / 2f).toInt(), (x + s / 2f).toInt(), (y + s / 2f).toInt()); a.draw(c); return }
-        gs.color = ink; EppleIcons.draw(glyph, c, x, y, size, gs, 1f)
+        gs.color = ink; EppleIcons.draw(glyph, c, x, y, size, gs, f.value.coerceIn(0f, 1f))
     }
 
     private fun ellipsize(s: String, max: Float): String {
@@ -393,10 +404,9 @@ class NoteRow(ctx: Context, private val l: Layout, val note: com.eppletv.launche
             val s = maxOf(pw / pic.width, ph / pic.height); m.setScale(s, s); m.postTranslate(x + (pw - pic.width * s) / 2f, py + (ph - pic.height * s) / 2f)
             c.drawBitmap(pic, m, img); c.restore()
         } else {
-            bg.color = if (f) 0xFFECECF0.toInt() else 0x1FFFFFFF; c.drawCircle(r.centerX(), r.centerY(), pw / 2f, bg)
             val icon = when { note.key == "wifi" && note.title.contains("disconnected") -> I.WIFI_OFF; note.key == "wifi" -> I.WIFI
                 note.cat == Hub.UPDATE -> I.DOWNLOAD; note.cat == Hub.CONTENT -> I.TV; else -> I.BELL }
-            ic.color = ink; I.draw(icon, c, r.centerX(), r.centerY(), l.pxf(30f), ic, 1f)
+            I.well(icon, c, r.centerX(), r.centerY(), pw, l.pxf(30f), ic, if (f) 1f else 0f, 0f)   // the Home menu's treatment
         }
         val tx = r.right + l.pxf(18f); val tw = w - tx - l.pxf(20f)
         val time = ago(note.time)

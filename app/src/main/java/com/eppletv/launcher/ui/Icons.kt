@@ -32,6 +32,8 @@ internal object EppleIcons {
     const val SLIDERS = 29; const val BELL = 30
     // Notifications.
     const val DOWNLOAD = 31; const val WIFI_OFF = 32
+    // Title facts (the info rows' rating and year chips).
+    const val STAR = 33; const val CALENDAR = 34
 
     const val STROKE = 2.1f
     private val path = Path(); private val q = Path()
@@ -42,9 +44,35 @@ internal object EppleIcons {
         cubicTo(9.6f, 4.4f, 11.1f, 5.3f, 12f, 6.7f); cubicTo(12.9f, 5.3f, 14.4f, 4.4f, 16.1f, 4.4f)
         cubicTo(18.7f, 4.4f, 20.8f, 6.5f, 20.8f, 9.3f); cubicTo(20.8f, 12.8f, 18f, 16.2f, 12f, 20.2f); close()
     }
+    private val star = Path().apply {
+        for (k in 0 until 10) {
+            val a = Math.toRadians(-90.0 + k * 36.0); val rad = if (k % 2 == 0) 9.2 else 4.1
+            val x = (12.0 + rad * Math.cos(a)).toFloat(); val y = (12.9 + rad * Math.sin(a)).toFloat()
+            if (k == 0) moveTo(x, y) else lineTo(x, y)
+        }
+        close()
+    }
     private val bookmark = Path().apply {
         moveTo(8f, 3.4f); lineTo(16f, 3.4f); quadTo(18.4f, 3.4f, 18.4f, 5.8f); lineTo(18.4f, 20.4f); lineTo(12f, 16.2f)
         lineTo(5.6f, 20.4f); lineTo(5.6f, 5.8f); quadTo(5.6f, 3.4f, 8f, 3.4f); close()
+    }
+
+    private val wellPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /**
+     * The Home menu's icon treatment, shared: a soft circle behind the icon, [d] px across, centred at [cx],[cy].
+     *  - rest: white icon, accent at 55 %, on a 22 % white circle;
+     *  - selected (the current section, still shown after focus leaves): a brighter 36 % circle, accent in full;
+     *  - focused (the row has become a white surface): the circle turns a faint dark tint and the icon dark ink.
+     * [focus] and [selected] run 0..1 (they animate). [p] is the caller's stroke paint; its colour is set here.
+     */
+    fun well(icon: Int, c: Canvas, cx: Float, cy: Float, d: Float, iconSize: Float, p: Paint, focus: Float, selected: Float, alpha: Float = 1f) {
+        val f = focus.coerceIn(0f, 1f)
+        wellPaint.color = Colors.lerp(if (selected > 0.5f) 0x5CFFFFFF else 0x38FFFFFF, 0x14000000, f)
+        wellPaint.alpha = ((wellPaint.color ushr 24) * alpha).toInt()
+        c.drawCircle(cx, cy, d / 2f, wellPaint)
+        p.color = Colors.lerp(Colors.WHITE, Colors.INK, f); p.alpha = (255 * alpha).toInt()
+        draw(icon, c, cx, cy, iconSize, p, maxOf(f, selected))
     }
 
     /**
@@ -167,6 +195,13 @@ internal object EppleIcons {
                 for (rad in floatArrayOf(8.4f, 12.6f)) { r.set(12f - rad, 19f - rad, 12f + rad, 19f + rad); c.drawArc(r, 225f, 90f, false, p) }
                 p.alpha = a; line(4.2f, 4.2f, 19.8f, 19.8f)
                 c.drawCircle(12f, 19f, 1.7f, fill)
+            }
+            STAR -> { c.drawPath(star, fill); c.drawPath(star, p) }
+            CALENDAR -> {
+                // The header band is the solid accent; the rings and the body are the outline.
+                path.addRoundRect(RectF(3.6f, 5.2f, 20.4f, 20.6f), 2.8f, 2.8f, Path.Direction.CW)
+                c.save(); c.clipPath(path); c.drawRect(3.6f, 5.2f, 20.4f, 10f, fill); c.restore()
+                c.drawPath(path, p); line(8.2f, 3.2f, 8.2f, 6.8f); line(15.8f, 3.2f, 15.8f, 6.8f)
             }
             BELL -> {
                 path.moveTo(5.5f, 16.5f); path.lineTo(18.5f, 16.5f)

@@ -1158,7 +1158,10 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         // Indexed by section; the side menu lists MENU_ORDER (Search at the bottom; Settings is not in it).
         val TAB_NAMES = listOf("Home", "Movies", "TV Shows", "Apps", "Search", "Settings")
         val TAB_ICONS = listOf(EppleIcons.HOME, EppleIcons.MOVIES, EppleIcons.TV, EppleIcons.APPS, EppleIcons.SEARCH, EppleIcons.SETTINGS)
-        val MENU_ORDER = listOf(0, 1, 2, 3, 4)
+        /** Movies and TV Shows are deferred to the next release: their screens stay in the code, only the menu leaves
+         *  them out (nothing else opens them). Set true to bring both back. */
+        const val BROWSE_SECTIONS = false
+        val MENU_ORDER = if (BROWSE_SECTIONS) listOf(0, 1, 2, 3, 4) else listOf(0, APPS, SEARCH)
         const val PILL = 6
         const val APPS = 3
         const val SEARCH = 4

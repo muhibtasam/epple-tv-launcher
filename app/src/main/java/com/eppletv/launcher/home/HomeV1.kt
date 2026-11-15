@@ -161,9 +161,8 @@ class SideItem(ctx: Context, private val l: Layout, private val clock: FrameCloc
             rect.set(0f, 0f, pw, h); fill.color = Colors.WHITE; fill.alpha = (255 * fv).toInt(); c.drawRoundRect(rect, h / 2f, h / 2f, fill)
         }
         val d = l.pxf(58f); val cx = (h - d) / 2f + d / 2f; val cy = h / 2f
-        fill.color = Colors.lerp(if (sv > 0.5f) 0x5CFFFFFF else 0x38FFFFFF, 0x14000000, fv); c.drawCircle(cx, cy, d / 2f, fill)
+        EppleIcons.well(icon, c, cx, cy, d, l.pxf(36f), stroke, fv, sv)
         val ink = Colors.lerp(Colors.WHITE, Colors.INK, fv)
-        stroke.color = ink; EppleIcons.draw(icon, c, cx, cy, l.pxf(36f), stroke, maxOf(fv, sv))
         text.color = ink
         c.drawText(label, cx + d / 2f + l.pxf(20f), cy - (text.descent() + text.ascent()) / 2f, text)
     }
