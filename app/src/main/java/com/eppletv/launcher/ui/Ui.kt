@@ -77,6 +77,25 @@ enum class Txt(val px: Float, val weight: Int, val tracking: Float, val lines: I
     FOOT(19f, 400, 0f, 3),                           // attribution
 }
 
+/**
+ * Sets [s] cut to the whole sentences that fit in [lines] lines [widthPx] wide, so a description ends at a full stop
+ * instead of mid-sentence. When even its first sentence is longer than [longest] lines, it ends with "…".
+ */
+fun TextView.sentences(s: String, widthPx: Int, lines: Int, longest: Int = lines + 1) {
+    fun count(t: String) = android.text.StaticLayout.Builder.obtain(t, 0, t.length, paint, widthPx).setIncludePad(false).build().lineCount
+    val parts = s.trim().split(Regex("(?<=[.!?…])\\s+"))
+    // A first sentence longer than [lines] may use up to [longest] lines, so it can still end at its full stop.
+    val room = if (parts.isNotEmpty() && count(parts[0]) in (lines + 1)..longest) count(parts[0]) else lines
+    maxLines = room; ellipsize = android.text.TextUtils.TruncateAt.END
+    var fit = ""
+    for (p in parts) {
+        val next = if (fit.isEmpty()) p else "$fit $p"
+        if (count(next) > room) break
+        fit = next
+    }
+    text = fit.ifEmpty { s }
+}
+
 fun TextView.style(t: Txt, u: Float, color: Int = Colors.WHITE) {
     textStyle(t.px * u * Type.scale, (t.weight + Type.boldDelta).coerceAtMost(800), color, t.face); letterSpacing = t.tracking
     if (t.lines > 1) { isSingleLine = false; maxLines = t.lines; setLineSpacing(0f, 1.06f) }

@@ -25,6 +25,7 @@ import com.eppletv.launcher.motion.Spring
 import com.eppletv.launcher.ui.Colors
 import com.eppletv.launcher.ui.Txt
 import com.eppletv.launcher.ui.style
+import com.eppletv.launcher.ui.sentences
 
 interface PageHost : TileHost {
     /** [deep] = focus is in the app grid below the top row (artwork gives way to the grid). */
@@ -106,7 +107,8 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     /** Returns false only when moving up from the top row. */
     fun move(dx: Int, dy: Int): Boolean {
         if (tile() == null) return dy >= 0
-        if (dx != 0) { if (c + dx in 0 until rowSize(r)) { c += dx; focusCurrent() }; return true }
+        // Rows go round at both ends: Left on the first tile reaches the last one, Right on the last the first.
+        if (dx != 0) { val n = rowSize(r); if (n > 1) { c = ((c + dx) % n + n) % n; focusCurrent() }; return true }
         val nr = r + dy
         if (nr < 0 || (nr == 0 && dock.isEmpty())) return false
         if (nr >= rowCount) return true
@@ -132,8 +134,6 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     }
 
     fun atTop() = r == 0 || dock.isEmpty() && r == 1
-    /** The focus is on the first tile of its row (Left from here opens the menu). */
-    fun atLeft() = c == 0
     /** Focus left the page for the menu or the clock: the stand's light goes out. */
     fun blur() = platter.focusAt(null)
     fun toTop() { r = if (dock.isEmpty()) 1 else 0; c = c.coerceIn(0, maxOf(0, rowSize(r) - 1)); focusCurrent() }
@@ -368,7 +368,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         y.logo.contentDescription = title
         y.eyebrow.visibility = if (eyebrow.isEmpty()) View.GONE else View.VISIBLE
         y.meta.visibility = if (meta.isEmpty()) View.GONE else View.VISIBLE
-        y.summary.text = summary; y.summary.visibility = if (summary.isEmpty()) View.GONE else View.VISIBLE
+        y.summary.sentences(summary, l.px(820), 2, longest = 4); y.summary.visibility = if (summary.isEmpty()) View.GONE else View.VISIBLE
         y.a.target = 1f
     }
 
@@ -403,6 +403,8 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
             addView(logo, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = l.px(18); bottomMargin = l.px(6) })
             addView(meta, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(14) })
             addView(summary, LinearLayout.LayoutParams(l.px(820), WRAP_CONTENT).apply { topMargin = l.px(14) })
+            // OK on the hero opens this title in its app: the Play chip says so.
+            addView(KeyHints(ctx, l).apply { set("Play", more = false) }, LinearLayout.LayoutParams(MATCH_PARENT, l.px(56)).apply { topMargin = l.px(20) })
         }
         textBox.addView(box, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
         return Layer(box, eyebrow, title, logo, meta, summary, Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f))

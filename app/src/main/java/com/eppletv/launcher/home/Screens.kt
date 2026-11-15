@@ -24,6 +24,7 @@ import com.eppletv.launcher.motion.Spring
 import com.eppletv.launcher.ui.Colors
 import com.eppletv.launcher.ui.Txt
 import com.eppletv.launcher.ui.style
+import com.eppletv.launcher.ui.sentences
 
 /** What every section can ask of the launcher shell. */
 interface Nav {
@@ -96,7 +97,7 @@ abstract class Screen(protected val nav: Nav) {
 @SuppressLint("ViewConstructor")
 class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClock, private val content: ContentRepository, private val summaryLines: Int = 2) :
     LinearLayout(ctx), FrameClock.Tick {
-    private val eyebrow = TextView(ctx).apply { style(Txt.CAPTION, l.u, 0xD9FFFFFF.toInt()); shadow(this, 8f) }
+    private val eyebrow = TextView(ctx).apply { style(Txt.CAPTION, l.u, 0xD9FFFFFF.toInt()); isAllCaps = false; shadow(this, 8f) }
     private val title = TextView(ctx).apply { style(Txt.HERO, l.u); shadow(this, 20f) }
     private val logo = ImageView(ctx).apply { adjustViewBounds = true; maxWidth = l.px(720); maxHeight = l.px(180); scaleType = ImageView.ScaleType.FIT_START; visibility = GONE }
     private val meta = MetaRow(ctx, l)
@@ -117,16 +118,18 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
         addView(hints, LayoutParams(MATCH_PARENT, l.px(56)).apply { topMargin = l.px(20) })
     }
 
-    fun show(item: ContentItem?, kind: String, hints: Boolean = false) {
+    /** [play]: the label of the Play chip ("Play", "Resume") when OK launches this title; null shows no chip. */
+    fun show(item: ContentItem?, kind: String, play: String? = null) {
         if (item == null) { visibility = INVISIBLE; return }
         visibility = VISIBLE
-        this.hints.visibility = if (hints) VISIBLE else GONE
-        // With the key hints the block keeps to the same height: a one-line summary and a slightly smaller logo.
-        summary.maxLines = if (hints) 1 else summaryLines; logo.maxHeight = l.px(if (hints) 130 else 180)
+        hints.visibility = if (play != null) VISIBLE else GONE
+        play?.let { hints.set(it) }
+        // With the Play chip the block keeps to the same height: a slightly smaller logo.
+        logo.maxHeight = l.px(if (play != null) 110 else 180)
         val fresh = item.id != shownId
         shownId = item.id
-        eyebrow.text = kind; eyebrow.visibility = if (kind.isEmpty()) GONE else VISIBLE
-        title.text = item.title; meta.set(item.meta); summary.text = item.summary
+        eyebrow.text = Brand.eyebrow(kind); eyebrow.visibility = if (kind.isEmpty()) GONE else VISIBLE
+        title.text = item.title; meta.set(item.meta); summary.sentences(item.summary, l.px(860), summaryLines)
         summary.visibility = if (item.summary.isEmpty()) GONE else VISIBLE
         if (!fresh) return
         logo.setImageBitmap(null); logo.visibility = GONE; title.visibility = VISIBLE
@@ -155,7 +158,11 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
 @SuppressLint("ViewConstructor")
 class KeyHints(ctx: Context, private val l: Layout) : View(ctx) {
     private val I = com.eppletv.launcher.ui.EppleIcons
-    private val chips = listOf(Triple(I.PLAY, "Resume", true), Triple(I.MORE, "Hold OK for more", false))
+    private var chips = listOf(Triple(I.PLAY, "Play", true), Triple(I.MORE, "Hold OK for more", false))
+    fun set(play: String, more: Boolean = true) {
+        val n = listOf(Triple(I.PLAY, play, true)) + if (more) listOf(Triple(I.MORE, "Hold OK for more", false)) else emptyList()
+        if (n != chips) { chips = n; invalidate() }
+    }
     private val text = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         textSize = l.pxf(24f) * com.eppletv.launcher.ui.Type.scale; typeface = com.eppletv.launcher.ui.Type.of(700) }
     private val bg = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
@@ -212,7 +219,7 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             val shown = if (app == null || it == null) it else ContentItem(it.id, it.title,
                 it.meta.split("  ·  ").filter { p -> p.trim() != app }.joinToString("  ·  "), it.imageUrl, it.linkUri, it.linkPkg,
                 it.kind, it.summary, it.weight, it.origin, it.logoUrl, it.posterUrl)
-            info.show(shown, app?.let { a -> "Continue in $a".uppercase() } ?: "", hints = s.cont)
+            info.show(shown, app?.let { a -> "Continue in $a" } ?: "", play = playLabel(s, it))
             nav.art(c.item)
         }
         stack.onRow = { r -> for (i in r..minOf(sources.size - 1, r + 3)) load(i) }
@@ -224,6 +231,9 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
         // The first rows, plus every row built from the user's own lists (local, instant).
         sources.forEachIndexed { i, s -> if (i < 3 || s.dynamic) load(i) }
     }
+
+    /** "Play" / "Resume" when OK on this title launches it in its app (not just its details page); null otherwise. */
+    protected open fun playLabel(s: Shelf, it: ContentItem?): String? = null
 
     protected open fun loadThumb(c: Card) {
         val it = c.item ?: return
@@ -353,11 +363,18 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
     override fun wire(c: Card) {
         super.wire(c)
         // Continue Watching resumes in the app it was opened in.
+        // A title from an app's own lists opens in that app (Continue Watching resumes it); others open their details.
         c.setOnClickListener {
             val it = c.item ?: return@setOnClickListener
-            val pkg = it.linkPkg
-            if (stack.current?.title == "Continue Watching" && pkg != null) nav.play(it, pkg, it.kind.removePrefix("Continue in ")) else nav.details(it)
+            val pkg = it.linkPkg ?: return@setOnClickListener nav.details(it)
+            val app = if (it.kind.startsWith("Continue in ")) it.kind.removePrefix("Continue in ") else nav.apps.firstOrNull { a -> a.packageName == pkg }?.label ?: pkg
+            nav.play(it, pkg, app)
         }
+    }
+    override fun playLabel(s: Shelf, it: ContentItem?): String? = when {
+        it?.linkPkg == null -> null
+        s.cont -> "Resume"
+        else -> "Play"
     }
     /** The TV's Watch Next list changes outside Epple TV: it is read again every time Home's rows open. */
     private var shownOnce = false

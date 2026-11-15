@@ -948,7 +948,6 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         dirX = dx; dirY = dy
         when (zone) {
             Zone.CONTENT -> when {
-                dx < 0 && page.atLeft() -> openMenu()
                 dy < 0 && page.atTop() && !hero.hasItems -> enterHint()
                 dy > 0 && page.atTop() -> enterFeed()
                 !page.move(dx, dy) -> if (hero.hasItems) enterHero() else enterHint()
