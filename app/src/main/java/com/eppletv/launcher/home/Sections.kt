@@ -462,6 +462,15 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         header("Content")
         choice(Prefs.REGION, "Which country's streaming catalogues and availability are shown. Automatic uses this TV's region (${Sources.region}).")
         choice(Prefs.INDIAN, "The mix of Bollywood and regional Indian titles against Hollywood titles in the top row's showcases.")
+        choice(Prefs.RECS, "Top Picks for You, Because you watched … and Trending Now on Home, and For You on Movies and TV Shows. " +
+            "Worked out on this TV (no AI) from titles you watch from Epple TV, your Favourites, Watchlist and Continue Watching, refreshed once a day.")
+        row("Reset recommendations", "Forgets what recommendations learned: titles watched, Not for me and More like this. " +
+            "Your Favourites, Watchlist, Continue Watching and settings stay.", {
+            val t = com.eppletv.launcher.content.Recommender.lastRefresh(nav.ctx)
+            if (t == 0L) "Not refreshed yet" else "Refreshed " + android.text.format.DateUtils.getRelativeTimeSpanString(t, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS)
+        }) {
+            nav.content.run({ com.eppletv.launcher.content.Recommender.reset(nav.ctx); true }) { nav.toast("Recommendations reset"); nav.refreshRecs(force = true); show() }
+        }
         row("Content providers", "API keys for TMDB, Watchmode, Trakt and YouTube: enter, test, replace or remove them. Keys are encrypted on this TV and shown only masked.", {
             "${com.eppletv.launcher.content.Credentials.connected()} of 4 connected" }) { nav.openSetup(1, one = true) }
         row("Notifications", "Shows other apps' notifications in Epple TV: a short popup at the top right (OK opens it, Back dismisses it), " +
