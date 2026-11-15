@@ -67,6 +67,8 @@ interface Nav {
     fun switchLauncher(epple: Boolean, done: (() -> Unit)? = null)
     /** Asks the TV to let Epple TV read its listings (Prime Video's rows, Continue Watching). */
     fun askListings()
+    /** Recommendations: refresh the deck in the background if due ([force]: now, e.g. after "More like this"). */
+    fun refreshRecs(force: Boolean)
     /** Lets Epple TV read other apps' notifications (Settings > Notifications, Control Center). */
     fun allowNotifications()
 }
@@ -201,7 +203,14 @@ class KeyHints(ctx: Context, private val l: Layout) : View(ctx) {
 /** A source of one row: [load] calls back with the items, or null on failure. */
 class RowSource(val title: String, val dynamic: Boolean = false, val emptyText: String? = null,
                 /** Drawn as Continue Watching (design B): landscape cards with logos and progress. */
-                val cont: Boolean = false, val load: ((List<ContentItem>?) -> Unit) -> Unit)
+                val cont: Boolean = false,
+                /** A recommendations row: its reason shows above the focused title; "Not for me" / "More like this". */
+                val rec: Boolean = false,
+                /** Fewer titles than this (after de-duplication) hides the row. */
+                val min: Int = 0,
+                /** The row's title once loaded, when it depends on what loaded ("Because you watched …"). */
+                val label: (() -> String?)? = null,
+                val load: ((List<ContentItem>?) -> Unit) -> Unit)
 
 /**
  * Browse layout shared by Home's feed, Movies, TV Shows and Library: the focused title's artwork fills the screen,
@@ -233,14 +242,16 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             val shown = if (app == null || it == null) it else ContentItem(it.id, it.title,
                 it.meta.split("  ·  ").filter { p -> p.trim() != app }.joinToString("  ·  "), it.imageUrl, it.linkUri, it.linkPkg,
                 it.kind, it.summary, it.weight, it.origin, it.logoUrl, it.posterUrl)
-            info.show(shown, app?.let { a -> "Continue in $a" } ?: "", play = playLabel(s, it))
+            // A recommendation's reason ("Because you watched …") is its eyebrow; nothing is added to the posters.
+            val why = if (sources.getOrNull(stack.shelves.indexOf(s))?.rec == true) it?.kind.orEmpty() else ""
+            info.show(shown, app?.let { a -> "Continue in $a" } ?: why, play = playLabel(s, it))
             nav.art(c.item)
         }
         stack.onRow = { r -> for (i in r..minOf(sources.size - 1, r + 3)) load(i) }
     }
 
     private fun build() {
-        built = true
+        built = true; recsSeen = com.eppletv.launcher.content.Recommender.version
         sources.forEach { src -> stack.add(Shelf(view.context, l, nav.clock, src.title, poster = true, cont = src.cont).apply { loader = { c -> loadThumb(c) } }) }
         // The first rows, plus every row built from the user's own lists (local, instant).
         sources.forEachIndexed { i, s -> if (i < 3 || s.dynamic) load(i) }
@@ -276,7 +287,8 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             // de-duplicate against the rows above that are already showing
             val seen = HashSet<String>()
             for (j in 0 until i) stack.shelves[j].cards.forEach { c -> c.item?.id?.let { seen.add(it) } }
-            val items = list.filter { it.id !in seen }
+            val items = list.filter { it.id !in seen }.let { if (it.size < src.min) emptyList() else it }
+            src.label?.invoke()?.let { shelf.retitle(it) }
             val hadFocus = shelf.hasFocus()                    // a row rebuilt under the focus keeps it
             nav.content.prefetchLogos(items, 4)               // the first titles' logos are ready when the row is reached
             shelf.set(items, src.emptyText) { c, it -> c.bind(it.title, it.meta.split("  ·  ").take(2).joinToString(" · ")); wire(c) }
@@ -324,8 +336,32 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             listOf(I.INFO, if (inList) I.WATCHLIST_ON else I.WATCHLIST, if (fav) I.FAVOURITE_ON else I.FAVOURITE) + extra.map { e -> e.second })
     }
 
-    /** More actions for [it]: label, [com.eppletv.launcher.ui.EppleIcons] id, action. */
-    protected open fun extraMenu(it: ContentItem): List<Triple<String, Int, () -> Unit>> = emptyList()
+    /** More actions for [it]: label, [com.eppletv.launcher.ui.EppleIcons] id, action. On a recommendations row: feedback. */
+    protected open fun extraMenu(it: ContentItem): List<Triple<String, Int, () -> Unit>> {
+        if (sources.getOrNull(stack.r)?.rec != true) return emptyList()
+        val I = com.eppletv.launcher.ui.EppleIcons
+        return listOf(
+            Triple("Not for me", I.REMOVE) {
+                com.eppletv.launcher.content.Taste.dismiss(nav.ctx, it.id)
+                nav.content.run({ com.eppletv.launcher.content.Recommender.drop(nav.ctx, it.id); true }) { reloadRecs(force = true) }
+                nav.toast("${it.title} won't be recommended again")
+            },
+            Triple("More like this", I.MORE) {
+                com.eppletv.launcher.content.Taste.moreLike(nav.ctx, it)
+                com.eppletv.launcher.content.Recommender.markDirty(nav.ctx)
+                nav.refreshRecs(force = true)
+                nav.toast("More like ${it.title} in your next picks")
+            },
+        )
+    }
+
+    private var recsSeen = -1
+    /** New recommendations are in: their rows reload, except one the user is on ([force]: that one too). */
+    fun recsChanged() { recsSeen = com.eppletv.launcher.content.Recommender.version; reloadRecs(force = false) }
+    protected fun reloadRecs(force: Boolean) {
+        if (!built) return
+        sources.forEachIndexed { i, s -> if (s.rec && (force || !stack.shelves[i].hasFocus())) load(i, force = true) }
+    }
 
     override fun chips(on: Boolean) = info.chips(on)
     override fun featured(): ContentItem? = stack.current?.item ?: stack.shelves.getOrNull(stack.firstNavigable())?.item
@@ -338,6 +374,8 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             version = nav.user.version
             sources.forEachIndexed { i, s -> if (s.dynamic && i in requested) load(i, force = true) }
         }
+        // A newer recommendations deck than the rows show: they reload (nothing is focused here yet).
+        if (recsSeen != com.eppletv.launcher.content.Recommender.version) { recsSeen = com.eppletv.launcher.content.Recommender.version; reloadRecs(force = false) }
         stack.current?.item?.let { info.show(it, "") }
         stack.trim()                                   // artwork for the rows around the focus comes back
     }
@@ -354,6 +392,25 @@ object Rows {
     fun catalog(nav: Nav, spec: RowSpec) = RowSource(spec.title) { cb -> nav.content.work("row:${spec.path}", { nav.catalog.row(spec) }, cb) }
     fun user(nav: Nav, title: String, kind: UserLibrary.Kind, empty: String? = null) =
         RowSource(title, dynamic = true, emptyText = empty) { cb -> cb(nav.user.items(kind)) }
+
+    /**
+     * A recommendations row from the saved deck (read on the worker, never before it is needed). Hidden when
+     * recommendations are off, there is no deck yet, or fewer than [min] titles remain. [label] names the row.
+     */
+    fun rec(nav: Nav, title: String, min: Int, label: ((com.eppletv.launcher.content.Recommender.Deck) -> String?)? = null,
+            pick: (com.eppletv.launcher.content.Recommender.Deck) -> List<ContentItem>): RowSource {
+        var named: String? = null
+        return RowSource(title, rec = true, min = min, label = { named }) { cb ->
+            if (nav.prefs.get(Prefs.RECS) != 0) { cb(emptyList()); return@RowSource }
+            nav.content.run<Any>({ com.eppletv.launcher.content.Recommender.deck(nav.ctx) ?: false }) { d ->
+                val deck = d as? com.eppletv.launcher.content.Recommender.Deck
+                named = deck?.let { label?.invoke(it) }
+                cb(if (deck == null) emptyList() else pick(deck))
+            }
+        }
+    }
+    /** Movies or TV Shows: "For You", the deck's picks of that type (at least 8). */
+    fun forYou(nav: Nav, type: String) = rec(nav, "For You", 8) { d -> com.eppletv.launcher.content.Recommender.items(nav.ctx, d, if (type == "movie") d.movie else d.tv) }
 }
 
 /** Home's rows under the top row: Continue Watching, Recently Added, Trending, For You and the Watchlist. */
@@ -365,6 +422,8 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
             cb(ContinueWatching.merge(nav.ctx, tv.orEmpty(), nav.user.items(UserLibrary.Kind.CONTINUE)))
         }
     },
+    // Recommendations worked out on this TV (no AI): 16 dealt from the saved deck each visit.
+    Rows.rec(nav, "Top Picks for You", 1) { d -> com.eppletv.launcher.content.Recommender.deal(nav.ctx, d) },
     // What every streaming app with its own Android TV rows recommends (Prime Video, Crunchyroll, Apple TV...), a few each.
     RowSource("From Your Apps", dynamic = true) { cb ->
         val ch = com.eppletv.launcher.content.Sources.channels(nav.ctx)
@@ -373,6 +432,10 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
             (0 until (per.maxOfOrNull { it.size } ?: 0)).flatMap { i -> per.mapNotNull { it.getOrNull(i) } }
         }) { cb(it.orEmpty()) }
     },
+    // Personal rows when the deck has them ("Because you watched …", "More from …", "With …"), then what is trending.
+    *(0 until 4).map { k -> Rows.rec(nav, "", 6, label = { d -> d.rows.getOrNull(k)?.first }) { d ->
+        d.rows.getOrNull(k)?.let { com.eppletv.launcher.content.Recommender.items(nav.ctx, d, it.second) } ?: emptyList() } }.toTypedArray(),
+    Rows.rec(nav, "Trending Now", 6) { d -> com.eppletv.launcher.content.Recommender.items(nav.ctx, d, d.trending) },
     Rows.user(nav, "Your Watchlist", UserLibrary.Kind.WATCHLIST),
 )) {
     override fun wire(c: Card) {
@@ -399,7 +462,7 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
 
     /** Every title in Continue Watching can be removed, wherever it came from (Watch Next, an app's row, Epple's list). */
     override fun extraMenu(it: ContentItem) =
-        if (stack.current?.title == "Continue Watching") listOf(Triple("Remove from Continue Watching", com.eppletv.launcher.ui.EppleIcons.REMOVE, { removeContinue(it) })) else emptyList()
+        if (stack.current?.title == "Continue Watching") listOf(Triple("Remove from Continue Watching", com.eppletv.launcher.ui.EppleIcons.REMOVE, { removeContinue(it) })) else super.extraMenu(it)
 
     private fun removeContinue(it: ContentItem) {
         com.eppletv.launcher.content.Recency.remove(nav.ctx, it.linkPkg, it.title)

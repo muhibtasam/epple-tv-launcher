@@ -348,6 +348,8 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
     private val gapPx = l.pxf((if (cont) Look.CW_GAP else Look.ROW_GAP).toFloat())
     private val stripH = if (cont) Look.CW_H else Look.ROW_H
     private val header = TextView(ctx).apply { style(Txt.TITLE, l.u); text = title }
+    /** A row whose title depends on what it shows ("Because you watched …"). */
+    fun retitle(t: String) { header.text = t }
     private val status = TextView(ctx).apply { style(Txt.META, l.u, Colors.TEXT_DIM); text = "Loading…" }
     private val strip = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
     val cards = ArrayList<Card>()

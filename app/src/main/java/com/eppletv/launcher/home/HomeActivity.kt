@@ -330,7 +330,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     override fun onStop() {
-        resumed = false; main.removeCallbacks(rotate); main.removeCallbacks(idle); saver.stop()
+        resumed = false; main.removeCallbacks(rotate); main.removeCallbacks(idle); main.removeCallbacks(recsLater); saver.stop()
         hero.backdrop.pauseDrift(true)
         setup.pause()                                        // phone setup stops listening when the TV leaves Epple TV
         unregisterReceiver(timeReceiver)
@@ -517,8 +517,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     private fun create(i: Int): Screen = when (i) {
-        1 -> BrowseScreen(this, catalog.movieRows().map { Rows.catalog(this, it) })
-        2 -> BrowseScreen(this, catalog.tvRows().map { Rows.catalog(this, it) })
+        1 -> BrowseScreen(this, listOf(Rows.forYou(this, "movie")) + catalog.movieRows().map { Rows.catalog(this, it) })
+        2 -> BrowseScreen(this, listOf(Rows.forYou(this, "tv")) + catalog.tvRows().map { Rows.catalog(this, it) })
         APPS -> AppsScreen(this)
         SEARCH -> SearchScreen(this)
         else -> SettingsScreen(this) { c -> onSetting(c) }
@@ -707,6 +707,19 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         Watchers.checkFollowed(this, content, catalog, user, prefs)
         if (::setup.isInitialized && setup.done && !askedListings()) askListings()
         refreshChannels()
+        // Recommendations refresh well after the first frame (at most once a day; the saved deck shows meanwhile).
+        main.removeCallbacks(recsLater); main.postDelayed(recsLater, 4000)
+    }
+
+    private val recsLater = Runnable { refreshRecs(force = false) }
+    override fun refreshRecs(force: Boolean) {
+        if (prefs.get(Prefs.RECS) != 0) return
+        com.eppletv.launcher.content.Recommender.refresh(this, content, catalog, user, content.indianMode,
+            watchNext = { ContinueWatching.load(this, content.net, false).map { it.title } }, force = force) { ok ->
+            if (!ok) return@refresh
+            if (::feed.isInitialized) feed.recsChanged()
+            screens.forEach { (it as? BrowseScreen)?.recsChanged() }
+        }
     }
 
     /** Which apps publish their own rows is read again on every return: a newly signed-in service starts recommending. */

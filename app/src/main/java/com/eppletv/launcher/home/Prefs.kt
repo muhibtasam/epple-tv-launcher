@@ -21,6 +21,7 @@ class Prefs(ctx: Context) {
         val SAVER_SOURCE = Choice("saver_source", "Screensaver shows", listOf("Home wallpapers", "Its own pictures"), 0)
         val SAVER_STYLE = Choice("saver_style", "Screensaver motion", listOf("Slow pan", "Still"), 0)
         private val ON_OFF = listOf("On", "Off")
+        val RECS = Choice("recs", "Recommendations", ON_OFF, 0)
         val NOTIFY_WIFI = Choice("n_wifi", "Wi-Fi alerts", ON_OFF, 0)
         val NOTIFY_UPDATES = Choice("n_update", "Epple TV updates", ON_OFF, 0)
         val NOTIFY_FOLLOWED = Choice("n_followed", "Followed titles", ON_OFF, 0)
