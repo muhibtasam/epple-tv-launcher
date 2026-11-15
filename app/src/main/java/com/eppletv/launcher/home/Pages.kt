@@ -250,6 +250,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
     /** The next title arrives in [ms]: the active dot fills over that time (0: no rotation). */
     fun rotationTimer(ms: Long) = if (ms > 0) dots.timer(ms) else dots.stopTimer()
     val backdrop = Backdrop(ctx, clock)
+    private companion object { const val CHIP = "play-chip" }
     private class Layer(val box: LinearLayout, val eyebrow: TextView, val title: TextView, val logo: ImageView, val meta: MetaRow, val summary: TextView, val a: Spring)
     private var wantLogo: String? = null
     private val textBox = FrameLayout(ctx)
@@ -279,7 +280,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         root.addView(backdrop.top, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         // The scrims (top for the title, bottom for the app rows, top-left corner under the text) are painted into each
         // backdrop image once when it is decoded (see Scrim): as overlay views they cost two translucent full-screen passes a frame.
-        root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(420)).apply { leftMargin = l.left; topMargin = l.px(170) })
+        root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(480)).apply { leftMargin = l.left; topMargin = l.px(170) })
         layers = Array(2) { layer(ctx) }
         // The slider dots sit just above the top row; in full-screen artwork mode they slide down to the bottom edge.
         root.addView(dots, FrameLayout.LayoutParams(MATCH_PARENT, l.px(16)).apply { topMargin = dotsY })
@@ -305,11 +306,23 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         textVis.target = 0f; clock.add(this)
     }
 
+    private var chipOn = false
+    private val showChip = Runnable { layers.forEach { it.box.findViewWithTag<View>(CHIP)?.animate()?.alpha(if (chipOn) 1f else 0f)?.setDuration(160)?.start() } }
+    /** The hero has focus or not: its Play chip shows only then, once focus rests on a title (not while stepping). */
+    fun chip(on: Boolean) {
+        if (chipOn == on && !on) return
+        chipOn = on
+        textBox.removeCallbacks(showChip)
+        layers.forEach { it.box.findViewWithTag<View>(CHIP)?.let { v -> v.animate().cancel(); if (!on) v.alpha = 0f } }
+        if (on) textBox.postDelayed(showChip, 280)
+    }
+
     fun step(d: Int, wrap: Boolean = false): Boolean {
         if (items.size < 2) return false
         val n = if (wrap) (index + d + items.size) % items.size else index + d
         if (n !in items.indices) return false
         index = n; show(fresh = false)
+        if (chipOn) { layers.forEach { it.box.findViewWithTag<View>(CHIP)?.alpha = 0f }; chip(true) }
         return true
     }
 
@@ -404,7 +417,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
             addView(meta, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = l.px(14) })
             addView(summary, LinearLayout.LayoutParams(l.px(820), WRAP_CONTENT).apply { topMargin = l.px(14) })
             // OK on the hero opens this title in its app: the Play chip says so.
-            addView(KeyHints(ctx, l).apply { set("Play", more = false) }, LinearLayout.LayoutParams(MATCH_PARENT, l.px(56)).apply { topMargin = l.px(20) })
+            addView(KeyHints(ctx, l).apply { set("Play", more = false); alpha = 0f; tag = CHIP }, LinearLayout.LayoutParams(MATCH_PARENT, l.px(56)).apply { topMargin = l.px(20) })
         }
         textBox.addView(box, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP))
         return Layer(box, eyebrow, title, logo, meta, summary, Spring(0f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f))

@@ -128,7 +128,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             return !(dimP.atRest() && tabsP.atRest() && homeP.atRest() && railP.atRest())
         }
     }
-    private fun animateShell() { syncSide(); clock.add(shell) }
+    private fun animateShell() { syncSide(); syncChips(); clock.add(shell) }
 
     /** The menu opens while focus is in it; on Home's top level its closed rail stays in view, elsewhere it hides. */
     private fun syncSide() {
@@ -982,7 +982,15 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             }
             Zone.DETAIL -> details.lastOrNull()?.key(dx, dy)
         }
+        syncChips()
         return true
+    }
+
+    /** The Play chip belongs to the focused title only: the hero's while the hero has focus, a row's while a card does. */
+    private fun syncChips() {
+        hero.chip(zone == Zone.HERO && section == 0)
+        if (::feed.isInitialized) feed.chips(zone == Zone.FEED)
+        screens.forEachIndexed { i, s -> if (i != 0) s?.chips(zone == Zone.SECTION && i == section) }
     }
 
     /** From the tab bar down into the selected section (Home: back to its artwork and top row). */

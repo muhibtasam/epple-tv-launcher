@@ -89,6 +89,8 @@ abstract class Screen(protected val nav: Nav) {
     open val wantsArt = true
     /** The title whose artwork this section shows when it opens (null: the section's neutral backdrop). */
     open fun featured(): ContentItem? = null
+    /** Whether a card of this section has focus (its title's Play chip may show). */
+    open fun chips(on: Boolean) {}
     /** A ready bitmap for this section's backdrop instead of a title (e.g. the focused app's colours). */
     open fun featuredBitmap(): Bitmap? = null
 }
@@ -102,7 +104,7 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
     private val logo = ImageView(ctx).apply { adjustViewBounds = true; maxWidth = l.px(720); maxHeight = l.px(180); scaleType = ImageView.ScaleType.FIT_START; visibility = GONE }
     private val meta = MetaRow(ctx, l)
     val summary = TextView(ctx).apply { style(Txt.BODY, l.u, 0xD9FFFFFF.toInt()); maxLines = summaryLines; shadow(this, 10f) }
-    private val hints = KeyHints(ctx, l).apply { visibility = GONE }
+    private val hints = KeyHints(ctx, l).apply { visibility = GONE; alpha = 0f }
     private val a = Spring(1f, Motion.FADE_DAMPING, Motion.FADE_STIFFNESS * 2f)
     private var shownId: String? = null
 
@@ -122,8 +124,9 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
     fun show(item: ContentItem?, kind: String, play: String? = null) {
         if (item == null) { visibility = INVISIBLE; return }
         visibility = VISIBLE
-        hints.visibility = if (play != null) VISIBLE else GONE
+        playLabel = play
         play?.let { hints.set(it) }
+        reveal()
         // With the Play chip the block keeps to the same height: a slightly smaller logo.
         logo.maxHeight = l.px(if (play != null) 110 else 180)
         val fresh = item.id != shownId
@@ -149,6 +152,17 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
     }
 
     override fun tick(dt: Float): Boolean { a.step(dt); alpha = a.value; return !a.atRest() }
+
+    private var playLabel: String? = null
+    private var chipsOn = false
+    private val showChip = Runnable { if (chipsOn && playLabel != null) { hints.visibility = VISIBLE; hints.animate().alpha(1f).setDuration(160).start() } }
+    /** A card of this block's section has focus or not: the chip shows only for a focused, launchable title. */
+    fun chips(on: Boolean) { if (chipsOn != on) { chipsOn = on; reveal() } }
+    /** Hidden at once; shown once focus rests on the title for a moment (not on every card passed while scrolling). */
+    private fun reveal() {
+        removeCallbacks(showChip); hints.animate().cancel(); hints.alpha = 0f
+        if (playLabel == null) hints.visibility = GONE else { hints.visibility = INVISIBLE; if (chipsOn) postDelayed(showChip, 280) }
+    }
 }
 
 /**
@@ -313,6 +327,7 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
     /** More actions for [it]: label, [com.eppletv.launcher.ui.EppleIcons] id, action. */
     protected open fun extraMenu(it: ContentItem): List<Triple<String, Int, () -> Unit>> = emptyList()
 
+    override fun chips(on: Boolean) = info.chips(on)
     override fun featured(): ContentItem? = stack.current?.item ?: stack.shelves.getOrNull(stack.firstNavigable())?.item
 
     override fun show() {
