@@ -417,7 +417,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         y.logo.contentDescription = title
         y.eyebrow.visibility = if (eyebrow.isEmpty()) View.GONE else View.VISIBLE
         y.meta.visibility = if (meta.isEmpty()) View.GONE else View.VISIBLE
-        y.summary.sentences(summary, l.px(820), 2, longest = 4); y.summary.visibility = if (summary.isEmpty()) View.GONE else View.VISIBLE
+        y.summary.sentences(summary, l.px(820), 2, longest = 4); y.summary.visibility = if (y.summary.text.isEmpty()) View.GONE else View.VISIBLE
         y.a.target = 1f
     }
 

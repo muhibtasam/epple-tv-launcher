@@ -79,21 +79,27 @@ enum class Txt(val px: Float, val weight: Int, val tracking: Float, val lines: I
 
 /**
  * Sets [s] cut to the whole sentences that fit in [lines] lines [widthPx] wide, so a description ends at a full stop
- * instead of mid-sentence. When even its first sentence is longer than [longest] lines, it ends with "…".
+ * instead of mid-sentence. Never an ellipsis: a sentence that doesn't fit is left out, and when even the first one is
+ * longer than [longest] lines the text is empty (callers hide the view).
  */
 fun TextView.sentences(s: String, widthPx: Int, lines: Int, longest: Int = lines + 1) {
     fun count(t: String) = android.text.StaticLayout.Builder.obtain(t, 0, t.length, paint, widthPx).setIncludePad(false).build().lineCount
-    val parts = s.trim().split(Regex("(?<=[.!?…])\\s+"))
+    ellipsize = null
+    if (lines <= 0 || s.isBlank() || widthPx <= 0) { text = ""; return }
+    // A sentence ends at . ! ? or … (optionally followed by a closing quote or bracket) before a capital, digit or quote,
+    // so "Dr. who" or "3.5" don't split.
+    val parts = s.trim().split(Regex("(?<=[.!?…][\"”’)]?)\\s+(?=[\\p{Lu}\"“‘(\\d])"))
     // A first sentence longer than [lines] may use up to [longest] lines, so it can still end at its full stop.
-    val room = if (parts.isNotEmpty() && count(parts[0]) in (lines + 1)..longest) count(parts[0]) else lines
-    maxLines = room; ellipsize = android.text.TextUtils.TruncateAt.END
+    val first = count(parts[0])
+    val room = if (first in (lines + 1)..longest) first else lines
     var fit = ""
     for (p in parts) {
         val next = if (fit.isEmpty()) p else "$fit $p"
         if (count(next) > room) break
         fit = next
     }
-    text = fit.ifEmpty { s }
+    // Whole sentences only, never an ellipsis: when not even the first sentence fits, nothing is shown.
+    maxLines = room; text = fit
 }
 
 fun TextView.style(t: Txt, u: Float, color: Int = Colors.WHITE) {

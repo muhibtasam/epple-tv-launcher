@@ -134,15 +134,16 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
         playLabel = play
         play?.let { hints.set(it) }
         reveal()
-        // With the Play chip the block keeps to the same height: a slightly smaller logo.
-        logo.maxHeight = l.px(if (play != null) 110 else 180)
+        // With the Play chip the block keeps to the same height: a slightly smaller logo (smaller still in a budget).
+        logo.maxHeight = l.px(if (budget > 0) (if (play != null) 96 else 140) else (if (play != null) 110 else 180))
         val fresh = item.id != shownId
         shownId = item.id
         eyebrow.text = Brand.eyebrow(kind); eyebrow.visibility = if (kind.isEmpty()) GONE else VISIBLE
-        // The availability line takes one summary line's place, so the block keeps its height above the rows.
-        title.text = item.title; meta.set(item.meta); if (service != null) maxOf(1, summaryLines - 1).let { n -> summary.sentences(item.summary, l.px(860), n, longest = n) }
-        else summary.sentences(item.summary, l.px(860), summaryLines)
-        summary.visibility = if (item.summary.isEmpty()) GONE else VISIBLE
+        title.text = item.title; meta.set(item.meta)
+        // The summary gets the lines left in the budget (up to [summaryLines]) and only whole sentences fit in them.
+        val lines = if (budget <= 0) summaryLines else ((budget - headHeight(play != null)) / summary.lineHeight).coerceIn(0, summaryLines)
+        summary.sentences(item.summary, l.px(860), lines, longest = if (budget <= 0) lines + 1 else lines)
+        summary.visibility = if (summary.text.isEmpty()) GONE else VISIBLE
         if (!fresh) return
         logo.setImageBitmap(null); logo.visibility = GONE; title.visibility = VISIBLE
         // TMDB titles, and titles from apps' rows and Watch Next (their logo is found by name): the logo when there is one.
@@ -158,6 +159,19 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
             if (!answered) { title.visibility = INVISIBLE; postDelayed({ if (shownId == id && logo.visibility != VISIBLE) title.visibility = VISIBLE }, 350) }
         }
         a.value = 0.35f; a.target = 1f; clock.add(this)
+    }
+
+    /** Browse screens: the block's height (px), which it never exceeds; 0 = no limit (details page). */
+    var budget = 0
+
+    /** Everything above the summary, as it will be laid out: the logo's slot is reserved whether or not it has arrived. */
+    private fun headHeight(play: Boolean): Int {
+        val w = MeasureSpec.makeMeasureSpec(l.px(1300), MeasureSpec.AT_MOST); val u = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        fun top(v: View) = (v.layoutParams as MarginLayoutParams).let { it.topMargin + it.bottomMargin }
+        fun h(v: View) = if (v.visibility == GONE) 0 else { v.measure(w, u); v.measuredHeight + top(v) }
+        title.measure(w, u)
+        val name = maxOf(logo.maxHeight + top(logo), title.measuredHeight + top(title))
+        return h(eyebrow) + name + h(meta) + h(avail) + top(summary) + (if (play) l.px(56) + top(hints) else 0)
     }
 
     override fun tick(dt: Float): Boolean { a.step(dt); alpha = a.value; return !a.atRest() }
@@ -226,7 +240,7 @@ class RowSource(val title: String, val dynamic: Boolean = false, val emptyText: 
  */
 open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private val emptyAll: String? = null) : Screen(nav) {
     final override val view = FrameLayout(nav.ctx).apply { clipChildren = false }
-    protected val info = InfoBlock(view.context, l, nav.clock, nav.content)
+    protected val info = InfoBlock(view.context, l, nav.clock, nav.content, summaryLines = 3)
     protected val stack = ShelfStack(view.context, l, nav.clock, l.px(Look.ROWS_TOP))
     private val empty = TextView(view.context).apply { style(Txt.ROW, l.u, Colors.TEXT_DIM); text = emptyAll ?: ""; gravity = Gravity.CENTER; visibility = View.GONE
         // Empty state: the Epple TV icon for watching above the line.
@@ -238,7 +252,13 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
     private var active = false
 
     init {
-        view.addView(info, FrameLayout.LayoutParams(l.px(1300), WRAP_CONTENT).apply { leftMargin = l.left; topMargin = l.px(Look.INFO_TOP) })
+        // The info block is anchored to its bottom, a fixed gap above the first row's title, inside a band of fixed
+        // height: however tall its content, it never reaches the row (its summary gives way first).
+        val band = l.px(Look.ROWS_TOP - Look.INFO_GAP - Look.INFO_CEIL)
+        info.budget = band
+        view.addView(FrameLayout(view.context).apply { clipChildren = false
+            addView(info, FrameLayout.LayoutParams(l.px(1300), WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
+        }, FrameLayout.LayoutParams(l.px(1300) + l.left, band).apply { leftMargin = l.left; topMargin = l.px(Look.INFO_CEIL) })
         view.addView(stack, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         view.addView(empty, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
         stack.onFocus = { s, c ->
@@ -423,7 +443,7 @@ object Rows {
     fun forYou(nav: Nav, type: String) = rec(nav, "For You", 8) { d -> com.eppletv.launcher.content.Recommender.items(nav.ctx, d, if (type == "movie") d.movie else d.tv) }
 }
 
-/** Home's rows under the top row: Continue Watching, Recently Added, Trending, For You and the Watchlist. */
+/** Home's rows under the top row: Continue Watching, Top Picks for You, personal recommendation rows and the Watchlist. */
 class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
     // What you left half-way in any app (the TV's own Watch Next list, as Google TV shows it), then titles opened from Epple TV.
     RowSource("Continue Watching", dynamic = true, cont = true) { cb ->
@@ -434,22 +454,9 @@ class HomeFeed(nav: Nav) : BrowseScreen(nav, listOf(
     },
     // Recommendations worked out on this TV (no AI): 16 dealt from the saved deck each visit.
     Rows.rec(nav, "Top Picks for You", 1) { d -> com.eppletv.launcher.content.Recommender.deal(nav.ctx, d) },
-    // What every streaming app with its own Android TV rows recommends (Prime Video, Crunchyroll, Apple TV...), a few each.
-    RowSource("From Your Apps", dynamic = true) { cb ->
-        val ch = com.eppletv.launcher.content.Sources.channels(nav.ctx)
-        nav.content.run({
-            val per = ch.available.map { pkg -> try { ch.load(nav.content.net, pkg).take(5) } catch (_: Exception) { emptyList() } }
-            (0 until (per.maxOfOrNull { it.size } ?: 0)).flatMap { i -> per.mapNotNull { it.getOrNull(i) } }
-        }) { cb(it.orEmpty()) }
-    },
-    // Personal rows when the deck has them ("Because you watched …", "More from …", "With …"), then what is trending.
+    // Personal rows when the deck has them ("Because you watched …", "More from …", "With …").
     *(0 until 4).map { k -> Rows.rec(nav, "", 6, label = { d -> d.rows.getOrNull(k)?.first }) { d ->
         d.rows.getOrNull(k)?.let { com.eppletv.launcher.content.Recommender.items(nav.ctx, d, it.second) } ?: emptyList() } }.toTypedArray(),
-    // Recent releases TMDB confirms on your pinned apps (hidden under six), then trending: "on your apps" only when
-    // at least six trending titles are confirmed there, otherwise general trending with no availability claim.
-    Rows.rec(nav, "New on your apps", com.eppletv.launcher.content.Availability.MIN_NEW) { d -> com.eppletv.launcher.content.Recommender.items(nav.ctx, d, d.fresh) },
-    Rows.rec(nav, "Trending Now", 6, label = { d -> if (d.trendingApps.size >= 6) "Trending on your apps" else "Trending Now" }) { d ->
-        com.eppletv.launcher.content.Recommender.items(nav.ctx, d, if (d.trendingApps.size >= 6) d.trendingApps else d.trending) },
     Rows.user(nav, "Your Watchlist", UserLibrary.Kind.WATCHLIST),
 )) {
     override fun wire(c: Card) {

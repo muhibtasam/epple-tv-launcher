@@ -40,6 +40,10 @@ object Look {
     const val FOCUS_SCALE = 0.10f
     const val INFO_TOP = 150                                 // info block (title, meta, summary) under the tab bar
     const val ROWS_TOP = 540                                 // first row of a browse screen
+    // Browse screens: the info block sits on the rows, INFO_GAP above the focused row's title, and grows upward no
+    // higher than INFO_CEIL; what doesn't fit in between (summary sentences, logo height) gives way.
+    const val INFO_GAP = 40
+    const val INFO_CEIL = 96
     const val PLACEHOLDER = 0xFF2A2D35.toInt()
     // Netflix-style rows: portrait posters at rest; the focused title opens into a wide card of the same height.
     const val ROW_H = 300; const val POSTER_W = 200; const val WIDE_W = 533; const val ROW_GAP = 18
