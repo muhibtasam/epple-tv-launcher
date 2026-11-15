@@ -28,42 +28,96 @@ class EppleNotifications : NotificationListenerService() {
 }
 
 object NotificationHub {
+    /** [cat]: CONTENT, SYSTEM or UPDATE. [own]: written by Epple TV itself (Wi-Fi, updates, followed titles), kept across
+     *  restarts; the others are other apps' notifications, in memory only. [action]: what Open does for an own note. */
     class Note(val key: String, val pkg: String, val app: String, val title: String, val text: String, val time: Long,
-               val intent: PendingIntent?, val icon: Bitmap?)
+               val intent: PendingIntent?, val icon: Bitmap?, val cat: Int = SYSTEM, val art: String? = null,
+               val action: String? = null, var read: Boolean = false, val own: Boolean = false)
+
+    const val CONTENT = 1; const val SYSTEM = 2; const val UPDATE = 3
 
     private val main = Handler(Looper.getMainLooper())
-    /** Newest first. Main thread. */
-    var notes: List<Note> = emptyList(); private set
-    var unread = 0; private set
+    private var appNotes: List<Note> = emptyList()
+    private var mine: List<Note> = emptyList()
+    /** Newest first: Epple TV's own and other apps'. Main thread. */
+    val notes: List<Note> get() = (mine + appNotes).sortedByDescending { it.time }
+    val unread: Int get() = notes.count { !it.read }
     private val dismissed = HashSet<String>()
     /** Main thread: called with a newly posted note (for the popup), or null when the list only changed. */
     var onChange: ((Note?) -> Unit)? = null
+    private var prefs: android.content.SharedPreferences? = null
 
     fun component(ctx: Context) = ComponentName(ctx, EppleNotifications::class.java)
     fun allowed(ctx: Context): Boolean =
         Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners")?.contains(component(ctx).flattenToString()) == true
 
-    fun markRead() { if (unread != 0) { unread = 0; onChange?.invoke(null) } }
-    /** Removes a note from Epple TV's list only; the app's own notification stays where it is. */
-    fun dismiss(key: String) { dismissed += key; notes = notes.filter { it.key != key }; onChange?.invoke(null) }
-    fun clearAll() { dismissed += notes.map { it.key }; notes = emptyList(); unread = 0; onChange?.invoke(null) }
+    /** Main thread, once at launch: Epple TV's own notes and their read state come back. */
+    fun init(ctx: Context) {
+        if (prefs != null) return
+        val p = ctx.applicationContext.getSharedPreferences("notes", Context.MODE_PRIVATE); prefs = p
+        mine = try {
+            val a = org.json.JSONArray(p.getString("own", "[]"))
+            (0 until a.length()).map { i -> a.getJSONObject(i).let { o ->
+                Note(o.getString("k"), o.optString("p"), o.optString("a"), o.optString("t"), o.optString("x"), o.optLong("w"), null, null,
+                    o.optInt("c", SYSTEM), o.optString("r").ifEmpty { null }, o.optString("n").ifEmpty { null }, o.optBoolean("d"), true) } }
+        } catch (_: Exception) { emptyList() }
+    }
+    private fun save() {
+        val a = org.json.JSONArray()
+        for (n in mine) a.put(org.json.JSONObject().put("k", n.key).put("p", n.pkg).put("a", n.app).put("t", n.title).put("x", n.text)
+            .put("w", n.time).put("c", n.cat).put("r", n.art ?: "").put("n", n.action ?: "").put("d", n.read))
+        prefs?.edit()?.putString("own", a.toString())?.apply()
+    }
+
+    /**
+     * Main thread. Adds or replaces Epple TV's own note [n] by its stable key (one Wi-Fi note, one note per release or
+     * episode). [once]: a key already posted before (even if dismissed since) is never posted again.
+     */
+    fun post(n: Note, once: Boolean = false) {
+        val p = prefs ?: return
+        if (once && p.getStringSet("posted", emptySet())!!.contains(n.key)) return
+        val same = mine.firstOrNull { it.key == n.key }
+        if (same != null && same.title == n.title && same.text == n.text) return
+        mine = (listOf(n) + mine.filter { it.key != n.key }).take(40); save()
+        if (once) p.edit().putStringSet("posted", p.getStringSet("posted", emptySet())!! + n.key).apply()
+        onChange?.invoke(n)
+    }
+    /** Replaces an own note's text (an update's download state) without a popup. */
+    fun update(key: String, text: String) {
+        val n = mine.firstOrNull { it.key == key } ?: return
+        mine = mine.map { if (it.key == key) Note(n.key, n.pkg, n.app, n.title, text, n.time, null, null, n.cat, n.art, n.action, n.read, true) else it }
+        save(); onChange?.invoke(null)
+    }
+
+    fun markRead(key: String) {
+        val n = notes.firstOrNull { it.key == key } ?: return
+        if (n.read) return
+        n.read = true; if (n.own) save(); onChange?.invoke(null)
+    }
+    fun markRead() { if (unread != 0) { notes.forEach { it.read = true }; save(); onChange?.invoke(null) } }
+    /** Removes a note from Epple TV's list only; another app's own notification stays where it is. */
+    fun dismiss(key: String) {
+        if (mine.any { it.key == key }) { mine = mine.filter { it.key != key }; save() }
+        else { dismissed += key; appNotes = appNotes.filter { it.key != key } }
+        onChange?.invoke(null)
+    }
+    fun clearAll() { dismissed += appNotes.map { it.key }; appNotes = emptyList(); mine = emptyList(); save(); onChange?.invoke(null) }
 
     internal fun connected(ctx: Context, all: List<StatusBarNotification>) {
-        val list = all.mapNotNull { note(ctx, it) }.sortedByDescending { it.time }
-        main.post { notes = list.filter { it.key !in dismissed }; onChange?.invoke(null) }
+        val list = all.mapNotNull { note(ctx, it) }
+        main.post { appNotes = list.filter { it.key !in dismissed }; onChange?.invoke(null) }
     }
-    internal fun disconnected() { main.post { notes = emptyList(); onChange?.invoke(null) } }
+    internal fun disconnected() { main.post { appNotes = emptyList(); onChange?.invoke(null) } }
     internal fun posted(ctx: Context, sbn: StatusBarNotification) {
         val n = note(ctx, sbn) ?: return
         main.post {
-            val fresh = notes.none { it.key == n.key && it.title == n.title && it.text == n.text }
+            val fresh = appNotes.none { it.key == n.key && it.title == n.title && it.text == n.text }
             dismissed -= n.key
-            notes = (listOf(n) + notes.filter { it.key != n.key }).take(30)
-            if (fresh) unread++
+            appNotes = (listOf(n) + appNotes.filter { it.key != n.key }).take(30)
             onChange?.invoke(if (fresh) n else null)
         }
     }
-    internal fun removed(key: String) { main.post { if (notes.any { it.key == key }) { notes = notes.filter { it.key != key }; onChange?.invoke(null) } } }
+    internal fun removed(key: String) { main.post { if (appNotes.any { it.key == key }) { appNotes = appNotes.filter { it.key != key }; onChange?.invoke(null) } } }
 
     /**
      * Only what is worth seeing on a TV: from an app you can open, finished (not ongoing or in progress), with a title or
@@ -75,7 +129,7 @@ object NotificationHub {
         if (pkg == ctx.packageName || sbn.isOngoing || n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return null
         if (n.flags and Notification.FLAG_FOREGROUND_SERVICE != 0) return null
         val test = pkg == "com.android.shell" && sbn.tag?.startsWith("epple-test") == true    // adb shell cmd notification post, for testing
-        if (!test && (n.category in SKIP_CATEGORIES || SYSTEM.containsMatchIn(pkg))) return null
+        if (!test && (n.category in SKIP_CATEGORIES || SYSTEM_PKGS.containsMatchIn(pkg))) return null
         val pm = ctx.packageManager
         if (!test && pm.getLeanbackLaunchIntentForPackage(pkg) == null && pm.getLaunchIntentForPackage(pkg) == null) return null
         val e = n.extras
@@ -93,5 +147,5 @@ object NotificationHub {
 
     private val SKIP_CATEGORIES = setOf(Notification.CATEGORY_TRANSPORT, Notification.CATEGORY_SERVICE, Notification.CATEGORY_PROGRESS,
         Notification.CATEGORY_SYSTEM, Notification.CATEGORY_STATUS, Notification.CATEGORY_RECOMMENDATION)
-    private val SYSTEM = Regex("^(android|com\\.android\\.|com\\.google\\.android\\.(tvlauncher|apps\\.tv\\.launcherx|tungsten|tv\\.)|com\\.tcl\\.|com\\.mediatek\\.)")
+    private val SYSTEM_PKGS = Regex("^(android|com\\.android\\.|com\\.google\\.android\\.(tvlauncher|apps\\.tv\\.launcherx|tungsten|tv\\.)|com\\.tcl\\.|com\\.mediatek\\.)")
 }

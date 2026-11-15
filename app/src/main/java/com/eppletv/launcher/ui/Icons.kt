@@ -30,6 +30,8 @@ internal object EppleIcons {
     // Control Center.
     const val POWER = 23; const val WIFI = 24; const val INPUT = 25; const val VOLUME = 26; const val MOON = 27; const val BLUETOOTH = 28
     const val SLIDERS = 29; const val BELL = 30
+    // Notifications.
+    const val DOWNLOAD = 31; const val WIFI_OFF = 32
 
     const val STROKE = 2.1f
     private val path = Path(); private val q = Path()
@@ -154,6 +156,17 @@ internal object EppleIcons {
             SLIDERS -> {
                 line(3.5f, 7f, 20.5f, 7f); line(3.5f, 12f, 20.5f, 12f); line(3.5f, 17f, 20.5f, 17f)
                 c.drawCircle(15.5f, 7f, 2.4f, fill); c.drawCircle(8.5f, 12f, 2.4f, fill); c.drawCircle(13.5f, 17f, 2.4f, fill)
+            }
+            DOWNLOAD -> {
+                rr(3.4f, 3.4f, 20.6f, 20.6f, 3f)
+                line(12f, 7.4f, 12f, 14.6f); path.moveTo(8.8f, 11.4f); path.lineTo(12f, 14.6f); path.lineTo(15.2f, 11.4f); c.drawPath(path, p)
+                rr(7.4f, 16.6f, 16.6f, 18.4f, 0.9f, fill)
+            }
+            WIFI_OFF -> {
+                val a = p.alpha; p.alpha = (a * 0.45f).toInt()
+                for (rad in floatArrayOf(8.4f, 12.6f)) { r.set(12f - rad, 19f - rad, 12f + rad, 19f + rad); c.drawArc(r, 225f, 90f, false, p) }
+                p.alpha = a; line(4.2f, 4.2f, 19.8f, 19.8f)
+                c.drawCircle(12f, 19f, 1.7f, fill)
             }
             BELL -> {
                 path.moveTo(5.5f, 16.5f); path.lineTo(18.5f, 16.5f)

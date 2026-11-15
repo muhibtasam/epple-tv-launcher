@@ -220,7 +220,12 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
         // Control Center sits under the clock badge (which stays bright above its dim) and under menus and setup.
         tv = com.eppletv.launcher.system.TvControl(this)
-        cc = ControlCenter(this, l, clock, hero.backdrop)
+        NotificationHub.init(this)
+        Watchers.startWifi(this, prefs)
+        cc = ControlCenter(this, l, clock, hero.backdrop) { url, cb -> content.thumb(url, cb) }
+        cc.onOpenNote = { n -> cc.hide(); openNote(n) }
+        cc.onDismissNote = { n -> NotificationHub.dismiss(n.key) }
+        cc.onClearAll = { NotificationHub.clearAll() }
         root.addView(cc.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         buildControlCenter()
         cc.onTop = { pill.part = 1; pill.requestFocus() }
@@ -237,6 +242,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         root.addView(banner, FrameLayout.LayoutParams(l.px(600), WRAP_CONTENT, Gravity.TOP or Gravity.END).apply { topMargin = l.px(132); rightMargin = l.px(64) })
         NotificationHub.onChange = { n ->
             pill.dot = NotificationHub.unread > 0
+            if (cc.open) cc.changed()
             if (n != null && resumed && !setup.active && !saver.showing) banner.show(n)
             if (n == null) (screens[SETTINGS] as? SettingsScreen)?.show()      // "Allowed" once the TV connects the reader
         }
@@ -674,6 +680,9 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         // Back from something opened from here: what was watched moves to the front of Continue Watching (that row only).
         if (com.eppletv.launcher.content.Recency.returned(this) != null && ::feed.isInitialized) feed.refreshContinue()
         if (::setup.isInitialized) setup.refresh()
+        // Epple TV's own notes: a new release, new episodes of followed shows (each at most once a day).
+        Watchers.checkUpdate(this, content, prefs, BuildConfig.VERSION_NAME)
+        Watchers.checkFollowed(this, content, catalog, user, prefs)
         if (::setup.isInitialized && setup.done && !askedListings()) askListings()
         refreshChannels()
     }
@@ -788,8 +797,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private fun buildControlCenter() {
         fun act(a: () -> Unit) = { cc.hide(); a() }
         cc.build(listOf(
-            ControlCenter.Item(EppleIcons.POWER, "Standby", big = true) { cc.hide(); content.run({ tv.standby() ?: "" }) { e -> if (!e.isNullOrEmpty()) toast(e) } },
             ControlCenter.Item(EppleIcons.WIFI, "Wi-Fi", action = act { open(Intent(Settings.ACTION_WIFI_SETTINGS), "Wi-Fi") }),
+            ControlCenter.Item(EppleIcons.POWER, "Standby") { cc.hide(); content.run({ tv.standby() ?: "" }) { e -> if (!e.isNullOrEmpty()) toast(e) } },
             ControlCenter.Item(EppleIcons.INPUT, "Inputs", action = act { inputsMenu() }),
             ControlCenter.Item(EppleIcons.VOLUME, "Volume") {
                 getSystemService(android.media.AudioManager::class.java)?.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,
@@ -799,17 +808,28 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             ControlCenter.Item(EppleIcons.MOON, "Sleep Timer") { cycleSleep() },
             ControlCenter.Item(EppleIcons.PICTURE, "Screensaver", round = true, action = act { startSaver() }),
             ControlCenter.Item(EppleIcons.BLUETOOTH, "Bluetooth & Accessories", round = true, action = act { open(Intent(Settings.ACTION_BLUETOOTH_SETTINGS), "Accessories") }),
-            ControlCenter.Item(EppleIcons.BELL, "Notifications", round = true, action = act { notificationsMenu() }),
             ControlCenter.Item(EppleIcons.SETTINGS, "Epple TV Settings", round = true, action = act { goTab(SETTINGS) }),
             ControlCenter.Item(EppleIcons.SLIDERS, "TV Settings", round = true, action = act { open(Intent(Settings.ACTION_SETTINGS), "Settings") }),
         ))
-        ccWifi = cc.tiles[1]; ccInputs = cc.tiles[2]; ccVolume = cc.tiles[3]; ccSleep = cc.tiles[4]
+        ccWifi = cc.tiles[0]; ccInputs = cc.tiles[2]; ccVolume = cc.tiles[3]; ccSleep = cc.tiles[4]
     }
 
     private lateinit var banner: NotifBanner
 
     /** Opens a notification as its app intended (its own tap action), else the app itself. */
     private fun openNote(n: NotificationHub.Note) {
+        // Epple TV's own notes stay (read) and do what they are about.
+        if (n.own) {
+            NotificationHub.markRead(n.key)
+            val a = n.action.orEmpty()
+            when {
+                a == "wifi" -> open(Intent(Settings.ACTION_WIFI_SETTINGS), "Wi-Fi")
+                a.startsWith("update:") -> Watchers.install(this, n.key, a.removePrefix("update:"))
+                a.startsWith("details:") -> (user.items(UserLibrary.Kind.WATCHLIST) + user.items(UserLibrary.Kind.FAVOURITES))
+                    .firstOrNull { it.id == a.removePrefix("details:") }?.let { details(it) } ?: toast(n.title)
+            }
+            return
+        }
         NotificationHub.dismiss(n.key)
         val ok = try { n.intent?.send(); n.intent != null } catch (_: Exception) { false }
         if (!ok) apps.firstOrNull { it.packageName == n.pkg }?.let { launch(it) } ?: toast(n.app)
@@ -837,6 +857,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     private fun openControlCenter() {
         if (cc.open) return
+        cc.emptyText = if (NotificationHub.allowed(this)) "No notifications" else "No notifications.\nOther apps' notifications are off: Settings > Notifications."
         ccRefresh()
         cc.show { restoreFocus() }
     }

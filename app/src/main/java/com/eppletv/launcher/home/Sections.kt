@@ -467,6 +467,11 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         row("Notifications", "Shows other apps' notifications in Epple TV: a short popup at the top right (OK opens it, Back dismisses it), " +
             "a dot on the clock and the list in Control Center. They stay on this TV, in memory only.", {
             if (com.eppletv.launcher.system.NotificationHub.allowed(nav.ctx)) "Allowed" else "Not allowed" }) { nav.allowNotifications() }
+        choice(Prefs.NOTIFY_WIFI, "A note in Control Center when the TV loses its network for more than 20 seconds, and when it is back.")
+        choice(Prefs.NOTIFY_UPDATES, "Checks once a day for a new Epple TV release (GitHub Releases) and offers to install it.")
+        choice(Prefs.NOTIFY_FOLLOWED, "Checks once a day the shows in your Watchlist and Favourites for new seasons and episodes (TMDB, so alerts can trail a release by a few hours).")
+        choice(Prefs.NOTIFY_SEASONS, "Followed shows: a note when a new season starts.")
+        choice(Prefs.NOTIFY_EPISODES, "Followed shows: a note for each new episode.")
         row("TV listings", "Lets Epple TV read what your apps publish to Android TV: Prime Video's own rows and Continue Watching, as Google TV shows them. Nothing leaves the TV.", {
             if (com.eppletv.launcher.content.TvListings.allowed(nav.ctx)) "Allowed" else "Not allowed" }) { nav.askListings() }
         row("Indian languages", "The Indian languages included in Movies, TV Shows and the top row's showcases. Select to choose.", {

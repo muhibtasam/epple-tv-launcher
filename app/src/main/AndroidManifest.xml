@@ -5,6 +5,8 @@
     <!-- Only used to fetch content lists and artwork for the hero area. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Installing a downloaded Epple TV update (the system installer still asks the user). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- What streaming apps publish to Android TV: Prime Video's own rows and the system Watch Next list (Continue Watching). -->
     <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
     <!-- Apps > hold OK > Uninstall: asks the system to show its own uninstall confirmation. -->

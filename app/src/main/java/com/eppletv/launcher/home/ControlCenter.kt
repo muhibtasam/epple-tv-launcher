@@ -6,6 +6,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import com.eppletv.launcher.ui.Txt
+import com.eppletv.launcher.ui.style
 import android.view.KeyEvent
 import android.view.View
 import android.widget.FrameLayout
@@ -22,7 +24,7 @@ import com.eppletv.launcher.ui.Type
  */
 @SuppressLint("ViewConstructor")
 class CcTile(ctx: Context, private val l: Layout, private val clock: FrameClock, backdrop: Backdrop, private val glyph: Int,
-             val title: String, private val big: Boolean, private val round: Boolean) : FrameLayout(ctx), FrameClock.Tick {
+             val title: String, private val big: Boolean, val round: Boolean) : FrameLayout(ctx), FrameClock.Tick {
     private val f = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val gs = Paint(Paint.ANTI_ALIAS_FLAG); private val gf = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -87,11 +89,15 @@ class CcTile(ctx: Context, private val l: Layout, private val clock: FrameClock,
 }
 
 /**
- * Control Center, opened from the clock and profile badge (or the remote's Menu button): a frosted panel under the
- * badge with Standby, Wi-Fi, Inputs, Volume and Sleep Timer tiles and a row of round buttons. D-pad movement is
- * geometric (the nearest control in the pressed direction); Back or Menu closes it.
+ * Control Center (design B, Split Hub), opened from the clock and profile badge (or the remote's Menu button): a glass
+ * panel under the badge. Left, the quick controls (Wi-Fi, Standby, Inputs, Volume, Sleep Timer tiles and four round
+ * buttons); right, the notifications with category tabs and Clear All. The focused notification opens up with its
+ * artwork and details; OK opens it, holding OK dismisses it. D-pad movement is geometric (the nearest control in the
+ * pressed direction) across both sides; Back or Menu closes it.
  */
-class ControlCenter(ctx: Context, private val l: Layout, private val clock: FrameClock, backdrop: Backdrop) : FrameClock.Tick {
+class ControlCenter(ctx: Context, private val l: Layout, private val clock: FrameClock, backdrop: Backdrop,
+                    /** Artwork for content notes, from the shared image cache. */
+                    private val art: (String, (android.graphics.Bitmap?) -> Unit) -> Unit) : FrameClock.Tick {
     class Item(val glyph: Int, val title: String, val big: Boolean = false, val round: Boolean = false, val action: () -> Unit)
 
     val view = FrameLayout(ctx).apply { visibility = View.GONE; clipChildren = false; isClickable = true }
@@ -102,35 +108,116 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
     var open = false; private set
     private var onClosed: (() -> Unit)? = null
     private val backdrop = backdrop
+    private val W = l.px(1240); private val H = l.px(800); private val pad = l.px(36)
+    private val leftW = l.px(520); private val rightX = pad + leftW + l.px(56); private val rightW = W - rightX - pad
+
+    // Notifications side.
+    private val I = com.eppletv.launcher.ui.EppleIcons
+    private val tabs = listOf("All" to I.BELL, "Content" to I.TV, "System" to I.SETTINGS, "Updates" to I.DOWNLOAD).mapIndexed { i, (t, ic) ->
+        com.eppletv.launcher.ui.Pill(ctx, t, l.pxf(22f), l.pxf(30f), l.px(16), clock, 0x00FFFFFF, Colors.WHITE, 0.03f).apply {
+            icon(ic, l.px(24), l.px(8)); setOnClickListener { category = i } } }
+    private val clear = com.eppletv.launcher.ui.Pill(ctx, "Clear All", l.pxf(22f), l.pxf(30f), l.px(20), clock, Colors.FILL, Colors.WHITE, 0.03f).apply {
+        icon(I.TRASH, l.px(26), l.px(10)); setOnClickListener { onClearAll?.invoke() } }
+    private val listBox = FrameLayout(ctx).apply { clipChildren = true }
+    private val list = android.widget.LinearLayout(ctx).apply { orientation = android.widget.LinearLayout.VERTICAL }
+    private val empty = android.widget.TextView(ctx).apply {
+        style(Txt.META, l.u, Colors.TEXT_DIM); gravity = android.view.Gravity.CENTER
+        setCompoundDrawablesRelative(null, com.eppletv.launcher.ui.IconDrawable(I.BELL, l.px(64), 0f).apply { setBounds(0, 0, l.px(64), l.px(64)); color = Colors.TEXT_DIM }, null, null)
+        compoundDrawablePadding = l.px(16) }
+    private val rows = ArrayList<NoteRow>()
+    var onOpenNote: ((com.eppletv.launcher.system.NotificationHub.Note) -> Unit)? = null
+    var onDismissNote: ((com.eppletv.launcher.system.NotificationHub.Note) -> Unit)? = null
+    var onClearAll: (() -> Unit)? = null
+    /** Text for the empty list (e.g. when other apps' notifications aren't allowed). */
+    var emptyText = "No notifications"
+    private var category = 0
+        set(v) { field = v; tabs.forEachIndexed { i, t -> t.selectedState = i == v }; refresh() }
 
     init {
         view.addView(dim, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-        view.addView(panel, FrameLayout.LayoutParams(l.px(600), l.px(400), android.view.Gravity.TOP or android.view.Gravity.END).apply { topMargin = l.px(132); rightMargin = l.px(64) })
+        view.addView(panel, FrameLayout.LayoutParams(W, H, android.view.Gravity.TOP or android.view.Gravity.END).apply { topMargin = l.px(124); rightMargin = l.px(64) })
+        panel.addView(TabGlass(ctx, l, backdrop, l.pxf(44f)), FrameLayout.LayoutParams(W, H))
+        panel.addView(android.widget.TextView(ctx).apply { style(Txt.TITLE, l.u); text = "Control Center" },
+            FrameLayout.LayoutParams(leftW, l.px(56)).apply { leftMargin = pad; topMargin = pad })
+        panel.addView(View(ctx).apply { setBackgroundColor(0x24FFFFFF) }, FrameLayout.LayoutParams(l.px(1).coerceAtLeast(1), H - 2 * pad).apply { leftMargin = pad + leftW + l.px(28); topMargin = pad })
+        var x = rightX
+        for (t in tabs) { val w = (t.paint.measureText(t.text.toString()) + l.px(24 + 8 + 32 + 4)).toInt()
+            panel.addView(t, FrameLayout.LayoutParams(w, l.px(60)).apply { leftMargin = x; topMargin = pad }); x += w + l.px(6) }
+        val cw = (clear.paint.measureText("Clear All") + l.px(26 + 10 + 40)).toInt()
+        panel.addView(clear, FrameLayout.LayoutParams(cw, l.px(60)).apply { leftMargin = rightX + rightW - cw; topMargin = H - pad - l.px(60) })
+        listBox.addView(list, FrameLayout.LayoutParams(rightW, FrameLayout.LayoutParams.WRAP_CONTENT))
+        listBox.addView(empty, FrameLayout.LayoutParams(rightW, FrameLayout.LayoutParams.MATCH_PARENT))
+        panel.addView(listBox, FrameLayout.LayoutParams(rightW, H - pad - l.px(84) - pad - l.px(76)).apply { leftMargin = rightX; topMargin = pad + l.px(84) })
+        tabs[0].selectedState = true
     }
 
-    /** Lays out the controls: Standby (tall) and four tiles in two columns, then up to five round buttons. */
+    /** Lays out the quick controls: Wi-Fi across the top, four tiles in two columns, then the round buttons. */
     fun build(items: List<Item>) {
-        panel.removeAllViews(); tiles.clear()
-        val tileW = l.px(292); val tileH = l.px(84); val gap = l.px(16)
-        val spots = listOf(0 to 0, 1 to 0, 1 to 1, 0 to 2, 1 to 2)          // (column, row) of the first five
-        var round = 0; var placed = 0
+        tiles.forEach { panel.removeView(it) }; tiles.clear()
+        val gap = l.px(16); val tileH = l.px(96); val half = (leftW - gap) / 2; val top = pad + l.px(84)
+        var placed = 0; var round = 0
         for (it in items) {
-            val t = CcTile(view.context, l, clock, backdrop, it.glyph, it.title, it.big, it.round)
+            val t = CcTile(view.context, l, clock, backdrop, it.glyph, it.title, false, it.round)
             t.setOnClickListener { _ -> it.action() }
-            val lp = if (it.round) {
-                val d = l.px(84); val step = (l.px(600) - 5 * d) / 4
-                FrameLayout.LayoutParams(d, d).apply { leftMargin = round++ * (d + step); topMargin = 3 * (tileH + gap) }
-            } else {
-                val (col, row) = spots[(placed++).coerceAtMost(4)]
-                FrameLayout.LayoutParams(tileW, if (it.big) 2 * tileH + gap else tileH).apply { leftMargin = col * (tileW + gap); topMargin = row * (tileH + gap) }
+            val lp = when {
+                it.round -> { val d = l.px(92); val step = (leftW - 4 * d) / 3
+                    FrameLayout.LayoutParams(d, d).apply { leftMargin = pad + round++ * (d + step); topMargin = top + 3 * (tileH + gap) + l.px(12) } }
+                placed == 0 -> { placed++; FrameLayout.LayoutParams(leftW, tileH).apply { leftMargin = pad; topMargin = top } }
+                else -> { val k = placed++ - 1
+                    FrameLayout.LayoutParams(half, tileH).apply { leftMargin = pad + (k % 2) * (half + gap); topMargin = top + (1 + k / 2) * (tileH + gap) } }
             }
             panel.addView(t, lp); tiles.add(t)
         }
+        // Each round button's name, under it.
+        for (t in tiles.filter { it.round }) panel.addView(android.widget.TextView(view.context).apply {
+            style(Txt.FOOT, l.u, Colors.TEXT_DIM); text = t.title; gravity = android.view.Gravity.CENTER; maxLines = 2 },
+            FrameLayout.LayoutParams(l.px(150), l.px(64)).apply {
+                val lp = t.layoutParams as FrameLayout.LayoutParams; leftMargin = lp.leftMargin + lp.width / 2 - l.px(75); topMargin = lp.topMargin + lp.height + l.px(10) })
+    }
+
+    /** Shows the notifications of the current category again (a note arrived, was read or dismissed). */
+    fun refresh() {
+        val focusedKey = rows.firstOrNull { it.hasFocus() }?.note?.key
+        val all = com.eppletv.launcher.system.NotificationHub.notes
+        val shown = when (category) { 1 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.CONTENT }
+            2 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.SYSTEM }
+            3 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.UPDATE }; else -> all }.take(20)
+        list.removeAllViews(); rows.clear()
+        for (n in shown) {
+            val r = NoteRow(view.context, l, n)
+            r.setOnClickListener { onOpenNote?.invoke(n) }
+            r.setOnLongClickListener { onDismissNote?.invoke(n); true }
+            r.onFocus = { place(r) }
+            n.art?.let { u -> art(u) { b -> if (b != null) r.picture = b } }
+            list.addView(r, android.widget.LinearLayout.LayoutParams(rightW, r.restH).apply { bottomMargin = l.px(10) }); rows.add(r)
+        }
+        empty.text = emptyText; empty.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
+        clear.alpha = if (all.isEmpty()) 0.5f else 1f
+        list.translationY = 0f
+        if (open) rows.firstOrNull { it.note.key == focusedKey }?.requestFocus() ?: run { if (focusedKey != null) (rows.firstOrNull() ?: tabs[category]).requestFocus() }
+    }
+
+    /** The notes changed: the list is rebuilt only if which notes it shows changed; otherwise rows just redraw. */
+    fun changed() {
+        val all = com.eppletv.launcher.system.NotificationHub.notes
+        val keys = when (category) { 1 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.CONTENT }
+            2 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.SYSTEM }
+            3 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.UPDATE }; else -> all }.take(20).map { it.key }
+        if (keys == rows.map { it.note.key }) rows.forEach { it.invalidate() } else refresh()
+    }
+
+    /** Keeps the focused row inside the list's window. */
+    private fun place(r: NoteRow) {
+        val box = listBox.height; if (box == 0) return
+        val top = r.top + list.translationY; val bottom = top + r.height
+        if (bottom > box) list.translationY -= bottom - box
+        if (top < 0) list.translationY -= top
     }
 
     fun show(closed: () -> Unit) {
         onClosed = closed; open = true
         view.visibility = View.VISIBLE
+        refresh()
         p.target = 1f; clock.add(this)
         tiles.firstOrNull()?.requestFocus()
     }
@@ -144,6 +231,8 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
     /** Up from the top row (the profile orb above the panel takes the focus). */
     var onTop: (() -> Unit)? = null
 
+    private fun focusables(): List<View> = tiles + tabs + clear + rows
+
     /** D-pad inside the panel; returns true when handled. */
     fun key(e: KeyEvent): Boolean {
         if (e.action != KeyEvent.ACTION_DOWN) return true
@@ -151,17 +240,34 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
         val dy = when (e.keyCode) { KeyEvent.KEYCODE_DPAD_UP -> -1; KeyEvent.KEYCODE_DPAD_DOWN -> 1; else -> 0 }
         if (e.keyCode == KeyEvent.KEYCODE_BACK || e.keyCode == KeyEvent.KEYCODE_MENU) { if (e.repeatCount == 0) hide(); return true }
         if (dx == 0 && dy == 0) return false
-        val cur = tiles.firstOrNull { it.isFocused } ?: return true.also { tiles.firstOrNull()?.requestFocus() }
-        val next = nearest(cur, dx, dy)
+        val all = focusables()
+        val cur = all.firstOrNull { it.isFocused } ?: return true.also { tiles.firstOrNull()?.requestFocus() }
+        // Between the two sides: Right past the controls goes to the notifications, Left from them back to the last control.
+        if (cur is CcTile) lastTile = cur
+        if (dx > 0 && cur is CcTile && nearest(cur, tiles.filter { inLine(cur, it) }, dx, 0) == null) { (rows.firstOrNull() ?: tabs[category]).requestFocus(); return true }
+        if (dx < 0 && cur !is CcTile && (cur is NoteRow || cur === clear || cur === tabs[0])) { (lastTile ?: tiles.first()).requestFocus(); return true }
+        // Inside the list, Up and Down go row by row (and Up from the first row to the tabs).
+        if (cur is NoteRow && dx == 0) {
+            val i = rows.indexOf(cur) + dy
+            if (i in rows.indices) rows[i].requestFocus() else if (i < 0) tabs[category].requestFocus() else clear.requestFocus()
+            return true
+        }
+        val next = nearest(cur, all, dx, dy)
         if (next == null && dy < 0) onTop?.invoke() else next?.requestFocus()
         return true
     }
 
+    private var lastTile: CcTile? = null
+    private fun inLine(a: View, b: View) = kotlin.math.abs(center(a).second - center(b).second) < l.pxf(40f)
+
+    private val rc = android.graphics.Rect()
+    private fun center(v: View): Pair<Float, Float> { rc.set(0, 0, v.width, v.height); panel.offsetDescendantRectToMyCoords(v, rc); return rc.exactCenterX() to rc.exactCenterY() }
+
     /** The control whose centre is closest in the pressed direction, preferring ones in line with the current one. */
-    private fun nearest(from: CcTile, dx: Int, dy: Int): CcTile? {
-        val fx = from.left + from.width / 2f; val fy = from.top + from.height / 2f
-        return tiles.filter { it !== from }.mapNotNull { t ->
-            val tx = t.left + t.width / 2f; val ty = t.top + t.height / 2f
+    private fun nearest(from: View, all: List<View>, dx: Int, dy: Int): View? {
+        val (fx, fy) = center(from)
+        return all.filter { it !== from && it.visibility == View.VISIBLE && it.isShown }.mapNotNull { t ->
+            val (tx, ty) = center(t)
             val along = (tx - fx) * dx + (ty - fy) * dy
             if (along <= l.pxf(8f)) null else {
                 val across = if (dx != 0) kotlin.math.abs(ty - fy) else kotlin.math.abs(tx - fx)
@@ -173,9 +279,86 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
     override fun tick(dt: Float): Boolean {
         p.step(dt)
         val v = p.value.coerceIn(0f, 1f)
-        view.alpha = v; panel.translationY = -(1f - v) * l.pxf(24f); panel.scaleX = 0.96f + 0.04f * v; panel.scaleY = panel.scaleX
+        view.alpha = v; panel.translationY = -(1f - v) * l.pxf(24f); panel.scaleX = 0.97f + 0.03f * v; panel.scaleY = panel.scaleX
         panel.pivotX = panel.width.toFloat(); panel.pivotY = 0f
         if (p.atRest() && !open) view.visibility = View.GONE
         return !p.atRest()
+    }
+}
+
+/**
+ * One notification in Control Center: unread dot, artwork (or the category's Epple TV icon, or the app's own icon),
+ * title, time and text. Focused, it turns white and opens up: wide artwork, the full text and what OK and a long OK do.
+ */
+@SuppressLint("ViewConstructor")
+class NoteRow(ctx: Context, private val l: Layout, val note: com.eppletv.launcher.system.NotificationHub.Note) : View(ctx) {
+    private val Hub = com.eppletv.launcher.system.NotificationHub
+    private val I = com.eppletv.launcher.ui.EppleIcons
+    val restH = l.px(96); private val openH = l.px(236)
+    var picture: android.graphics.Bitmap? = null
+        set(v) { field = v; invalidate() }
+    var onFocus: (() -> Unit)? = null
+    private val bg = Paint(Paint.ANTI_ALIAS_FLAG); private val ic = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val img = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val t1 = android.text.TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(24f) * Type.scale; typeface = Type.of(700) }
+    private val t2 = android.text.TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(20f) * Type.scale; typeface = Type.of(500) }
+    private val r = RectF(); private val m = android.graphics.Matrix(); private val clip = Path()
+
+    init { isFocusable = true; isClickable = true; isLongClickable = true; contentDescription = "${note.app}: ${note.title}" }
+
+    override fun onFocusChanged(gain: Boolean, direction: Int, prev: android.graphics.Rect?) {
+        super.onFocusChanged(gain, direction, prev)
+        (layoutParams as? android.widget.LinearLayout.LayoutParams)?.let { it.height = if (gain) openH else restH; layoutParams = it }
+        if (gain) { Hub.markRead(note.key); post { onFocus?.invoke() } }
+        invalidate()
+    }
+
+    private fun ago(t: Long): String {
+        val d = (System.currentTimeMillis() - t) / 60000
+        return when { d < 1 -> "Now"; d < 60 -> "$d min"; d < 1440 -> "${d / 60} h"; else -> android.text.format.DateFormat.format("d MMM", t).toString() }
+    }
+
+    override fun onDraw(c: Canvas) {
+        val f = isFocused; val w = width.toFloat(); val h = height.toFloat()
+        val ink = if (f) Colors.INK else Colors.WHITE; val dim = if (f) 0xFF4A4E58.toInt() else 0xB8FFFFFF.toInt()
+        r.set(0f, 0f, w, h); bg.color = if (f) Colors.WHITE else 0x14FFFFFF; c.drawRoundRect(r, l.pxf(22f), l.pxf(22f), bg)
+        var x = l.pxf(18f)
+        // Unread: a dot at the edge.
+        if (!note.read) { bg.color = ink; c.drawCircle(x + l.pxf(5f), l.pxf(48f), l.pxf(5f), bg) }
+        x += l.pxf(20f)
+        val pic = picture ?: note.icon
+        val pw = if (f && picture != null) l.pxf(300f) else l.pxf(64f); val ph = if (f && picture != null) l.pxf(169f) else l.pxf(64f)
+        val py = if (f && picture != null) l.pxf(18f) else l.pxf(16f)
+        r.set(x, py, x + pw, py + ph)
+        if (pic != null) {
+            clip.reset(); clip.addRoundRect(r, l.pxf(14f), l.pxf(14f), Path.Direction.CW)
+            c.save(); c.clipPath(clip)
+            val s = maxOf(pw / pic.width, ph / pic.height); m.setScale(s, s); m.postTranslate(x + (pw - pic.width * s) / 2f, py + (ph - pic.height * s) / 2f)
+            c.drawBitmap(pic, m, img); c.restore()
+        } else {
+            bg.color = if (f) 0xFFECECF0.toInt() else 0x1FFFFFFF; c.drawCircle(r.centerX(), r.centerY(), pw / 2f, bg)
+            val icon = when { note.key == "wifi" && note.title.contains("disconnected") -> I.WIFI_OFF; note.key == "wifi" -> I.WIFI
+                note.cat == Hub.UPDATE -> I.DOWNLOAD; note.cat == Hub.CONTENT -> I.TV; else -> I.BELL }
+            ic.color = ink; I.draw(icon, c, r.centerX(), r.centerY(), l.pxf(30f), ic, 1f)
+        }
+        val tx = r.right + l.pxf(18f); val tw = w - tx - l.pxf(20f)
+        val time = ago(note.time)
+        t2.color = dim; val timeW = t2.measureText(time)
+        t1.color = ink; c.drawText(android.text.TextUtils.ellipsize(note.title, t1, tw - timeW - l.pxf(14f), android.text.TextUtils.TruncateAt.END).toString(), tx, l.pxf(44f), t1)
+        c.drawText(time, w - l.pxf(20f) - timeW, l.pxf(44f), t2)
+        val sub = (if (note.own) "" else note.app + "  ·  ") + note.text
+        if (!f) { c.drawText(android.text.TextUtils.ellipsize(sub, t2, tw, android.text.TextUtils.TruncateAt.END).toString(), tx, l.pxf(76f), t2); return }
+        // Focused: the whole text (up to four lines), then what the keys do.
+        val sl = android.text.StaticLayout.Builder.obtain(sub, 0, sub.length, t2, tw.toInt()).setMaxLines(4).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
+        c.save(); c.translate(tx, l.pxf(60f)); sl.draw(c); c.restore()
+        var cx = tx; val cy = h - l.pxf(46f)
+        for ((icon, label) in listOf(I.PLAY to "Open", I.REMOVE to "Hold OK to dismiss")) {
+            val lw = t2.measureText(label) + l.pxf(30f + 10f + 28f)
+            r.set(cx, cy - l.pxf(20f), cx + lw, cy + l.pxf(20f)); bg.color = if (icon == I.PLAY) Colors.INK else 0xFFECECF0.toInt(); c.drawRoundRect(r, l.pxf(10f), l.pxf(10f), bg)
+            val col = if (icon == I.PLAY) Colors.WHITE else Colors.INK
+            ic.color = col; I.draw(icon, c, cx + l.pxf(14f + 13f), cy, l.pxf(26f), ic, 1f)
+            t2.color = col; c.drawText(label, cx + l.pxf(14f + 26f + 10f), cy - (t2.descent() + t2.ascent()) / 2f, t2)
+            cx += lw + l.pxf(12f)
+        }
     }
 }

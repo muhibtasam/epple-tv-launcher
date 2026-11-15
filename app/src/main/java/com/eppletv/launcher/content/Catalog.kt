@@ -92,6 +92,9 @@ class Catalog(private val net: Net, private val key_: () -> String, private val 
     }
 
     /** Episodes of one season as items "ep:<tv>:<s>:<e>" with their still frames. */
+    /** A show's TMDB record (its latest aired episode, artwork); cached 12 hours. */
+    fun show(tvId: Int): JSONObject = get("show-$tvId", 12, "tv/$tvId")
+
     fun season(tvId: Int, n: Int): List<ContentItem> {
         val eps = get("season-$tvId-$n", 24, "tv/$tvId/season/$n").optJSONArray("episodes") ?: JSONArray()
         return (0 until eps.length()).map { eps.getJSONObject(it) }.map { e ->
