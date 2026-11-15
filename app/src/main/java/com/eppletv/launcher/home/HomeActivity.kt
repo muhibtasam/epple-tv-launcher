@@ -806,7 +806,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
                 if (am == null || am.isVolumeFixed) { toast("This TV's volume can't be changed from here. Use the remote's volume buttons."); return@Item }
                 ccVolume.adjusting = !ccVolume.adjusting
                 if (ccVolume.adjusting) am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_SAME, android.media.AudioManager.FLAG_SHOW_UI)
-                ccRefresh()
+                volumeSub()
             },
             ControlCenter.Item(EppleIcons.MOON, "Sleep Timer") { cycleSleep() },
             ControlCenter.Item(EppleIcons.PICTURE, "Screensaver", round = true, action = act { startSaver() }),
@@ -816,7 +816,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         ))
         ccWifi = cc.tiles[0]; ccInputs = cc.tiles[2]; ccVolume = cc.tiles[3]; ccSleep = cc.tiles[4]
         ccVolume.adjust = { d -> changeVolume(d) }
-        cc.tiles.firstOrNull { it.title == "Epple TV Settings" }?.art = getDrawable(R.drawable.ic_launcher)
+        cc.tiles.firstOrNull { it.title == "Epple TV Settings" }?.art = getDrawable(R.drawable.logo_mark)?.mutate()
     }
 
     /** One step of the TV's volume (2 % of its range), with the system's own volume bar; raising unmutes. */
@@ -828,7 +828,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             if (d > 0 && am.isStreamMute(s)) am.adjustStreamVolume(s, android.media.AudioManager.ADJUST_UNMUTE, 0)
             am.setStreamVolume(s, (am.getStreamVolume(s) + d * step).coerceIn(0, max), android.media.AudioManager.FLAG_SHOW_UI)
         } catch (_: SecurityException) { toast("The TV didn't allow changing the volume.") }
-        ccRefresh()
+        volumeSub()
     }
 
     /**
@@ -900,16 +900,31 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private fun ccRefresh() {
         val cm = getSystemService(android.net.ConnectivityManager::class.java)
         val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+        val wifi = caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+        // The last known network name stays shown while it is looked up again (no "Connected" -> name flicker).
         ccWifi.sub = when {
             caps == null -> "Not connected"
             caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
-            else -> "Connected"
+            else -> wifiName ?: "Connected"
         }
-        if (caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true) content.run({ tv.wifiName() ?: "" }) { n -> if (!n.isNullOrEmpty()) ccWifi.sub = n }
+        if (!wifi) wifiName = null
+        else if (!wifiLookup) { wifiLookup = true
+            content.run({ tv.wifiName() ?: "" }) { n -> wifiLookup = false; if (!n.isNullOrEmpty()) { wifiName = n; ccWifi.sub = n } } }
         val n = tvInputs().size
         ccInputs.sub = if (n == 0) "TV inputs" else "$n ${if (n == 1) "input" else "inputs"}"
-        val am = getSystemService(android.media.AudioManager::class.java)
-        ccVolume.sub = am?.let { if (it.isStreamMute(android.media.AudioManager.STREAM_MUSIC)) "Muted" else "${100 * it.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) / it.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).coerceAtLeast(1)} %" } ?: ""
+        volumeSub()
+        sleepSub()
+    }
+    private var wifiName: String? = null
+    private var wifiLookup = false
+
+    /** The Volume tile's status line alone (a volume change touches nothing else in Control Center). */
+    private fun volumeSub() {
+        val am = getSystemService(android.media.AudioManager::class.java) ?: return
+        val s = android.media.AudioManager.STREAM_MUSIC
+        ccVolume.sub = if (am.isStreamMute(s)) "Muted" else "${100 * am.getStreamVolume(s) / am.getStreamMaxVolume(s).coerceAtLeast(1)} %"
+    }
+    private fun sleepSub() {
         ccSleep.sub = if (sleepAt == 0L) "Off" else "${((sleepAt - android.os.SystemClock.elapsedRealtime()) / 60_000L + 1).coerceAtLeast(1)} min left"
     }
 
@@ -920,7 +935,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         main.removeCallbacks(sleepRun)
         sleepAt = if (next == 0L) 0L else android.os.SystemClock.elapsedRealtime() + next * 60_000L
         if (sleepAt != 0L) main.postAtTime(sleepRun, sleepAt)
-        ccRefresh()
+        sleepSub()
     }
 
     private fun tvInputs(): List<android.media.tv.TvInputInfo> = try {
@@ -1007,7 +1022,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
                 dy > 0 && page.atTop() -> enterFeed()
                 !page.move(dx, dy) -> if (hero.hasItems) enterHero() else enterHint()
             }
-            Zone.HERO -> if (dx != 0) hero.step(dx, wrap = true) else if (dy < 0) enterHint() else enterContent()
+            Zone.HERO -> if (dx != 0) hero.nav(dx) else { hero.leave(); if (dy < 0) enterHint() else enterContent() }
             // The clock: Right moves to the profile orb, Left back to Control Center and then to the menu; Down leaves.
             // The clock (top right): Right selects the profile orb, Left goes back to Control Center, then to the menu's hint;
             // Down goes into the page below it.

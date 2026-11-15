@@ -104,14 +104,25 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
         return false
     }
 
+    /** Tiles of the current row focused since the row was entered (columns). */
+    private val visited = HashSet<Int>()
+
     /** Returns false only when moving up from the top row. */
     fun move(dx: Int, dy: Int): Boolean {
         if (tile() == null) return dy >= 0
-        // Rows go round at both ends: Left on the first tile reaches the last one, Right on the last the first.
-        if (dx != 0) { val n = rowSize(r); if (n > 1) { c = ((c + dx) % n + n) % n; focusCurrent() }; return true }
+        // A row stops at its ends until each of its tiles has been focused in this visit of the row; then it goes
+        // round (Left on the first tile reaches the last, Right on the last the first). Changing rows ends the visit.
+        if (dx != 0) {
+            val n = rowSize(r); if (n < 2) return true
+            visited.add(c)
+            val next = c + dx
+            c = if (visited.size >= n) ((next % n) + n) % n else next.takeIf { it in 0 until n } ?: return true
+            visited.add(c); focusCurrent(); return true
+        }
         val nr = r + dy
-        if (nr < 0 || (nr == 0 && dock.isEmpty())) return false
+        if (nr < 0 || (nr == 0 && dock.isEmpty())) { visited.clear(); if (r == 0) { c = 0; first = 0; place() }; return false }   // left the page: the top row starts again at its first tile
         if (nr >= rowCount) return true
+        visited.clear()
         val col = if (r == 0) c - first else c            // keep the same on-screen column
         r = nr
         c = (if (r == 0) first + col else col).coerceIn(0, rowSize(r) - 1)
@@ -316,6 +327,13 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         layers.forEach { it.box.findViewWithTag<View>(CHIP)?.let { v -> v.animate().cancel(); if (!on) v.alpha = 0f } }
         if (on) textBox.postDelayed(showChip, 280)
     }
+
+    /** Titles shown while the remote was on the showcase (its own rotation doesn't count). */
+    private val seen = HashSet<Int>()
+    /** Left/Right from the remote: stops at the ends until every title has been seen in this visit, then goes round. */
+    fun nav(d: Int): Boolean { seen.add(index); val ok = step(d, wrap = seen.size >= items.size); seen.add(index); return ok }
+    /** The remote left the showcase: its visit ends. */
+    fun leave() = seen.clear()
 
     fun step(d: Int, wrap: Boolean = false): Boolean {
         if (items.size < 2) return false

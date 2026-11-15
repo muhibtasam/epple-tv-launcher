@@ -395,21 +395,39 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         status.visibility = if (items.isEmpty() && emptyText != null) VISIBLE else GONE
         visibility = if (items.isEmpty() && emptyText == null) GONE else VISIBLE
         col = col.coerceIn(0, max(0, cards.size - 1))
+        // Titles that left the row leave the visited set; a new title means the loop waits until it is visited too.
+        visited.retainAll(cards.map { id(it) }.toSet()); loop = cards.size > 1 && cards.all { id(it) in visited }
         if (poster) { pt = col.toFloat(); ps.snapTo(pt); layoutPosters() }
         place(); ensureLoaded()
         if (focused) cards.getOrNull(col)?.requestFocus()
     }
 
-    /** Back to the first title, animated (the row was left for another one). */
+    // ---- the loop: a row is bounded (Left on the first title and Right on the last do nothing) until every one of its
+    // titles has been focused in this visit of the row; then it loops at both ends. Leaving the row ends the visit. ----
+    private val visited = HashSet<String>()
+    private var loop = false
+    private fun id(c: Card) = c.item?.id ?: System.identityHashCode(c).toString()
+    private fun visit() {
+        val c = cards.getOrNull(col) ?: return
+        visited.add(id(c))
+        if (!loop && cards.size > 1 && cards.all { id(it) in visited }) loop = true
+    }
+    /** Place of card [i] for the target [p]: in the loop's window when looping, else simply its distance. */
+    private fun pos(i: Int, p: Float) = if (loop) slot(i, p) else i - p
+
+    /** Back to the first title, animated (the row was left for another one); its visit ends. */
     fun rewind() {
         if (cards.isEmpty()) return
+        val shown = if (poster) pos(0, pt) + (pt - ps.value) else 0f       // where the first title is on screen now
+        visited.clear(); loop = false
         col = 0; first = 0
-        if (poster) { pt += slot(0, pt); clock.add(this) } else { sx.target = 0f; clock.add(this) }
+        if (poster) { pt = 0f; ps.snapTo(-shown); ps.target = 0f; clock.add(this) } else { sx.target = 0f; clock.add(this) }
         ensureLoaded()
     }
 
-    /** Back to the first title, without animation (the section was left). */
+    /** Back to the first title, without animation (the section was left); its visit ends. */
     fun reset() {
+        visited.clear(); loop = false
         col = 0; first = 0
         if (poster) { pt = 0f; ps.snapTo(0f); layoutPosters() } else { sx.snapTo(0f); strip.translationX = 0f }
         ensureLoaded()
@@ -440,29 +458,31 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         val lag = pt - ps.value
         for ((i, card) in cards.withIndex()) {
             val c = card as? Widening ?: continue
-            val d = slot(i, pt) + lag
+            val d = pos(i, pt) + lag
             val x = l.left + (pw + gap) * d + (ww - pw) * d.coerceIn(0f, 1f)
             val w = pw + (ww - pw) * (1f - kotlin.math.abs(d).coerceIn(0f, 1f))
             card.translationX = x - l.left
             c.shown = w
-            card.alpha = if (n < 2) 1f else ((d - (lo - 1f)).coerceIn(0f, 1f) * ((hi + 1f) - d).coerceIn(0f, 1f))
+            card.alpha = if (!loop || n < 2) 1f else ((d - (lo - 1f)).coerceIn(0f, 1f) * ((hi + 1f) - d).coerceIn(0f, 1f))
             card.visibility = if (i == col || (card.alpha > 0.01f && x < screen && x + w > -pw)) VISIBLE else INVISIBLE   // an invisible view can't take focus
         }
     }
 
     fun failed(text: String) { loaded = true; status.text = text; status.visibility = VISIBLE }
 
-    fun focus(): Boolean { val c = cards.getOrNull(col) ?: return false; c.visibility = VISIBLE; place(); c.requestFocus(); return true }
+    fun focus(): Boolean { val c = cards.getOrNull(col) ?: return false; visit(); c.visibility = VISIBLE; place(); c.requestFocus(); return true }
 
+    /** One title left or right; false (nothing happens) at an end of a row that doesn't loop yet. */
     fun move(dx: Int): Boolean {
-        if (poster) {
-            if (cards.size < 2) return false
-            pt += dx; col = ((Math.round(pt) % cards.size) + cards.size) % cards.size
-            focus(); return true
-        }
-        // Rows of cards wrap at both ends like the poster rows (Left on the first title reaches the last).
-        if (cards.size < 2) return cards.isNotEmpty() && dx != 0
-        col = ((col + dx) % cards.size + cards.size) % cards.size; focus(); return true
+        val n = cards.size
+        if (n < 2) return false
+        if (!loop) {
+            val next = col + dx
+            if (next !in 0 until n) return false
+            col = next; if (poster) pt = next.toFloat()
+        } else if (poster) { pt += dx; col = ((Math.round(pt) % n) + n) % n }
+        else col = ((col + dx) % n + n) % n
+        focus(); return true
     }
 
     private fun place() {
@@ -477,7 +497,7 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
             // The focus, one behind and the posters that fit after it; the rest give their artwork back.
             val ahead = ((l.pxf(1920f) - l.left) / (restPx + gapPx)).toInt() + 1
             for ((i, c) in cards.withIndex()) {
-                val d = slot(i, pt)
+                val d = pos(i, pt)
                 if (d >= -1f && d <= ahead) { if (!c.requested) { c.requested = true; ld(c) } } else if (d > ahead + 4) c.release()
             }
             return
@@ -545,8 +565,8 @@ class ShelfStack(ctx: Context, private val l: Layout, private val clock: FrameCl
         if (dx != 0) { if (current?.move(dx) == true) notifyFocus(); return true }
         var n = r + dy
         while (n in shelves.indices && !navigable(n)) n += dy
-        if (n !in shelves.indices) return dy > 0
-        current?.rewind()                                   // the row left behind goes back to its first title
+        if (n !in shelves.indices) { if (dy < 0) current?.rewind(); return dy > 0 }    // leaving the rows upwards ends the row's visit too
+        current?.rewind()                                   // the row left behind goes back to its first title (and stops looping)
         r = n; focus(); return true
     }
 

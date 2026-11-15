@@ -85,7 +85,8 @@ class CcTile(ctx: Context, private val l: Layout, private val clock: FrameClock,
     /** The tile's icon in the Epple TV style; a control is always "active", so its accent shows in full. */
     private fun icon(c: Canvas, x: Float, y: Float, size: Float, ink: Int) {
         val a = art
-        if (a != null) { val s = if (round) (height * 0.56f).toInt() else size.toInt(); a.setBounds((x - s / 2f).toInt(), (y - s / 2f).toInt(), (x + s / 2f).toInt(), (y + s / 2f).toInt()); a.draw(c); return }
+        // The app's logo mark (transparent, its own shading kept) takes the button's ink: white at rest, dark focused.
+        if (a != null) { val s = if (round) (height * 0.66f).toInt() else size.toInt(); a.setTint(ink); a.setBounds((x - s / 2f).toInt(), (y - s / 2f).toInt(), (x + s / 2f).toInt(), (y + s / 2f).toInt()); a.draw(c); return }
         gs.color = ink; EppleIcons.draw(glyph, c, x, y, size, gs, 1f)
     }
 
@@ -138,6 +139,10 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
         setCompoundDrawablesRelative(null, com.eppletv.launcher.ui.IconDrawable(I.BELL, l.px(64), 0f).apply { setBounds(0, 0, l.px(64), l.px(64)); color = Colors.TEXT_DIM }, null, null)
         compoundDrawablePadding = l.px(16) }
     private val rows = ArrayList<NoteRow>()
+    private val glass = TabGlass(ctx, l, backdrop, l.pxf(44f))
+    private val divider = View(ctx).apply { setBackgroundColor(0x24FFFFFF) }
+    /** The notifications side is shown (at least one notification); without any the panel is the controls alone. */
+    private var side = true
     var onOpenNote: ((com.eppletv.launcher.system.NotificationHub.Note) -> Unit)? = null
     var onDismissNote: ((com.eppletv.launcher.system.NotificationHub.Note) -> Unit)? = null
     var onClearAll: (() -> Unit)? = null
@@ -149,10 +154,10 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
     init {
         view.addView(dim, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         view.addView(panel, FrameLayout.LayoutParams(W, H, android.view.Gravity.TOP or android.view.Gravity.END).apply { topMargin = l.px(124); rightMargin = l.px(64) })
-        panel.addView(TabGlass(ctx, l, backdrop, l.pxf(44f)), FrameLayout.LayoutParams(W, H))
+        panel.addView(glass, FrameLayout.LayoutParams(W, H))
         panel.addView(android.widget.TextView(ctx).apply { style(Txt.TITLE, l.u); text = "Control Center" },
             FrameLayout.LayoutParams(leftW, l.px(56)).apply { leftMargin = pad; topMargin = pad })
-        panel.addView(View(ctx).apply { setBackgroundColor(0x24FFFFFF) }, FrameLayout.LayoutParams(l.px(1).coerceAtLeast(1), H - 2 * pad).apply { leftMargin = pad + leftW + l.px(28); topMargin = pad })
+        panel.addView(divider, FrameLayout.LayoutParams(l.px(1).coerceAtLeast(1), H - 2 * pad).apply { leftMargin = pad + leftW + l.px(28); topMargin = pad })
         var x = rightX
         for (t in tabs) { val w = (t.paint.measureText(t.text.toString()) + l.px(24 + 8 + 32 + 4)).toInt()
             panel.addView(t, FrameLayout.LayoutParams(w, l.px(60)).apply { leftMargin = x; topMargin = pad }); x += w + l.px(6) }
@@ -192,6 +197,13 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
     fun refresh() {
         val focusedKey = rows.firstOrNull { it.hasFocus() }?.note?.key
         val all = com.eppletv.launcher.system.NotificationHub.notes
+        if (all.isEmpty()) {
+            // No notifications at all: the panel is the quick controls alone (focus first goes back to a control).
+            if (open && (tabs + clear + rows).any { it.hasFocus() }) (lastTile ?: tiles.firstOrNull())?.requestFocus()
+            list.removeAllViews(); rows.clear(); list.translationY = 0f
+            showSide(false); return
+        }
+        showSide(true)
         val shown = when (category) { 1 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.CONTENT }
             2 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.SYSTEM }
             3 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.UPDATE }; else -> all }.take(20)
@@ -216,7 +228,21 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
         val keys = when (category) { 1 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.CONTENT }
             2 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.SYSTEM }
             3 -> all.filter { it.cat == com.eppletv.launcher.system.NotificationHub.UPDATE }; else -> all }.take(20).map { it.key }
-        if (keys == rows.map { it.note.key }) rows.forEach { it.invalidate() } else refresh()
+        if (side == all.isNotEmpty() && keys == rows.map { it.note.key }) rows.forEach { it.invalidate() } else refresh()
+    }
+
+    /** Shows or hides the whole notifications side; without it the panel narrows to the controls (still under the clock). */
+    private fun showSide(on: Boolean) {
+        if (side == on) return
+        side = on
+        val w = if (on) W else pad + leftW + pad
+        // Controls alone: the panel also ends just under the round buttons' names (no empty band at the bottom).
+        val bottom = tiles.maxOfOrNull { (it.layoutParams as FrameLayout.LayoutParams).let { lp -> lp.topMargin + lp.height + if (it.round) l.px(70) else 0 } } ?: H
+        val h = if (on) H else minOf(H, bottom + pad)
+        (panel.layoutParams as FrameLayout.LayoutParams).apply { width = w; height = h }; panel.requestLayout()
+        (glass.layoutParams as FrameLayout.LayoutParams).apply { width = w; height = h }; glass.requestLayout()
+        val v = if (on) View.VISIBLE else View.GONE
+        (tabs + clear + listOf(divider, listBox)).forEach { it.visibility = v }
     }
 
     /** Keeps the focused row inside the list's window. */
