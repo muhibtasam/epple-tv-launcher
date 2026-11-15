@@ -379,8 +379,8 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         if (poster) cards.forEach { c -> c.item?.id?.let { id -> old.getOrPut(id) { ArrayDeque() }.add(c) } }
         val focused = cards.getOrNull(col)?.hasFocus() == true
         strip.removeAllViews(); cards.clear()
-        // A loop needs enough cards to fill the screen: a short row repeats its titles (2 titles -> 2,2,2,...).
-        val items = if (poster && list.size in 2 until FILL) List(((FILL + list.size - 1) / list.size) * list.size) { list[it % list.size] } else list
+        // One card per title, never repeated: a short row loops over its own titles (no duplicate cards on screen).
+        val items = list
         items.forEachIndexed { i, it ->
             val kept = old[it.id]?.removeFirstOrNull()?.takeIf { k -> k.item?.imageUrl == it.imageUrl }
             val c = kept ?: if (cont) ContinueCard(context, l, clock) else if (poster) PosterCard(context, l, clock) else Card(context, l, clock, l.px(cw), l.px(ch), titled)
@@ -415,30 +415,38 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         ensureLoaded()
     }
 
-    /** Signed distance of card [i] from the focus position [p], wrapped so the loop has no ends (-1.5 ..< n-1.5). */
+    /** First slot of the loop's window: two cards behind the focus in a long row, one in a short one, none for two. */
+    private fun low(n: Int) = when { n >= 6 -> -2; n >= 3 -> -1; else -> 0 }
+
+    /**
+     * Slot of card [i] for the focus target [p] (an integer): its place in the loop's window low..low+n-1, so every
+     * title has exactly one place and the loop has no ends.
+     */
     private fun slot(i: Int, p: Float): Float {
-        val n = cards.size
-        var d = ((i - p) % n + n) % n
-        if (n > 2 && d > n - 1.5f) d -= n
-        return d
+        val n = cards.size; if (n == 0) return 0f
+        val lo = low(n)
+        return (((i - p - lo) % n + n) % n) + lo
     }
 
-    /** Places every poster card for the current position: x and width follow from its distance to the focus. */
+    /**
+     * Places every poster card. Each card's place is fixed by the target (so no card jumps across the row while it
+     * slides); the spring only shifts the whole window. A card entering at either end of the window fades in, so a
+     * wrap never shows a jump, a blank or a duplicate.
+     */
     private fun layoutPosters() {
         val pw = restPx; val ww = widePx; val gap = gapPx
         val screen = l.pxf(1920f)
+        val n = cards.size; val lo = low(n).toFloat(); val hi = lo + n - 1
+        val lag = pt - ps.value
         for ((i, card) in cards.withIndex()) {
             val c = card as? Widening ?: continue
-            val d = slot(i, ps.value)
+            val d = slot(i, pt) + lag
             val x = l.left + (pw + gap) * d + (ww - pw) * d.coerceIn(0f, 1f)
             val w = pw + (ww - pw) * (1f - kotlin.math.abs(d).coerceIn(0f, 1f))
             card.translationX = x - l.left
             c.shown = w
-            // The previous title peeks in on the left as usual, except a title that is only there because the row
-            // wraps: on the first title the left side stays empty (Left still goes round to the last title).
-            val wrapped = d < 0f && i > col
-            card.alpha = if (wrapped) 0f else 1f
-            card.visibility = if (i == col || (!wrapped && x < screen && x + w > -pw)) VISIBLE else INVISIBLE   // an invisible view can't take focus
+            card.alpha = if (n < 2) 1f else ((d - (lo - 1f)).coerceIn(0f, 1f) * ((hi + 1f) - d).coerceIn(0f, 1f))
+            card.visibility = if (i == col || (card.alpha > 0.01f && x < screen && x + w > -pw)) VISIBLE else INVISIBLE   // an invisible view can't take focus
         }
     }
 
@@ -488,7 +496,6 @@ class Shelf(ctx: Context, private val l: Layout, private val clock: FrameClock, 
         if (poster) { ps.step(dt); layoutPosters(); return !ps.atRest() }
         sx.step(dt); strip.translationX = sx.value; return !sx.atRest()
     }
-    private companion object { const val FILL = 10 }
 }
 
 /**

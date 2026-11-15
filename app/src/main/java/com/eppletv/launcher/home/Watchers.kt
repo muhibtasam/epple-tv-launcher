@@ -29,13 +29,20 @@ object Watchers {
     /** Where Epple TV's releases are published (GitHub Releases, read without a token: the repository must be public). */
     const val REPO = "muhibtasam/epple-tv-launcher"
     private const val DAY = 24 * 3600_000L
-    private val main = Handler(Looper.getMainLooper())
+    private val main by lazy { Handler(Looper.getMainLooper()) }
     private fun prefs(c: Context) = c.applicationContext.getSharedPreferences("watch", Context.MODE_PRIVATE)
+    private const val HOUR = 3600_000L
+    /**
+     * A daily check is due when the last one that succeeded is a day old. A start is remembered too: a check is never
+     * run twice at once, and one that failed (offline, TMDB or GitHub down) is tried again an hour later, not on every
+     * return to Home.
+     */
     private fun due(c: Context, k: String): Boolean {
         val p = prefs(c); val now = System.currentTimeMillis()
-        if (now - p.getLong(k, 0) < DAY) return false
-        p.edit().putLong(k, now).apply(); return true
+        if (now - p.getLong(k, 0) < DAY || now - p.getLong("$k:try", 0) < HOUR) return false
+        p.edit().putLong("$k:try", now).apply(); return true
     }
+    private fun done(c: Context, k: String) = prefs(c).edit().putLong(k, System.currentTimeMillis()).apply()
 
     // ---- Wi-Fi ----
     private var wifiOn = false
@@ -76,6 +83,7 @@ object Watchers {
         if (prefs.get(Prefs.NOTIFY_UPDATES) != 0 || !due(c, "update")) return
         content.run({ JSONObject(content.net.text("https://api.github.com/repos/$REPO/releases/latest", mapOf("Accept" to "application/vnd.github+json"))) }) { o ->
             if (o == null) { Log.i(TAG, "update check: no release readable at $REPO"); return@run }
+            done(c, "update")
             val tag = o.optString("tag_name").removePrefix("v")
             val apk = o.optJSONArray("assets")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.firstOrNull { it.optString("name").endsWith(".apk") } }
                 ?.optString("browser_download_url").orEmpty()
@@ -117,40 +125,91 @@ object Watchers {
         if (Build.VERSION.SDK_INT >= 33) c.applicationContext.registerReceiver(r, f, Context.RECEIVER_EXPORTED) else c.applicationContext.registerReceiver(r, f)
     }
 
-    // ---- followed shows ----
+    // ---- followed titles ----
+
+    enum class Change { NONE, SEASON, EPISODE }
+
+    /** What is new for a followed show whose last aired episode was [was] ("season:episode"; null on the first look). */
+    fun change(was: String?, se: Int, ep: Int): Change {
+        if (was == null || se <= 0) return Change.NONE
+        val p = was.split(':'); val ws = p.getOrNull(0)?.toIntOrNull() ?: return Change.NONE; val we = p.getOrNull(1)?.toIntOrNull() ?: 0
+        return when { se > ws -> Change.SEASON; se == ws && ep > we -> Change.EPISODE; else -> Change.NONE }
+    }
+
+    /** The released movies of a franchise not seen before ([was] null on the first look: none are new). */
+    fun newMovies(was: Set<String>?, released: List<String>): List<String> = if (was == null) emptyList() else released.filter { it !in was }
+
+    /** A TMDB release date (yyyy-MM-dd) on or before [today]: the movie is out. */
+    fun out(date: String, today: String) = date.length == 10 && date <= today
 
     /**
-     * At most once a day: each show in the Watchlist or Favourites, its latest aired episode (TMDB, cached 12 h). The
-     * first look only records where each show is (no alerts for what already aired); later, a new season or episode is
-     * one note each, never repeated. TMDB is updated by its editors, so alerts can trail a release by hours.
+     * At most once a day (a failed check is retried an hour later): the shows and movies in the Watchlist and
+     * Favourites. For a show, its latest aired episode (TMDB, cached 12 h): a new season or episode is one note each.
+     * For a movie, its franchise (TMDB collection, cached 24 h; the movie's own record is the details page's cached
+     * one): a newly released movie of that franchise is one note. The first look only records where everything is (no
+     * alerts for what is already out); a note is never posted twice, even after it is dismissed. TMDB is updated by its
+     * editors, so alerts can trail a release by hours; a movie counts as released on its TMDB (theatrical) date.
      */
     fun checkFollowed(c: Context, content: ContentRepository, catalog: Catalog, user: UserLibrary, prefs: Prefs) {
-        if (prefs.get(Prefs.NOTIFY_FOLLOWED) != 0 || !catalog.ready || !due(c, "followed")) return
-        val shows = (user.items(UserLibrary.Kind.WATCHLIST) + user.items(UserLibrary.Kind.FAVOURITES))
-            .filter { it.id.startsWith("tv:") }.distinctBy { it.id }.take(30)
-        if (shows.isEmpty()) return
-        content.run({ shows.mapNotNull { s -> try { s to catalog.show(s.id.removePrefix("tv:").toInt()) } catch (_: Exception) { null } } }) { res ->
+        if (prefs.get(Prefs.NOTIFY_FOLLOWED) != 0 || !catalog.ready) return
+        val all = (user.items(UserLibrary.Kind.WATCHLIST) + user.items(UserLibrary.Kind.FAVOURITES)).distinctBy { it.id }
+        val shows = all.filter { it.id.startsWith("tv:") }.take(30)
+        val movies = all.filter { it.id.startsWith("movie:") }.take(30)
+        if ((shows.isEmpty() && movies.isEmpty()) || !due(c, "followed")) return
+        class Res(val shows: List<Pair<com.eppletv.launcher.content.ContentItem, JSONObject>>, val movieOk: Boolean, val collections: List<JSONObject>)
+        content.run({
+            val s = shows.mapNotNull { x -> try { x to catalog.show(x.id.removePrefix("tv:").toInt()) } catch (_: Exception) { null } }
+            var got = 0
+            val ids = movies.mapNotNull { m -> try { catalog.movieRecord(m.id.removePrefix("movie:").toInt()).also { got++ }
+                .optJSONObject("belongs_to_collection")?.optInt("id")?.takeIf { it > 0 } } catch (_: Exception) { null } }
+            Res(s, movies.isEmpty() || got > 0, ids.distinct().take(15).mapNotNull { id -> try { catalog.collection(id) } catch (_: Exception) { null } })
+        }) { r ->
+            // Offline or TMDB failing: nothing is recorded or posted, and the check runs again later.
+            if (r == null || (shows.isNotEmpty() && r.shows.isEmpty()) || !r.movieOk) { Log.i(TAG, "followed check failed; retry later"); return@run }
+            done(c, "followed")
             val p = prefs(c); val e = p.edit()
-            for ((s, o) in res.orEmpty()) {
+            for ((s, o) in r.shows) {
                 val last = o.optJSONObject("last_episode_to_air") ?: continue
                 val se = last.optInt("season_number"); val ep = last.optInt("episode_number")
-                val was = p.getString("f:${s.id}", null)
-                e.putString("f:${s.id}", "$se:$ep")
-                if (was == null) continue
-                val (ws, we) = was.split(':').map { it.toIntOrNull() ?: 0 }
-                val art = o.optString("backdrop_path").takeIf { it.isNotEmpty() }?.let { "https://image.tmdb.org/t/p/w780$it" }
-                val season = se > ws; val episode = !season && se == ws && ep > we
+                val ch = change(p.getString("f:${s.id}", null), se, ep)
+                if (se > 0) e.putString("f:${s.id}", "$se:$ep")
+                val art = img(o)
+                val name = last.optString("name").takeIf { it.isNotBlank() }
                 when {
-                    season && prefs.get(Prefs.NOTIFY_SEASONS) == 0 -> NotificationHub.post(Note("season:${s.id}:$se", "", "New season", "${s.title} · Season $se",
-                        "Season $se has started: episode $ep${last.optString("name").takeIf { it.isNotEmpty() }?.let { ", “$it”" } ?: ""}.", System.currentTimeMillis(), null, null,
+                    ch == Change.SEASON && prefs.get(Prefs.NOTIFY_SEASONS) == 0 -> NotificationHub.post(Note("season:${s.id}:$se", "", "New season", "${s.title} · Season $se",
+                        "Season $se is out${aired(last)}: episode $ep${name?.let { ", “$it”" } ?: ""}.", System.currentTimeMillis(), null, null,
                         NotificationHub.CONTENT, art, "details:${s.id}", own = true), once = true)
-                    episode && prefs.get(Prefs.NOTIFY_EPISODES) == 0 -> NotificationHub.post(Note("episode:${s.id}:$se:$ep", "", "New episode", "${s.title} · S$se E$ep",
-                        last.optString("name").ifEmpty { "A new episode is out." }, System.currentTimeMillis(), null, null,
+                    ch == Change.EPISODE && prefs.get(Prefs.NOTIFY_EPISODES) == 0 -> NotificationHub.post(Note("episode:${s.id}:$se:$ep", "", "New episode", "${s.title} · S$se E$ep",
+                        "${name ?: "A new episode"} is out${aired(last)}.", System.currentTimeMillis(), null, null,
                         NotificationHub.CONTENT, art, "details:${s.id}", own = true), once = true)
                 }
             }
+            val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+            for (o in r.collections) {
+                val cid = o.optInt("id"); val franchise = o.optString("name").removeSuffix(" Collection")
+                val parts = o.optJSONArray("parts")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: continue
+                val released = parts.filter { out(it.optString("release_date"), today) }
+                val ids = released.map { it.optInt("id").toString() }
+                val was = p.getStringSet("c:$cid", null)?.toSet()
+                e.putStringSet("c:$cid", ids.toSet() + (was ?: emptySet()))
+                if (prefs.get(Prefs.NOTIFY_MOVIES) != 0) continue
+                for (id in newMovies(was, ids)) {
+                    val m = released.first { it.optInt("id").toString() == id }
+                    val title = m.optString("title"); if (title.isBlank()) continue
+                    val about = m.optString("overview").trim()
+                    NotificationHub.post(Note("movie:$id", "", "New movie", "$franchise · $title",
+                        "Released ${m.optString("release_date")}.${if (about.isNotEmpty()) " $about" else ""}", System.currentTimeMillis(), null, null,
+                        NotificationHub.CONTENT, img(m), "details:movie:$id", own = true), once = true)
+                }
+            }
             e.apply()
-            Log.i(TAG, "followed shows checked: ${res?.size ?: 0}")
+            Log.i(TAG, "followed checked: ${r.shows.size} shows, ${r.collections.size} franchises")
         }
     }
+
+    /** A title's wide artwork (or its poster), null when TMDB has neither. */
+    private fun img(o: JSONObject): String? = (o.optString("backdrop_path").takeIf { it.startsWith("/") } ?: o.optString("poster_path").takeIf { it.startsWith("/") })
+        ?.let { "https://image.tmdb.org/t/p/w780$it" }
+
+    private fun aired(ep: JSONObject) = ep.optString("air_date").takeIf { it.length == 10 }?.let { " ($it)" } ?: ""
 }

@@ -35,6 +35,14 @@ class CcTile(ctx: Context, private val l: Layout, private val clock: FrameClock,
         set(v) { if (field != v) { field = v; face.invalidate() } }
     private val corner get() = if (round) height / 2f else l.pxf(30f)
     private val face = object : View(ctx) { override fun onDraw(c: Canvas) = paintFace(c) }
+    /** A picture drawn instead of the glyph (the Epple TV app logo on its own settings button). */
+    var art: android.graphics.drawable.Drawable? = null
+        set(v) { field = v; face.invalidate() }
+    /** Left/Right change this control's value while it is being adjusted (the Volume tile); null for other controls. */
+    var adjust: ((Int) -> Unit)? = null
+    /** The control is being adjusted: its status line shows arrows and Left/Right go to [adjust]. */
+    var adjusting = false
+        set(v) { if (field != v) { field = v; face.invalidate() } }
 
     init {
         isFocusable = true; contentDescription = title
@@ -44,6 +52,7 @@ class CcTile(ctx: Context, private val l: Layout, private val clock: FrameClock,
 
     override fun onFocusChanged(gain: Boolean, direction: Int, prev: android.graphics.Rect?) {
         super.onFocusChanged(gain, direction, prev)
+        if (!gain) adjusting = false
         f.target = if (gain) 1f else 0f; clock.add(this)
     }
 
@@ -67,14 +76,18 @@ class CcTile(ctx: Context, private val l: Layout, private val clock: FrameClock,
                 if (sub.isEmpty()) c.drawText(title, tx, h / 2f - (t1.descent() + t1.ascent()) / 2f, t1)
                 else {
                     c.drawText(title, tx, h / 2f - l.pxf(4f), t1)
-                    t2.color = dim; c.drawText(ellipsize(sub, w - tx - l.pxf(16f)), tx, h / 2f + l.pxf(24f), t2)
+                    t2.color = dim; c.drawText(ellipsize(if (adjusting) "◀  $sub  ▶" else sub, w - tx - l.pxf(16f)), tx, h / 2f + l.pxf(24f), t2)
                 }
             }
         }
     }
 
     /** The tile's icon in the Epple TV style; a control is always "active", so its accent shows in full. */
-    private fun icon(c: Canvas, x: Float, y: Float, size: Float, ink: Int) { gs.color = ink; EppleIcons.draw(glyph, c, x, y, size, gs, 1f) }
+    private fun icon(c: Canvas, x: Float, y: Float, size: Float, ink: Int) {
+        val a = art
+        if (a != null) { val s = if (round) (height * 0.56f).toInt() else size.toInt(); a.setBounds((x - s / 2f).toInt(), (y - s / 2f).toInt(), (x + s / 2f).toInt(), (y + s / 2f).toInt()); a.draw(c); return }
+        gs.color = ink; EppleIcons.draw(glyph, c, x, y, size, gs, 1f)
+    }
 
     private fun ellipsize(s: String, max: Float): String {
         if (t2.measureText(s) <= max) return s
@@ -129,7 +142,7 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
     var onDismissNote: ((com.eppletv.launcher.system.NotificationHub.Note) -> Unit)? = null
     var onClearAll: (() -> Unit)? = null
     /** Text for the empty list (e.g. when other apps' notifications aren't allowed). */
-    var emptyText = "No notifications"
+    var emptyText = "You're all caught up"
     private var category = 0
         set(v) { field = v; tabs.forEachIndexed { i, t -> t.selectedState = i == v }; refresh() }
 
@@ -224,6 +237,7 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
 
     fun hide() {
         if (!open) return
+        tiles.forEach { it.adjusting = false }
         open = false; p.target = 0f; clock.add(this)
         onClosed?.invoke()
     }
@@ -238,10 +252,17 @@ class ControlCenter(ctx: Context, private val l: Layout, private val clock: Fram
         if (e.action != KeyEvent.ACTION_DOWN) return true
         val dx = when (e.keyCode) { KeyEvent.KEYCODE_DPAD_LEFT -> -1; KeyEvent.KEYCODE_DPAD_RIGHT -> 1; else -> 0 }
         val dy = when (e.keyCode) { KeyEvent.KEYCODE_DPAD_UP -> -1; KeyEvent.KEYCODE_DPAD_DOWN -> 1; else -> 0 }
+        val adj = tiles.firstOrNull { it.adjusting }
+        if (e.keyCode == KeyEvent.KEYCODE_BACK && adj != null) { adj.adjusting = false; return true }
         if (e.keyCode == KeyEvent.KEYCODE_BACK || e.keyCode == KeyEvent.KEYCODE_MENU) { if (e.repeatCount == 0) hide(); return true }
         if (dx == 0 && dy == 0) return false
         val all = focusables()
         val cur = all.firstOrNull { it.isFocused } ?: return true.also { tiles.firstOrNull()?.requestFocus() }
+        // A control being adjusted (Volume): Left/Right change it, Up/Down leave it (OK and Back too, above/below).
+        if (cur is CcTile && cur.adjusting) {
+            if (dx != 0) { cur.adjust?.invoke(dx); return true }
+            cur.adjusting = false
+        }
         // Between the two sides: Right past the controls goes to the notifications, Left from them back to the last control.
         if (cur is CcTile) lastTile = cur
         if (dx > 0 && cur is CcTile && nearest(cur, tiles.filter { inLine(cur, it) }, dx, 0) == null) { (rows.firstOrNull() ?: tabs[category]).requestFocus(); return true }

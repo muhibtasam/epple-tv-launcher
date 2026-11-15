@@ -800,18 +800,49 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             ControlCenter.Item(EppleIcons.WIFI, "Wi-Fi", action = act { open(Intent(Settings.ACTION_WIFI_SETTINGS), "Wi-Fi") }),
             ControlCenter.Item(EppleIcons.POWER, "Standby") { cc.hide(); content.run({ tv.standby() ?: "" }) { e -> if (!e.isNullOrEmpty()) toast(e) } },
             ControlCenter.Item(EppleIcons.INPUT, "Inputs", action = act { inputsMenu() }),
+            // OK starts adjusting (Left/Right change the volume with the TV's own volume bar); OK, Up, Down or Back stop.
             ControlCenter.Item(EppleIcons.VOLUME, "Volume") {
-                getSystemService(android.media.AudioManager::class.java)?.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,
-                    android.media.AudioManager.ADJUST_SAME, android.media.AudioManager.FLAG_SHOW_UI)
+                val am = getSystemService(android.media.AudioManager::class.java)
+                if (am == null || am.isVolumeFixed) { toast("This TV's volume can't be changed from here. Use the remote's volume buttons."); return@Item }
+                ccVolume.adjusting = !ccVolume.adjusting
+                if (ccVolume.adjusting) am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_SAME, android.media.AudioManager.FLAG_SHOW_UI)
                 ccRefresh()
             },
             ControlCenter.Item(EppleIcons.MOON, "Sleep Timer") { cycleSleep() },
             ControlCenter.Item(EppleIcons.PICTURE, "Screensaver", round = true, action = act { startSaver() }),
-            ControlCenter.Item(EppleIcons.BLUETOOTH, "Bluetooth & Accessories", round = true, action = act { open(Intent(Settings.ACTION_BLUETOOTH_SETTINGS), "Accessories") }),
+            ControlCenter.Item(EppleIcons.BLUETOOTH, "Bluetooth & Accessories", round = true, action = act { openBluetooth() }),
             ControlCenter.Item(EppleIcons.SETTINGS, "Epple TV Settings", round = true, action = act { goTab(SETTINGS) }),
             ControlCenter.Item(EppleIcons.SLIDERS, "TV Settings", round = true, action = act { open(Intent(Settings.ACTION_SETTINGS), "Settings") }),
         ))
         ccWifi = cc.tiles[0]; ccInputs = cc.tiles[2]; ccVolume = cc.tiles[3]; ccSleep = cc.tiles[4]
+        ccVolume.adjust = { d -> changeVolume(d) }
+        cc.tiles.firstOrNull { it.title == "Epple TV Settings" }?.art = getDrawable(R.drawable.ic_launcher)
+    }
+
+    /** One step of the TV's volume (2 % of its range), with the system's own volume bar; raising unmutes. */
+    private fun changeVolume(d: Int) {
+        val am = getSystemService(android.media.AudioManager::class.java) ?: return
+        val s = android.media.AudioManager.STREAM_MUSIC
+        val max = am.getStreamMaxVolume(s).coerceAtLeast(1); val step = (max / 50).coerceAtLeast(1)
+        try {
+            if (d > 0 && am.isStreamMute(s)) am.adjustStreamVolume(s, android.media.AudioManager.ADJUST_UNMUTE, 0)
+            am.setStreamVolume(s, (am.getStreamVolume(s) + d * step).coerceIn(0, max), android.media.AudioManager.FLAG_SHOW_UI)
+        } catch (_: SecurityException) { toast("The TV didn't allow changing the volume.") }
+        ccRefresh()
+    }
+
+    /**
+     * Bluetooth & Accessories: the platform's Bluetooth settings where they exist; on Google TV (which has none) the TV
+     * settings' accessories list (a maker's own screen first, e.g. TCL's), then Google TV's "Pair accessory"; else the
+     * settings home.
+     */
+    private fun openBluetooth() {
+        val tries = listOf(Intent(Settings.ACTION_BLUETOOTH_SETTINGS), Intent("com.android.tv.settings.ACCESSORIES_CONNECTED_DEVICES"),
+            Intent("com.google.android.intent.action.CONNECT_INPUT"), Intent(Settings.ACTION_SETTINGS))
+        for (i in tries) {
+            try { startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return } catch (_: ActivityNotFoundException) {} catch (_: SecurityException) {}
+        }
+        toast(getString(R.string.cannot_open, "Accessories"))
     }
 
     private lateinit var banner: NotifBanner
@@ -825,8 +856,11 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             when {
                 a == "wifi" -> open(Intent(Settings.ACTION_WIFI_SETTINGS), "Wi-Fi")
                 a.startsWith("update:") -> Watchers.install(this, n.key, a.removePrefix("update:"))
-                a.startsWith("details:") -> (user.items(UserLibrary.Kind.WATCHLIST) + user.items(UserLibrary.Kind.FAVOURITES))
-                    .firstOrNull { it.id == a.removePrefix("details:") }?.let { details(it) } ?: toast(n.title)
+                // The followed title itself when it's still in the lists, else the title by its TMDB id (a new movie
+                // of a followed franchise, or a show no longer followed): the details page loads everything from the id.
+                a.startsWith("details:") -> { val id = a.removePrefix("details:")
+                    details((user.items(UserLibrary.Kind.WATCHLIST) + user.items(UserLibrary.Kind.FAVOURITES)).firstOrNull { it.id == id }
+                        ?: com.eppletv.launcher.content.ContentItem(id, n.title.substringAfter(" · ").takeIf { id.startsWith("movie:") } ?: n.title.substringBefore(" · "), "", "", null, null)) }
             }
             return
         }
@@ -857,7 +891,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     private fun openControlCenter() {
         if (cc.open) return
-        cc.emptyText = if (NotificationHub.allowed(this)) "No notifications" else "No notifications.\nOther apps' notifications are off: Settings > Notifications."
+        cc.emptyText = if (NotificationHub.allowed(this)) "You're all caught up" else "You're all caught up.\nOther apps' notifications are off: Settings > Notifications."
         ccRefresh()
         cc.show { restoreFocus() }
     }
@@ -875,7 +909,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         val n = tvInputs().size
         ccInputs.sub = if (n == 0) "TV inputs" else "$n ${if (n == 1) "input" else "inputs"}"
         val am = getSystemService(android.media.AudioManager::class.java)
-        ccVolume.sub = am?.let { "${100 * it.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) / it.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).coerceAtLeast(1)} %" } ?: ""
+        ccVolume.sub = am?.let { if (it.isStreamMute(android.media.AudioManager.STREAM_MUSIC)) "Muted" else "${100 * it.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) / it.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).coerceAtLeast(1)} %" } ?: ""
         ccSleep.sub = if (sleepAt == 0L) "Off" else "${((sleepAt - android.os.SystemClock.elapsedRealtime()) / 60_000L + 1).coerceAtLeast(1)} min left"
     }
 
