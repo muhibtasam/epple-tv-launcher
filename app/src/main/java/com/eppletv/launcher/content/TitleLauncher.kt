@@ -81,6 +81,7 @@ class TitleLauncher(ctx: Context, private val net: Net, private val watchmodeKey
         if (item == null) return openApp0()
         val openApp = { Log.i(TAG, "opened ${item.title} as the app only ($appPkg)"); onAppOnly?.invoke(appPkg, item.title); openApp0() }
         Recency.opened(app, appPkg, item.title)                // what was opened, for Continue Watching's order
+        Taste.opened(app, item, appPkg)                        // may become a watch once its app plays 30 s
         // 1. The item carries its own link (YouTube, Tapmad's YouTube videos, Stremio).
         item.linkUri?.let { uri -> return if (start(item.linkPkg ?: appPkg, uri)) Unit else openApp() }
         // 2. A TMDB title on a service Watchmode knows: look its link up (cached).

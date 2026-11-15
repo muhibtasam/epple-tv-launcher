@@ -100,5 +100,14 @@ object Playback {
         checks[pkg] = r; main.postDelayed(r, left + 50)
     }
 
-    private fun reached(pkg: String) { app?.let { Recency.verified(it, pkg, played(pkg)) } }
+    private fun reached(pkg: String) {
+        val c = app ?: return
+        Recency.verified(c, pkg, played(pkg))
+        // What the session says is playing (no extra permission): lets Taste reject trailers, previews and other titles.
+        val md = tracked.values.firstOrNull { it.first.packageName == pkg }?.first?.metadata
+        val names = if (md == null) emptyList() else listOf(android.media.MediaMetadata.METADATA_KEY_TITLE, android.media.MediaMetadata.METADATA_KEY_DISPLAY_TITLE,
+            android.media.MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, android.media.MediaMetadata.METADATA_KEY_ALBUM, android.media.MediaMetadata.METADATA_KEY_ARTIST)
+            .mapNotNull { k -> md.getString(k)?.takeIf { it.isNotBlank() } }
+        Taste.played(c, pkg, names, md?.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION)?.coerceAtLeast(0L) ?: 0L)
+    }
 }

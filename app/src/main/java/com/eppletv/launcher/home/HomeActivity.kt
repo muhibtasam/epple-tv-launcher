@@ -540,6 +540,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     override fun details(item: ContentItem) {
         if (!Regex("^(movie|tv):\\d+$").matches(item.id)) { toast("Details aren't available for this title"); return }
+        com.eppletv.launcher.content.Taste.details(this, item)                // a weak taste signal (recommendations)
         if (details.isEmpty()) detailReturn = zone
         details.lastOrNull()?.view?.visibility = View.GONE
         (if (zone == Zone.FEED) feed else screens[section])?.let { it.hide(); it.view.visibility = View.GONE }
@@ -799,7 +800,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     private fun open(intent: Intent, name: String, opts: Bundle? = null): Boolean = try {
         startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), opts)
-        com.eppletv.launcher.content.Recency.opened(this, intent.component?.packageName ?: intent.`package`, null); true
+        com.eppletv.launcher.content.Recency.opened(this, intent.component?.packageName ?: intent.`package`, null)
+        com.eppletv.launcher.content.Taste.appOpened(this, intent.component?.packageName ?: intent.`package`); true
     } catch (e: ActivityNotFoundException) {
         toast(getString(R.string.cannot_open, name)); false
     } catch (e: SecurityException) {
