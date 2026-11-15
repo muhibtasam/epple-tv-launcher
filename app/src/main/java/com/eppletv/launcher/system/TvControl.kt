@@ -16,6 +16,19 @@ class TvControl(ctx: Context) {
     } catch (e: IOException) { e.message ?: "Couldn't reach this TV's debugging service." }
 
     /**
+     * The TV's own "go to sleep after" time in ms (TV Settings; Settings.Secure sleep_timeout): -1 or 0 = never, null =
+     * unknown. Read directly when Android allows it, otherwise once through the already-allowed debugging key (never
+     * prompting). Null too when that key isn't allowed, because standby then can't be requested either.
+     */
+    fun sleepTimeoutMs(): Long? {
+        if (!AdbKey.isAllowed(app)) return null
+        try { return android.provider.Settings.Secure.getLong(app.contentResolver, "sleep_timeout") } catch (_: Exception) {}
+        return try {
+            Adb.connect(AdbKey, waiting = {}, promptMs = 2000).use { adb -> adb.shell("settings get secure sleep_timeout").trim().toLongOrNull() }
+        } catch (_: IOException) { null }
+    }
+
+    /**
      * The Wi-Fi network's name, or null. Only once the TV has allowed this app's key: a convenience never makes the TV
      * show its debugging prompt. (Android hides the name from apps without location access, which a launcher shouldn't ask for.)
      */

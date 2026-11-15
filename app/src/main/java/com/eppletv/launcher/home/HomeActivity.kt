@@ -171,7 +171,23 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     private val idle = Runnable { if (resumed && !panel.open && !cc.open && !setup.active) saver.start() }
-    private fun restartIdle() { main.removeCallbacks(idle); if (resumed && prefs.saverMs > 0) main.postDelayed(idle, prefs.saverMs) }
+    private fun restartIdle() {
+        main.removeCallbacks(idle); main.removeCallbacks(sleepIdle)
+        if (resumed && prefs.saverMs > 0) main.postDelayed(idle, prefs.saverMs)
+        // Epple TV's screensaver is in charge: the screen stays on, so Android's (Google's) screensaver never starts
+        // over it; the TV still goes to standby after its own sleep time, counted from the last button press.
+        val own = resumed && prefs.saverMs > 0 && sleepMs != null
+        window.decorView.keepScreenOn = own
+        sleepMs?.takeIf { own && it > 0 }?.let { main.postDelayed(sleepIdle, it) }
+    }
+    /** The TV's own sleep time (ms; 0 or less = never), or null while unknown: then the system's own screensaver and sleep apply. */
+    private var sleepMs: Long? = null
+    private val sleepIdle = Runnable {
+        content.run({ tv.standby() ?: "" }) { e -> if (!e.isNullOrEmpty()) { sleepMs = null; window.decorView.keepScreenOn = false } }
+    }
+    private fun readSleep() = content.run({ tv.sleepTimeoutMs() ?: Long.MIN_VALUE }) { v ->
+        sleepMs = v?.takeIf { it != Long.MIN_VALUE }; restartIdle()
+    }
 
     private val timeReceiver = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) = updateTime() }
 
@@ -253,8 +269,13 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
         saver = Screensaver(this).apply {
             clockText = { timeText }
+            // The network's name, looked up by the screensaver itself (Control Center may not have been opened yet);
+            // "Wi-Fi" only until the name arrives (the saver refreshes this line every 15 seconds).
             wifiName = { val cm = getSystemService(android.net.ConnectivityManager::class.java)
-                if (cm?.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true) (if (::ccWifi.isInitialized) ccWifi.sub.takeIf { it.isNotEmpty() && it != "Off" } else null) ?: "Wi-Fi" else null }
+                if (cm?.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true) {
+                    if (this@HomeActivity.wifiName == null) lookupWifi()
+                    this@HomeActivity.wifiName ?: "Wi-Fi"
+                } else null }
         }
         root.addView(saver.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
@@ -322,7 +343,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             addAction(Intent.ACTION_TIME_TICK); addAction(Intent.ACTION_TIME_CHANGED); addAction(Intent.ACTION_TIMEZONE_CHANGED)
         })
         updateTime()
-        resumed = true; restartRotation(); restartIdle()
+        resumed = true; restartRotation(); restartIdle(); readSleep()
         hero.backdrop.pauseDrift(false)
         // Pictures copied from a computer (scripts/wallpapers.sh) arrive while another app is in front: take them in now.
         if (startedOnce) content.run({ wallpapers.importDropped() + wallpapers.importBundled() }) { n -> if ((n ?: 0) > 0) nextWallpaper(newest = true) }
@@ -330,7 +351,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     override fun onStop() {
-        resumed = false; main.removeCallbacks(rotate); main.removeCallbacks(idle); main.removeCallbacks(recsLater); saver.stop()
+        resumed = false; main.removeCallbacks(rotate); main.removeCallbacks(idle); main.removeCallbacks(recsLater); main.removeCallbacks(sleepIdle); saver.stop()
+        window.decorView.keepScreenOn = false                // another app in front: the system's own screensaver and sleep apply
         hero.backdrop.pauseDrift(true)
         setup.pause()                                        // phone setup stops listening when the TV leaves Epple TV
         unregisterReceiver(timeReceiver)
@@ -944,9 +966,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
             else -> wifiName ?: "Connected"
         }
-        if (!wifi) wifiName = null
-        else if (!wifiLookup) { wifiLookup = true
-            content.run({ tv.wifiName() ?: "" }) { n -> wifiLookup = false; if (!n.isNullOrEmpty()) { wifiName = n; ccWifi.sub = n } } }
+        if (!wifi) wifiName = null else lookupWifi()
         val n = tvInputs().size
         ccInputs.sub = if (n == 0) "TV inputs" else "$n ${if (n == 1) "input" else "inputs"}"
         volumeSub()
@@ -954,6 +974,13 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
     private var wifiName: String? = null
     private var wifiLookup = false
+    /** Looks the Wi-Fi name up once in the background; Control Center and the screensaver both show it. */
+    private fun lookupWifi() {
+        if (wifiLookup) return
+        wifiLookup = true
+        content.run({ tv.wifiName() ?: "" }) { n -> wifiLookup = false
+            if (!n.isNullOrEmpty()) { wifiName = n; if (::ccWifi.isInitialized) ccWifi.sub = n } }
+    }
 
     /** The Volume tile's status line alone (a volume change touches nothing else in Control Center). */
     private fun volumeSub() {
