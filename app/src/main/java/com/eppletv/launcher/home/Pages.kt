@@ -10,6 +10,7 @@ import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
@@ -296,6 +297,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
     private var deep = false
 
     private val dotsY = l.dockY - l.platterPad - l.px(40)
+    private val textBoxH = l.px(560)   // ends at 730, above the page dots
     /** Showing the Home wallpaper: no title, no dots, no carousel. */
     var resting = false
         private set
@@ -309,7 +311,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         root.addView(backdrop.top, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         // The scrims (top for the title, bottom for the app rows, top-left corner under the text) are painted into each
         // backdrop image once when it is decoded (see Scrim): as overlay views they cost two translucent full-screen passes a frame.
-        root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), l.px(480)).apply { leftMargin = l.left; topMargin = l.px(170) })
+        root.addView(textBox, FrameLayout.LayoutParams(l.px(1100), textBoxH).apply { leftMargin = l.left; topMargin = l.px(170) })
         layers = Array(2) { layer(ctx) }
         // The slider dots sit just above the top row; in full-screen artwork mode they slide down to the bottom edge.
         root.addView(dots, FrameLayout.LayoutParams(MATCH_PARENT, l.px(16)).apply { topMargin = dotsY })
@@ -417,7 +419,10 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         y.logo.contentDescription = title
         y.eyebrow.visibility = if (eyebrow.isEmpty()) View.GONE else View.VISIBLE
         y.meta.visibility = if (meta.isEmpty()) View.GONE else View.VISIBLE
-        y.summary.sentences(summary, l.px(820), 2, longest = 4); y.summary.visibility = if (y.summary.text.isEmpty()) View.GONE else View.VISIBLE
+        // The summary gets only the whole lines left in the text box once everything above it and the Play chip are
+        // placed, so the chip is never pushed out of the box (a tall logo or a long meta row leaves fewer lines).
+        val lines = ((textBoxH - headHeight(y)) / y.summary.lineHeight).coerceIn(0, 4)
+        y.summary.sentences(summary, l.px(820), lines, longest = lines); y.summary.visibility = if (y.summary.text.isEmpty()) View.GONE else View.VISIBLE
         y.a.target = 1f
     }
 
@@ -433,6 +438,16 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         dots.alpha = (if (items.size > 1) 1f else 0f) * textVis.value
         dots.translationY = shelf.value * (l.px(1010) - dotsY)
         return moving || !textVis.atRest() || !shelf.atRest()
+    }
+
+    /** Everything in a layer except the summary's text, as laid out: eyebrow, title or logo, meta, summary margin, Play chip. */
+    private fun headHeight(y: Layer): Int {
+        val w = View.MeasureSpec.makeMeasureSpec(l.px(1100), View.MeasureSpec.AT_MOST); val u = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        fun h(v: View) = if (v.visibility == View.GONE) 0 else (v.layoutParams as ViewGroup.MarginLayoutParams).let { lp ->
+            // A fixed height (the Play chip's 56) counts as laid out, not as the view's own measure.
+            (if (lp.height > 0) lp.height else { v.measure(w, u); v.measuredHeight }) + lp.topMargin + lp.bottomMargin }
+        val chip = y.box.findViewWithTag<View>(CHIP)
+        return h(y.eyebrow) + h(y.title) + h(y.logo) + h(y.meta) + (y.summary.layoutParams as ViewGroup.MarginLayoutParams).topMargin + h(chip)
     }
 
     private fun layer(ctx: Context): Layer {
