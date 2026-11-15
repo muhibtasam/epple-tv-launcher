@@ -20,9 +20,24 @@ class AvailabilityTest {
         assertTrue(ST !in map.values)
     }
 
-    @Test fun ambiguousOrShortLabelsNeverMap() {
+    @Test fun ambiguousOrPartialNamesNeverMap() {
         assertEquals(emptyMap<Int, String>(), Availability.map(mapOf(1 to "Netflix"), listOf("a" to "Netflix", "b" to "Netflix")))
         assertEquals(emptyMap<Int, String>(), Availability.map(mapOf(1 to "Joy TV"), listOf("a" to "TV")))
+    }
+
+    @Test fun unrelatedProviderNamesNeverMap() {
+        val unrelated = mapOf(1796 to "Netflix basic with Ads", 2100 to "Amazon Prime Video with Ads", 9 to "Amazon Video",
+            10 to "Amazon Prime Video Channels", 2 to "Apple TV", 350 to "Apple TV Plus", 300 to "Pluto TV", 457 to "VIX Video",
+            175 to "Netflix Kids", 283 to "Crunchyroll Premium")
+        // Labels a suffix rule would have caught ("…Video", "…TV", "…Prime Video").
+        val labels = listOf(NF to "Netflix", PV to "Prime Video", "v" to "Video", "t" to "Pluto", "p" to "Prime", ST to "Stremio")
+        assertEquals(emptyMap<Int, String>(), Availability.map(unrelated, labels))
+    }
+
+    @Test fun primeVideoOnlyThroughItsAlias() {
+        assertEquals(mapOf(119 to PV), Availability.map(mapOf(119 to "Amazon Prime Video"), listOf(PV to "Prime Video")))
+        assertEquals(mapOf(119 to PV), Availability.map(mapOf(119 to "Prime Video"), listOf(PV to "Prime Video")))
+        assertEquals(emptyMap<Int, String>(), Availability.map(mapOf(119 to "Amazon Prime Video"), listOf("x" to "Amazon")))
     }
 
     @Test fun confirmedOnPinnedApp() {

@@ -27,17 +27,24 @@ object Availability {
     fun norm(s: String) = s.lowercase().filter { it.isLetterOrDigit() }
 
     /**
+     * Where TMDB's provider name differs from the app's own label, the label it stands for (normalized names, not IDs).
+     * Anything not here must match exactly.
+     */
+    private val ALIASES = mapOf("amazonprimevideo" to "primevideo")
+
+    /**
      * Provider id -> app package, from the region's provider list ([providers]: id -> name) and the apps' own
-     * labels ([apps]: package to label). A provider maps when its name equals an app's label or ends with it
-     * ("Amazon Prime Video" / "Prime Video"), and only when exactly one app matches. Labels under 4 letters never match.
-     * Nothing is hardcoded: an app TMDB doesn't list for the region (Stremio, or a service absent there) maps to nothing.
+     * labels ([apps]: package to label). A provider maps only when its normalized name equals an app's normalized
+     * label (or its [ALIASES] entry does), and exactly one app matches. No partial matching: "Amazon Prime Video with
+     * Ads" or "Netflix Kids" map to nothing. An app TMDB doesn't list for the region (Stremio, or a service absent
+     * there) maps to nothing.
      */
     fun map(providers: Map<Int, String>, apps: List<Pair<String, String>>): Map<Int, String> {
         val out = HashMap<Int, String>()
         for ((id, name) in providers) {
-            val n = norm(name)
+            val n = norm(name).let { ALIASES[it] ?: it }
             if (n.isEmpty()) continue
-            val hit = apps.filter { (_, label) -> val l = norm(label); l.length >= 4 && (n == l || n.endsWith(l)) }.map { it.first }.distinct()
+            val hit = apps.filter { (_, label) -> norm(label) == n }.map { it.first }.distinct()
             if (hit.size == 1) out[id] = hit[0]
         }
         return out
