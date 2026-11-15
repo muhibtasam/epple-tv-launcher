@@ -19,8 +19,10 @@ object Recommender {
     private const val HOUR = 3_600_000L
     private const val LEASE = 30 * 60_000L
     const val MIN_DECK = 8
-    /** Release 1 has no availability data: every title counts as "unknown" on your services. */
-    const val SERVICE_UNKNOWN = 0.3
+    /** Deck format: 2 adds verified availability ("avail", "fresh"). */
+    private const val DECK_V = 2
+    /** A title with no verified availability counts as "unknown" on your services ([Availability]). */
+    const val SERVICE_UNKNOWN = Availability.SCORE_UNKNOWN
     /** How much a pick's closeness to titles already picked lowers it. */
     const val NEAR = 0.15
 
@@ -30,6 +32,8 @@ object Recommender {
         val id: String, val title: String, val genres: List<Int>, val lang: String, val year: Int, val ageDays: Int,
         val rating: Double, val votes: Int, val franchise: Int = 0, val people: Set<Int> = emptySet(),
         val seeds: Set<String> = emptySet(), val trending: Boolean = false,
+        /** The service term: [Availability.score] of the title's verified state (unknown when not looked up). */
+        val service: Double = SERVICE_UNKNOWN,
     ) { val type get() = id.substringBefore(':') }
 
     /** A title the viewer showed taste for: summed weight, and the kind of its strongest signal. */
@@ -50,7 +54,7 @@ object Recommender {
     class Pick(val c: Cand, val score: Double, val reason: String, val seed: String?)
 
     fun base(c: Cand, p: Profile): Double =
-        0.30 * seedMatch(c, p) + 0.20 * genreFit(c, p) + 0.20 * peopleOrFranchise(c, p) + 0.15 * SERVICE_UNKNOWN + 0.10 * quality(c) + 0.05 * fresh(c)
+        0.30 * seedMatch(c, p) + 0.20 * genreFit(c, p) + 0.20 * peopleOrFranchise(c, p) + 0.15 * c.service + 0.10 * quality(c) + 0.05 * fresh(c)
 
     fun seedMatch(c: Cand, p: Profile): Double {
         if (p.seeds.isEmpty() || c.seeds.isEmpty()) return 0.0
@@ -177,7 +181,17 @@ object Recommender {
 
     /** The saved recommendations. [rows]: titled personal rows ("Because you watched …", "More from …", "With …"). */
     class Deck(val at: Long, val items: Map<String, ContentItem>, val top: List<String>, val movie: List<String>, val tv: List<String>,
-               val rows: List<Pair<String, List<String>>>, val trending: List<String>)
+               val rows: List<Pair<String, List<String>>>, val trending: List<String>,
+               /** Titles confirmed on a pinned app (TMDB, region, subscription): id -> that app's name. Missing = unknown. */
+               val avail: Map<String, String> = emptyMap(),
+               /** New on your apps: recent releases confirmed on a pinned app, at least [Availability.MIN_NEW]. */
+               val fresh: List<String> = emptyList()) {
+        /** Trending titles confirmed on your apps (the row uses them only when there are enough). */
+        val trendingApps get() = trending.filter { it in avail }
+    }
+
+    /** Main thread: the service the focused title is confirmed on, from the deck in memory; null = no claim. */
+    fun badge(id: String): String? = deck?.avail?.get(id)
 
     @Volatile private var deck: Deck? = null
     @Volatile private var loaded = false
@@ -203,14 +217,18 @@ object Recommender {
         val items = o.getJSONObject("items").let { m -> m.keys().asSequence().associateWith { ContentItem.of(m.getJSONObject(it)) } }
         fun ids(a: JSONArray?) = if (a == null) emptyList() else (0 until a.length()).map { a.getString(it) }.filter { it in items }
         val rows = o.optJSONArray("rows")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { it.getString("t") to ids(it.optJSONArray("ids")) } } ?: emptyList()
-        Deck(o.getLong("at"), items, ids(o.optJSONArray("top")), ids(o.optJSONArray("movie")), ids(o.optJSONArray("tv")), rows, ids(o.optJSONArray("trending")))
+        // Release 1 decks have no "avail" / "fresh": every title is unknown and the row stays hidden.
+        val avail = o.optJSONObject("avail")?.let { m -> m.keys().asSequence().filter { it in items }.associateWith { m.optString(it) }.filterValues { it.isNotEmpty() } } ?: emptyMap()
+        Deck(o.getLong("at"), items, ids(o.optJSONArray("top")), ids(o.optJSONArray("movie")), ids(o.optJSONArray("tv")), rows, ids(o.optJSONArray("trending")),
+            avail, ids(o.optJSONArray("fresh")).filter { it in avail })
             .takeIf { it.top.size >= MIN_DECK }
     } catch (_: Exception) { null }
 
     private fun write(c: Context, d: Deck) {
-        val o = JSONObject().put("v", 1).put("at", d.at).put("items", JSONObject().also { m -> d.items.forEach { (k, v) -> m.put(k, v.json()) } })
+        val o = JSONObject().put("v", DECK_V).put("at", d.at).put("items", JSONObject().also { m -> d.items.forEach { (k, v) -> m.put(k, v.json()) } })
             .put("top", JSONArray(d.top)).put("movie", JSONArray(d.movie)).put("tv", JSONArray(d.tv)).put("trending", JSONArray(d.trending))
             .put("rows", JSONArray(d.rows.map { (t, ids) -> JSONObject().put("t", t).put("ids", JSONArray(ids)) }))
+            .put("avail", JSONObject(d.avail)).put("fresh", JSONArray(d.fresh))
         val dir = dir(c).apply { mkdirs() }
         val tmp = File(dir, "deck.json.tmp"); tmp.writeText(o.toString())
         java.nio.file.Files.move(tmp.toPath(), File(dir, "deck.json").toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
@@ -224,10 +242,13 @@ object Recommender {
      * and a run made obsolete by a reset saves nothing. [watchNext]: titles in the TV's Continue Watching (worker).
      */
     fun refresh(c: Context, content: ContentRepository, catalog: Catalog, user: UserLibrary, indianMode: Int,
+                /** Pinned apps, package to label, in order: what availability is checked against. */
+                pinned: List<Pair<String, String>>,
                 watchNext: () -> List<String>, force: Boolean = false, done: (Boolean) -> Unit = {}) {
         if (!catalog.ready) { Log.i(TAG, "refresh skipped: no catalogue key"); return }
         val p = prefs(c); val now = System.currentTimeMillis()
-        val due = force || p.getBoolean("dirty", false) || now - p.getLong("done", 0) >= DAY
+        // A deck saved by an older release (no availability) is refreshed once.
+        val due = force || p.getBoolean("dirty", false) || now - p.getLong("done", 0) >= DAY || p.getInt("deckV", 1) < DECK_V
         // A failed refresh waits an hour; one cut short by the process dying (no outcome recorded) does not.
         if (!due || (!force && now - p.getLong("try", 0) < HOUR)) { Log.i(TAG, "refresh skipped: ${if (due) "failed recently" else "not due"}"); return }
         // The lease belongs to this process: one left by a process that was killed mid-refresh is stale.
@@ -239,13 +260,13 @@ object Recommender {
         val run = runId.incrementAndGet()
         val keep = user.items(UserLibrary.Kind.FAVOURITES) to user.items(UserLibrary.Kind.WATCHLIST)
         content.run({
-            val d = build(c, catalog, keep.first, keep.second, indianMode, watchNext, now) ?: return@run false
+            val d = build(c, catalog, keep.first, keep.second, indianMode, pinned, watchNext, now) ?: return@run false
             synchronized(this) { if (run != runId.get()) return@run false; write(c, d); deck = d; loaded = true }
             true
         }) { ok ->
             running.set(false)
             val e = p.edit().putLong("lease", 0)
-            if (ok == true && run == runId.get()) { e.putLong("done", System.currentTimeMillis()).putBoolean("dirty", false); version++ }
+            if (ok == true && run == runId.get()) { e.putLong("done", System.currentTimeMillis()).putBoolean("dirty", false).putInt("deckV", DECK_V); version++ }
             else if (ok != true) e.putLong("try", System.currentTimeMillis())
             e.apply()
             Log.i(TAG, "refresh ${if (ok == true) "saved a new deck" else "kept the last deck"}")
@@ -260,7 +281,7 @@ object Recommender {
     fun drop(c: Context, id: String) {
         synchronized(this) {
             val d = deck(c) ?: return
-            val n = Deck(d.at, d.items - id, d.top - id, d.movie - id, d.tv - id, d.rows.map { (t, ids) -> t to (ids - id) }, d.trending - id)
+            val n = Deck(d.at, d.items - id, d.top - id, d.movie - id, d.tv - id, d.rows.map { (t, ids) -> t to (ids - id) }, d.trending - id, d.avail - id, d.fresh - id)
             deck = n; write(c, n)
         }
         version++
@@ -295,13 +316,13 @@ object Recommender {
     // ---- building a deck (worker thread) ----
 
     private class Builder(val id: String, val title: String, val genres: List<Int>, val lang: String, val year: Int, val ageDays: Int, val rating: Double, val votes: Int) {
-        var franchise = 0; val people = HashSet<Int>(); val seeds = HashSet<String>(); var trending = false
-        fun cand() = Cand(id, title, genres, lang, year, ageDays, rating, votes, franchise, people, seeds, trending)
+        var franchise = 0; val people = HashSet<Int>(); val seeds = HashSet<String>(); var trending = false; var service = SERVICE_UNKNOWN
+        fun cand() = Cand(id, title, genres, lang, year, ageDays, rating, votes, franchise, people, seeds, trending, service)
     }
 
     private fun tmdbId(id: String) = Regex("^(movie|tv):(\\d+)$").find(id)?.let { it.groupValues[1] to it.groupValues[2].toInt() }
 
-    private fun build(c: Context, catalog: Catalog, fav: List<ContentItem>, list: List<ContentItem>, indianMode: Int,
+    private fun build(c: Context, catalog: Catalog, fav: List<ContentItem>, list: List<ContentItem>, indianMode: Int, pinned: List<Pair<String, String>>,
                       watchNext: () -> List<String>, now: Long): Deck? {
         val t = Taste.snapshot(c)
         // Seeds: weighted signals per title, each with the kind of its strongest signal.
@@ -376,6 +397,16 @@ object Recommender {
         val wanted = specs.filter { s -> s.title == "Top Rated" || favGenres.any { g -> s.path.contains("with_genres=$g&") } } +
             (if (Sources.indianLangs.isNotEmpty() && indianMode != 3) specs.filter { it.path.contains("with_original_language=") } else emptyList())
         for (s in wanted) try { val a = catalog.rawRow(s); val type = if (s.path.contains("movie")) "movie" else "tv"; for (k in 0 until a.length()) add(a.getJSONObject(k), type) } catch (_: Exception) {}
+        // Availability (Release 2): the region's TMDB providers mapped to pinned apps by name, at runtime. Any failure
+        // leaves the map empty: every title stays unknown (never "unavailable") and the deck is built as before.
+        val pinnedPkgs = pinned.map { it.first }; val usage = t.services
+        val pmap = try { Availability.map(catalog.providerList("movie") + catalog.providerList("tv"), pinned) } catch (_: Exception) { emptyMap() }
+        val onApps = LinkedHashMap<String, MutableSet<Int>>()          // recent releases TMDB confirms on a pinned app
+        for ((_, ids) in pmap.entries.groupBy({ it.value }, { it.key })) for (type in listOf("movie", "tv")) try {
+            val a = catalog.newOn(type, ids)
+            for (k in 0 until minOf(20, a.length())) add(a.getJSONObject(k), type)?.let { b -> onApps.getOrPut(b.id) { HashSet() }.addAll(ids) }
+        } catch (_: Exception) {}
+        Log.i(TAG, "availability ${catalog.availRegion()}: ${pmap.values.toSet()} mapped from ${pmap.size} providers, ${onApps.size} recent on them")
         if (pool.size < MIN_DECK) return null                    // offline or TMDB failing: keep the last deck
 
         val dismissedAt = t.dismissed
@@ -386,8 +417,29 @@ object Recommender {
             genreNames = (genres.keys + pool.values.flatMap { it.genres }).associateWith { catalog.genreName(it) },
             peopleNames = peopleNames, franchiseNames = franchiseNames)
         val fb = Feedback(exclude = seeds.map { it.id }.toSet() + dismissedAt.keys, shown = t.shown, indianMode = indianMode, indianLangs = Sources.indianLangs.toSet())
-        val picks = order(pool.values.map { it.cand() }, profile, fb, now)
+        var picks = order(pool.values.map { it.cand() }, profile, fb, now)
         if (picks.size < MIN_DECK) return null
+
+        // Each likely-shown title's own region entry (the details page's cached record) decides its service term; the
+        // rest stay unknown. Then the same ranking runs again with those terms. Nothing is ever dropped for availability.
+        val avail = HashMap<String, String>()
+        if (pmap.isNotEmpty()) {
+            val region = catalog.availRegion()
+            onApps.forEach { (id, ids) -> Availability.classify(true, ids.toList(), pmap, pinnedPkgs, usage).app?.let { avail[id] = it; pool[id]?.service = Availability.SCORE_CONFIRMED } }
+            val look = (picks.take(60) + picks.filter { it.c.trending }.take(20)).map { it.c.id }.distinct().filter { it !in avail }
+            var elsewhere = 0
+            for (id in look) {
+                val (type, num) = tmdbId(id) ?: continue
+                val r = try { catalog.record(type, num).optJSONObject("watch/providers")?.optJSONObject("results")?.optJSONObject(region) } catch (_: Exception) { continue }
+                val flat = r?.optJSONArray("flatrate")?.let { a -> (0 until a.length()).map { a.getJSONObject(it).optInt("provider_id") } }
+                val res = Availability.classify(r != null, flat, pmap, pinnedPkgs, usage)
+                pool[id]?.service = Availability.score(res.state)
+                res.app?.let { avail[id] = it }
+                if (res.state == Availability.State.ELSEWHERE) elsewhere++
+            }
+            picks = order(pool.values.map { it.cand() }, profile, fb, now)
+            Log.i(TAG, "availability: ${avail.size} confirmed, $elsewhere elsewhere, of ${look.size} looked up and ${onApps.size} recent")
+        }
 
         // The deck: Top Picks, For You per type, personal rows, trending; each item carries its reason.
         val withWhy = picks.associate { pk -> pk.c.id to items.getValue(pk.c.id).let { i -> ContentItem(i.id, i.title, i.meta, i.imageUrl, i.linkUri, i.linkPkg, pk.reason, i.summary, i.weight, i.origin, i.logoUrl, i.posterUrl) } }
@@ -399,11 +451,16 @@ object Recommender {
         }
         franchises.maxByOrNull { it.value }?.key?.let { f -> picks.filter { it.c.franchise == f }.map { it.c.id }.takeIf { it.size >= 6 }?.let { rows.add("More from ${franchiseNames[f]}" to it.take(20)) } }
         people.maxByOrNull { it.value }?.key?.let { pid -> picks.filter { pid in it.c.people }.map { it.c.id }.takeIf { it.size >= 6 }?.let { rows.add("With ${peopleNames[pid]}" to it.take(20)) } }
+        // New on your apps: recent releases confirmed on a pinned app, in recommendation order (dismissed and kept titles
+        // are already out), shown only with enough of them.
+        val fresh = Availability.newRow(ids.filter { it in onApps && it in avail }.take(20))
         val used = (ids.take(40) + picks.filter { it.c.type == "movie" }.take(20).map { it.c.id } + picks.filter { it.c.type == "tv" }.take(20).map { it.c.id } +
-            rows.flatMap { it.second } + picks.filter { it.c.trending }.take(20).map { it.c.id }).toSet()
-        Log.i(TAG, "deck: ${seeds.size} seeds, ${pool.size} candidates, ${picks.size} ranked, ${rows.size} personal rows")
+            rows.flatMap { it.second } + picks.filter { it.c.trending }.take(20).map { it.c.id } + fresh).toSet()
+        val labels = pinned.toMap()
+        Log.i(TAG, "deck: ${seeds.size} seeds, ${pool.size} candidates, ${picks.size} ranked, ${rows.size} personal rows, ${fresh.size} new on your apps")
         return Deck(now, withWhy.filterKeys { it in used }, ids.take(40), picks.filter { it.c.type == "movie" }.take(20).map { it.c.id },
-            picks.filter { it.c.type == "tv" }.take(20).map { it.c.id }, rows, picks.filter { it.c.trending }.take(20).map { it.c.id })
+            picks.filter { it.c.type == "tv" }.take(20).map { it.c.id }, rows, picks.filter { it.c.trending }.take(20).map { it.c.id },
+            avail.filterKeys { it in used }.mapValues { labels[it.value].orEmpty() }.filterValues { it.isNotEmpty() }, fresh)
     }
 
     /** Days since a TMDB date (yyyy-MM-dd); negative = not released yet; unknown dates count as old. */

@@ -715,6 +715,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override fun refreshRecs(force: Boolean) {
         if (prefs.get(Prefs.RECS) != 0) return
         com.eppletv.launcher.content.Recommender.refresh(this, content, catalog, user, content.indianMode,
+            pinned = library.pinned(apps).map { it.packageName to it.label },
             watchNext = { ContinueWatching.load(this, content.net, false).map { it.title } }, force = force) { ok ->
             if (!ok) return@refresh
             if (::feed.isInitialized) feed.recsChanged()

@@ -8,8 +8,8 @@ import kotlin.math.ln
 /** A row of a browse screen: its title and the TMDB path that fills it. */
 class RowSpec(val title: String, val path: String, val ttlH: Int = 12)
 
-/** One provider a title streams on in the user's region; [pkg] is the app that plays it, when known. */
-class Provider(val id: Int, val name: String, val pkg: String?)
+/** One provider a title streams on in the user's region (TMDB, data by JustWatch). Apps are matched at runtime ([Availability.map]). */
+class Provider(val id: Int, val name: String)
 
 class Season(val number: Int, val name: String, val episodes: Int, val year: String)
 
@@ -17,6 +17,8 @@ class Season(val number: Int, val name: String, val episodes: Int, val year: Str
 class Details(
     val item: ContentItem, val type: String, val tmdbId: Int, val tagline: String, val meta: String,
     val providers: List<Provider>, val imdb: String, val seasons: List<Season>, val more: List<ContentItem>,
+    /** TMDB has an entry for the region: without one, where it streams is unknown (never "not available"). */
+    val known: Boolean = false,
 )
 
 /**
@@ -82,13 +84,14 @@ class Catalog(private val net: Net, private val key_: () -> String, private val 
         val vote = o.optDouble("vote_average", 0.0)
         val meta = join(year(o.optString(if (type == "movie") "release_date" else "first_air_date")), if (type == "movie") "Movie" else "Series",
             runtime, if (lang != "en") languageName(lang) else "", genres.take(3).joinToString(", "), if (vote > 0) "★ %.1f".format(Locale.US, vote) else "")
-        val providers = providers(o.optJSONObject("watch/providers")?.optJSONObject("results"))
+        val here = o.optJSONObject("watch/providers")?.optJSONObject("results")?.optJSONObject(region())
+        val providers = providers(here)
         val imdb = o.optJSONObject("external_ids")?.optString("imdb_id")?.takeIf { it.startsWith("tt") } ?: o.optString("imdb_id").takeIf { it.startsWith("tt") } ?: ""
         val seasons = o.optJSONArray("seasons")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }
             .filter { it.optInt("season_number") > 0 && it.optInt("episode_count") > 0 }
             .map { Season(it.optInt("season_number"), it.optString("name"), it.optInt("episode_count"), year(it.optString("air_date"))) } } ?: emptyList()
         val more = items(o.optJSONObject("recommendations")?.optJSONArray("results") ?: JSONArray(), type)
-        return Details(item, type, id, o.optString("tagline"), meta, providers, imdb, seasons, more)
+        return Details(item, type, id, o.optString("tagline"), meta, providers, imdb, seasons, more, here != null)
     }
 
     /** Episodes of one season as items "ep:<tv>:<s>:<e>" with their still frames. */
@@ -106,6 +109,22 @@ class Catalog(private val net: Net, private val key_: () -> String, private val 
     fun item(o: JSONObject, type: String): ContentItem? = toItem(o, type)
     fun genreName(id: Int): String = genreNames()[id] ?: ""
 
+    // Availability (Release 2): TMDB watch providers for the content region, data by JustWatch.
+    fun availRegion(): String = region()
+    /** The region's watch providers, id -> name (movies or TV); cached a day. */
+    fun providerList(type: String): Map<Int, String> {
+        val a = get("providers-$type-${region()}", 24, "watch/providers/$type?watch_region=${region()}").optJSONArray("results") ?: return emptyMap()
+        return (0 until a.length()).map { a.getJSONObject(it) }.associate { it.optInt("provider_id") to it.optString("provider_name") }
+    }
+    /** Released in the last 120 days with a subscription in the region on any of [providers] (TMDB's own filter); 12 hours. */
+    fun newOn(type: String, providers: List<Int>): JSONArray {
+        val today = java.time.LocalDate.now(); val d = if (type == "movie") "primary_release_date" else "first_air_date"
+        val p = providers.sorted()
+        return get("new-$type-${region()}-${p.joinToString("_")}-$today", 12, "discover/$type?watch_region=${region()}&with_watch_providers=${p.joinToString("|")}" +
+            "&with_watch_monetization_types=flatrate&$d.gte=${today.minusDays(120)}&$d.lte=$today&sort_by=popularity.desc&include_adult=false")
+            .optJSONArray("results") ?: JSONArray()
+    }
+
     /** A franchise (TMDB collection) and its movies with their release dates; cached 24 hours. */
     fun collection(id: Int): JSONObject = get("collection-$id", 24, "collection/$id")
 
@@ -119,15 +138,14 @@ class Catalog(private val net: Net, private val key_: () -> String, private val 
         }
     }
 
-    private fun providers(results: JSONObject?): List<Provider> {
-        if (results == null) return emptyList()
-        val r = listOf(region(), "IN", "US").firstOrNull { results.has(it) } ?: return emptyList()
-        val o = results.getJSONObject(r)
+    /** The region's own entry only: another country's offers are never shown as available here. */
+    private fun providers(o: JSONObject?): List<Provider> {
+        if (o == null) return emptyList()
         val out = LinkedHashMap<Int, Provider>()
         for (kind in arrayOf("flatrate", "free", "ads")) {
             val a = o.optJSONArray(kind) ?: continue
             for (i in 0 until a.length()) { val p = a.getJSONObject(i); val id = p.optInt("provider_id")
-                out.putIfAbsent(id, Provider(id, p.optString("provider_name"), PROVIDER_APPS[id])) }
+                out.putIfAbsent(id, Provider(id, p.optString("provider_name"))) }
         }
         return out.values.toList()
     }
@@ -172,8 +190,6 @@ class Catalog(private val net: Net, private val key_: () -> String, private val 
         /** The Indian languages chosen in Settings (empty: Indian rows are left out). */
         private fun indianQ() = Sources.indianLangs.joinToString("|")
         /** TMDB provider id -> the app on this TV that plays it. */
-        val PROVIDER_APPS = mapOf(8 to Apps.NETFLIX, 1796 to Apps.NETFLIX, 119 to Apps.PRIME, 9 to Apps.PRIME, 10 to Apps.PRIME,
-            283 to Apps.CRUNCHYROLL, 192 to Apps.YOUTUBE)
         private fun year(d: String) = d.take(4)
         private fun join(vararg p: String) = p.filter { it.isNotBlank() }.joinToString("  ·  ")
         fun languageName(code: String) = if (code.isEmpty()) "" else Locale(code).getDisplayLanguage(Locale.ENGLISH).takeIf { it != code } ?: ""
