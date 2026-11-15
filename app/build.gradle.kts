@@ -7,6 +7,8 @@ plugins {
 val local = Properties().apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) } }
 
 android {
+    // JVM unit tests: android.util.Log and other framework stubs return defaults instead of throwing.
+    testOptions { unitTests.isReturnDefaultValues = true }
     namespace = "com.eppletv.launcher"
     compileSdk = 37
 

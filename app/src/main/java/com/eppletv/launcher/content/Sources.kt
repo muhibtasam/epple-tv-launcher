@@ -69,6 +69,8 @@ object Sources {
     }
 
     val usesTmdb get() = Credentials.hasAny(Credentials.Key.TMDB)
+    /** TMDB lookups for Continue Watching (null without a TMDB key or when a lookup fails). */
+    val tmdb: Showcase? get() = if (usesTmdb) showcase else null
 
     /** Uploads playlist of tapmad's official YouTube channel (@tapmadofficial, UCPHOf3lVS8bUSwR1h55EO6g). */
     private const val TAPMAD_UPLOADS = "UUPHOf3lVS8bUSwR1h55EO6g"
@@ -138,6 +140,30 @@ class Showcase(private val services: Map<String, Service>, private val keys: Key
     private fun tmdb(net: Net, cacheKey: String, ttl: Long, path: String) = JSONObject(net.cached("tmdb-$cacheKey", ttl, tmdbUrl(path), tmdbHeaders))
 
     private class Pick(val type: String, val id: Int, val isNew: Boolean)
+
+    // Continue Watching metadata by the IMDb id an app publishes (see Resume). [offline]: stored copies only, no request.
+    private fun tmdbOr(net: Net, cacheKey: String, ttl: Long, path: String, offline: Boolean): JSONObject? =
+        if (offline) net.stored("tmdb-$cacheKey")?.let { JSONObject(it) } else tmdb(net, cacheKey, ttl, path)
+    /** (TMDB id, overview, poster) of the movie or series with this IMDb id; null when TMDB doesn't know it. */
+    fun byImdb(net: Net, imdb: String, movie: Boolean, offline: Boolean): Triple<Int, String, String>? {
+        if (!Regex("tt\\d{5,10}").matches(imdb)) return null
+        val r = tmdbOr(net, "imdb-$imdb", 30 * 24 * HOUR, "find/$imdb?external_source=imdb_id", offline) ?: return null
+        val o = r.optJSONArray(if (movie) "movie_results" else "tv_results")?.optJSONObject(0) ?: return null
+        return Triple(o.optInt("id"), o.optString("overview"), o.optString("poster_path").let { if (it.startsWith("/")) "https://image.tmdb.org/t/p/w500$it" else "" })
+    }
+    fun series(net: Net, id: Int, offline: Boolean): Resume.Series? {
+        val o = tmdbOr(net, "tvshow-$id", 24 * HOUR, "tv/$id", offline) ?: return null
+        val last = o.optJSONObject("last_episode_to_air")
+        val counts = HashMap<Int, Int>()
+        o.optJSONArray("seasons")?.let { a -> for (i in 0 until a.length()) a.optJSONObject(i)?.let { counts[it.optInt("season_number")] = it.optInt("episode_count") } }
+        return Resume.Series(o.optString("overview"), last?.optInt("season_number") ?: 0, last?.optInt("episode_number") ?: 0, counts)
+    }
+    /** Season [s]'s episodes: number to (name, overview, runtime in ms). */
+    fun season(net: Net, id: Int, s: Int, offline: Boolean): Map<Int, Triple<String, String, Long>>? {
+        val a = tmdbOr(net, "tvseason-$id-$s", 24 * HOUR, "tv/$id/season/$s", offline)?.optJSONArray("episodes") ?: return null
+        return (0 until a.length()).mapNotNull { a.optJSONObject(it) }.associate {
+            it.optInt("episode_number") to Triple(it.optString("name"), it.optString("overview"), it.optLong("runtime") * 60_000L) }
+    }
 
     override fun load(net: Net, pkg: String): List<ContentItem> {
         val svc = services.getValue(pkg)

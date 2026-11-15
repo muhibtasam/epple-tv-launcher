@@ -155,7 +155,9 @@ class ContinueCard(ctx: Context, private val l: Layout, private val clock: Frame
         val app = it.kind.removePrefix("Continue in ")
         val parts = it.meta.split("  ·  ").map { p -> p.trim() }.filter { p -> p.isNotEmpty() && p != app }
         pct = parts.firstNotNullOfOrNull { p -> PCT.find(p)?.groupValues?.get(1)?.toFloatOrNull() }?.div(100f) ?: -1f
-        caption = parts.filter { p -> !p.startsWith("★") }.take(2).joinToString("  ·  ").ifEmpty { "Resume in $app" }
+        // An episode's number is its own field, shown here only (the info block above names the episode, not its number).
+        caption = (if (it.episode.isEmpty()) parts.filter { p -> !p.startsWith("★") }.take(2) else listOf(it.episode) + parts.filter { p -> PCT.containsMatchIn(p) })
+            .joinToString("  ·  ").ifEmpty { "Resume in $app" }
         invalidate()
     }
 

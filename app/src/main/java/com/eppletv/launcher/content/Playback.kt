@@ -30,6 +30,8 @@ object Playback {
     private val played = HashMap<String, Long>()          // per app: verified playing time since its last mark
     private val since = HashMap<String, Long>()           // per app: when its current PLAYING stretch began
     private val checks = HashMap<String, Runnable>()      // per app: the pending 30-second check
+    private val lastState = HashMap<String, PlaybackState>()                    // per app: the newest state seen
+    private val lastMeta = HashMap<String, android.media.MediaMetadata>()       // per app: what it said was playing
     private val listener = MediaSessionManager.OnActiveSessionsChangedListener { list -> sync(list.orEmpty()) }
 
     /** Main thread, from the notification listener once it is connected. */
@@ -71,9 +73,11 @@ object Playback {
             val pkg = mc.packageName
             val cb = object : MediaController.Callback() {
                 override fun onPlaybackStateChanged(s: PlaybackState?) = state(pkg, s)
+                override fun onMetadataChanged(m: android.media.MediaMetadata?) { if (m != null) lastMeta[pkg] = m }
                 override fun onSessionDestroyed() = state(pkg, null)
             }
             mc.registerCallback(cb, main); tracked[mc.sessionToken] = mc to cb
+            mc.metadata?.let { lastMeta[pkg] = it }
             state(pkg, mc.playbackState)
         }
     }
@@ -85,9 +89,27 @@ object Playback {
         if (playing && open == null) { since[pkg] = t; Log.i(TAG, "$pkg playing"); app?.let { Recency.sessionSeen(it, pkg) } }
         else if (!playing && open != null) {
             since.remove(pkg); played[pkg] = (played[pkg] ?: 0L) + (t - open)
+            remember(pkg, s ?: lastState[pkg])
             Log.i(TAG, "$pkg stopped: ${played(pkg) / 1000} s verified")
         }
+        if (s != null) lastState[pkg] = s
         schedule(pkg)
+    }
+
+    /**
+     * Saves where the session says [pkg] stands (position, duration, episode name) for Continue Watching (see [Resume]).
+     * A PLAYING state is carried forward to now; nothing is saved without a title or a position.
+     */
+    private fun remember(pkg: String, st: PlaybackState?) {
+        val c = app ?: return; st ?: return
+        val md = tracked.values.firstOrNull { it.first.packageName == pkg }?.first?.metadata ?: lastMeta[pkg] ?: return
+        val title = (md.description?.title ?: md.getString(android.media.MediaMetadata.METADATA_KEY_TITLE))?.toString()?.trim().orEmpty()
+        if (title.isEmpty() || st.position <= 0) return
+        val name = md.description?.subtitle?.toString()?.trim().orEmpty()
+        val pos = st.position + if (st.state == PlaybackState.STATE_PLAYING) ((SystemClock.elapsedRealtime() - st.lastPositionUpdateTime) * st.playbackSpeed).toLong() else 0L
+        val dur = md.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION).coerceAtLeast(0L)
+        Resume.save(c, pkg, title, Resume.Saved(if (dur > 0) pos.coerceAtMost(dur) else pos, dur, name, System.currentTimeMillis()))
+        Log.i(TAG, "$pkg at ${pos / 1000} s of ${dur / 1000} s")
     }
 
     /** While [pkg] plays below the threshold, one check at the moment it would cross it. */
@@ -102,6 +124,7 @@ object Playback {
 
     private fun reached(pkg: String) {
         val c = app ?: return
+        remember(pkg, lastState[pkg])
         Recency.verified(c, pkg, played(pkg))
         // What the session says is playing (no extra permission): lets Taste reject trailers, previews and other titles.
         val md = tracked.values.firstOrNull { it.first.packageName == pkg }?.first?.metadata

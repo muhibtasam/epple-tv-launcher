@@ -28,18 +28,19 @@ class ContentItem(
     val origin: String = "",     // "in" (Indian) or "intl"; used to balance the selection
     val logoUrl: String = "",    // transparent title logo when the source supplies one directly
     val posterUrl: String = "",  // portrait poster (2:3) for rows; empty = the landscape art, cropped
+    val episode: String = "",    // "S1 E9" for an episode in Continue Watching (shown once, under its card); never in meta
 ) {
-    fun reweighted(w: Double) = ContentItem(id, title, meta, imageUrl, linkUri, linkPkg, kind, summary, w, origin, logoUrl, posterUrl)
+    fun reweighted(w: Double) = ContentItem(id, title, meta, imageUrl, linkUri, linkPkg, kind, summary, w, origin, logoUrl, posterUrl, episode)
     fun intent(): Intent? = linkUri?.let {
         Intent(Intent.ACTION_VIEW, Uri.parse(it)).setPackage(linkPkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     fun json(): JSONObject = JSONObject().put("id", id).put("title", title).put("meta", meta).put("image", imageUrl)
         .put("uri", linkUri ?: JSONObject.NULL).put("pkg", linkPkg ?: JSONObject.NULL).put("kind", kind).put("summary", summary)
-        .put("w", weight).put("o", origin).put("logo", logoUrl).put("poster", posterUrl)
+        .put("w", weight).put("o", origin).put("logo", logoUrl).put("poster", posterUrl).put("ep", episode)
     companion object {
         fun of(o: JSONObject) = ContentItem(o.getString("id"), o.getString("title"), o.getString("meta"), o.getString("image"),
             if (o.isNull("uri")) null else o.getString("uri"), if (o.isNull("pkg")) null else o.getString("pkg"),
-            o.optString("kind"), o.optString("summary"), o.optDouble("w", 0.0), o.optString("o"), o.optString("logo"), o.optString("poster"))
+            o.optString("kind"), o.optString("summary"), o.optDouble("w", 0.0), o.optString("o"), o.optString("logo"), o.optString("poster"), o.optString("ep"))
     }
 }
 
@@ -97,6 +98,12 @@ class Net(private val dir: File) {
                 if (f.exists()) f.readText() else throw e
             }
         }
+    }
+
+    /** The last copy stored under [key], however old; null when there is none. Never touches the network. */
+    fun stored(key: String): String? {
+        val lock = synchronized(locks) { locks.getOrPut(key) { Any() } }
+        synchronized(lock) { return File(dir, "raw-$key.json").takeIf { it.exists() }?.readText() }
     }
 
     class HttpError(val code: Int) : java.io.IOException("HTTP $code")

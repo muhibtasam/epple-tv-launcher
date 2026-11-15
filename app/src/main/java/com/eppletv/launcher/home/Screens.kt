@@ -1,5 +1,6 @@
 package com.eppletv.launcher.home
 
+import com.eppletv.launcher.content.Resume
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
@@ -519,7 +520,7 @@ object ContinueWatching {
             if (R.removed(ctx, it.linkPkg, it.title) || !seen.add(norm(it.title))) continue
             val wn = R.acceptedTime(ctx, it.linkPkg, it.title, engaged[it.id] ?: 0L)
             if (wn < 0) continue                                  // appeared without verified viewing
-            val own = maxOf(wn, R.titleTime(ctx, it.linkPkg, it.title))
+            val own = maxOf(wn, R.titleTime(ctx, it.linkPkg, it.title), Resume.saved(ctx, it.linkPkg, it.title)?.at ?: 0L)
             if (own > 0) { keyed += it to own; continue }
             val k = rank.merge(it.linkPkg ?: "", 1, Int::plus)!!
             if (k <= UNTIMED_PER_APP) keyed += it to R.appTime(ctx, it.linkPkg) - 1000L * k
@@ -527,10 +528,14 @@ object ContinueWatching {
         // Titles opened from Epple TV count only once their app reported 30 seconds of playing (a verified stamp);
         // the rest stay in the history underneath, unshown.
         for (it in mine) {
-            val t = R.titleTime(ctx, it.linkPkg, it.title)
+            val t = maxOf(R.titleTime(ctx, it.linkPkg, it.title), Resume.saved(ctx, it.linkPkg, it.title)?.at ?: 0L)
             if (t > 0 && !R.removed(ctx, it.linkPkg, it.title) && seen.add(norm(it.title))) keyed += it to t
         }
-        val sorted = keyed.sortedByDescending { it.second }.take(SHOWN)
+        // Only titles watched today or in the 13 days before (display only: the history underneath is kept).
+        val now = System.currentTimeMillis()
+        val old = keyed.filter { !Resume.inWindow(it.second, now) }
+        if (old.isNotEmpty()) android.util.Log.i("EppleContinue", "older than ${Resume.DAYS} days: " + old.joinToString { it.first.title })
+        val sorted = (keyed - old.toSet()).sortedByDescending { it.second }.take(SHOWN)
         val fmt = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.ROOT)
         android.util.Log.i("EppleContinue", "order (${sorted.size} shown of ${keyed.size}): " + sorted.take(10).mapIndexed { i, (it, t) ->
             "#$i ${it.title} (${(it.linkPkg ?: "").substringAfterLast('.')}) ${if (t > 0) fmt.format(java.util.Date(t)) else "-"}" }.joinToString(" | "))
@@ -551,14 +556,40 @@ object ContinueWatching {
         // Rows without times (an app's own Continue Watching channel) list the newest first: a new first title was just watched.
         rows.filter { !it.watchNext }.groupBy { it.pkg }.forEach { (pkg, l) -> com.eppletv.launcher.content.Recency.front(ctx, pkg, l.first().title) }
         val seen = HashSet<String>()
-        return rows.filter { seen.add(it.pkg + "|" + norm(it.title)) }.take(MAX).map { p ->
+        val tm = com.eppletv.launcher.content.Sources.tmdb
+        val offline = !posters        // the quick first pass reads TMDB's stored copies only; the second may ask
+        return rows.filter { seen.add(it.pkg + "|" + norm(it.title)) }.take(MAX).mapNotNull { p ->
             engaged["wn:${p.pkg}:${norm(p.title)}"] = p.engaged
-            val pct = p.progress.let { if (it > 0) "${(it * 100).toInt()}% watched" else "" }
-            ContentItem("wn:${p.pkg}:${norm(p.title)}", p.title, listOf(app(p.pkg), p.episode?.let { e -> if (e.all(Char::isDigit)) "Episode $e" else e } ?: "", pct).filter { it.isNotEmpty() }.joinToString("  ·  "),
-                com.eppletv.launcher.content.TvListings.cleanArt(p.wide!!).first, p.link, p.pkg, "Continue in ${app(p.pkg)}", p.description ?: "",
-                // Portrait art for the row's narrow cards: the app's own when it published one, else TMDB's poster by name.
-                posterUrl = p.tall?.let { com.eppletv.launcher.content.TvListings.cleanArt(it).first }
-                    ?: (if (!posters) null else try { com.eppletv.launcher.content.Sources.posterFor(net, p.title, p.isMovie) } catch (_: Exception) { null }) ?: "")
+            val movie = p.isMovie
+            val rowS = p.season?.toIntOrNull(); val rowE = p.episode?.toIntOrNull()
+            val saved = Resume.saved(ctx, p.pkg, p.title)
+            // The app's own data first; TMDB (by the exact IMDb id the app publishes) only fills what is missing.
+            val imdb = (p.providerId ?: p.link)?.let { Regex("tt\\d{5,10}").find(it)?.value }
+            fun <T> look(f: () -> T?): T? = try { f() } catch (e: Exception) { null }
+            val found = if (tm == null || imdb == null) null else look { tm.byImdb(net, imdb, movie, offline) }
+            val series = if (movie || found == null) null else look { tm!!.series(net, found.first, offline) }
+            val seasons = HashMap<Int, Map<Int, Triple<String, String, Long>>?>()
+            fun eps(sn: Int?) = if (sn == null || found == null || movie) null else seasons.getOrPut(sn) { look { tm!!.season(net, found.first, sn, offline) } }
+            val savedEp = if (saved == null || movie || saved.name.isEmpty()) null
+                else (rowS ?: 1).let { sn -> eps(sn)?.entries?.firstOrNull { it.value.first.equals(saved.name, ignoreCase = true) }?.let { sn to it.key } }
+            val shown = Resume.decide(movie, rowS, rowE, p.position, p.duration, saved, savedEp, series)
+            if (shown == null) { android.util.Log.i("EppleContinue", "left out ${p.title}: finished, or not out yet"); return@mapNotNull null }
+            val ep = eps(shown.s)?.get(shown.e)
+            val duration = if (shown.duration > 0) shown.duration else ep?.third ?: 0L
+            val pr = Resume.progress(shown.position, duration)
+            val pct = if (pr > 0) "${(pr * 100).toInt()}% watched" else ""
+            val name = Resume.fill(shown.name, ep?.first).takeUnless { Regex("(?i)episode \\d+").matches(it) }.orEmpty()
+            val episode = if (movie) "" else Resume.label(shown.s, shown.e).ifEmpty { p.episode?.takeIf { e -> !e.all(Char::isDigit) }.orEmpty() }
+            // Moved on to another episode than the app's row: open that one (Stremio's documented detail link only).
+            val link = if (shown.s != null && shown.e != null && rowS != null && rowE != null && (shown.s != rowS || shown.e != rowE) && p.link?.startsWith("stremio:///detail/series/") == true)
+                p.link.replace("%3A$rowS%3A$rowE", "%3A${shown.s}%3A${shown.e}") else p.link
+            ContentItem("wn:${p.pkg}:${norm(p.title)}", p.title, listOf(app(p.pkg), name, pct).filter { it.isNotEmpty() }.joinToString("  ·  "),
+                com.eppletv.launcher.content.TvListings.cleanArt(p.wide!!).first, link, p.pkg, "Continue in ${app(p.pkg)}",
+                Resume.fill(p.description, ep?.second, series?.overview, found?.second),
+                // Portrait art for the row's narrow cards: the app's own, else TMDB's by IMDb id, else TMDB's by name.
+                posterUrl = p.tall?.let { com.eppletv.launcher.content.TvListings.cleanArt(it).first } ?: found?.third?.ifEmpty { null }
+                    ?: (if (!posters) null else look { com.eppletv.launcher.content.Sources.posterFor(net, p.title, p.isMovie) }) ?: "",
+                episode = episode)
         }
     }
 }
