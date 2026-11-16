@@ -381,6 +381,33 @@ class NoteRow(ctx: Context, private val l: Layout, val note: com.eppletv.launche
         invalidate()
     }
 
+    /** The app's own icon, Epple-style in a circle. A glyph (mostly transparent, usually white) sits in a grey well
+     *  that stays dark enough to show it on the focused white card; a full-bleed icon (logo, avatar) is cropped to the
+     *  circle. Its own colours are kept either way. */
+    private fun appIcon(c: Canvas, icon: android.graphics.Bitmap, f: Boolean) {
+        val d = r.width(); val cx = r.centerX(); val cy = r.centerY()
+        val glyph = iconIsGlyph ?: isGlyph(icon).also { iconIsGlyph = it }
+        clip.reset(); clip.addCircle(cx, cy, d / 2f, Path.Direction.CW)
+        if (glyph) {
+            bg.color = if (f) 0xFF7A7F89.toInt() else 0x38FFFFFF; c.drawCircle(cx, cy, d / 2f, bg)
+            val s = d * 0.56f / maxOf(icon.width, icon.height)
+            m.setScale(s, s); m.postTranslate(cx - icon.width * s / 2f, cy - icon.height * s / 2f)
+            c.drawBitmap(icon, m, img)
+        } else {
+            c.save(); c.clipPath(clip)
+            val s = d / minOf(icon.width, icon.height)
+            m.setScale(s, s); m.postTranslate(cx - icon.width * s / 2f, cy - icon.height * s / 2f)
+            c.drawBitmap(icon, m, img); c.restore()
+        }
+    }
+    private var iconIsGlyph: Boolean? = null
+    /** Mostly transparent (a glyph) rather than a picture filling its square. */
+    private fun isGlyph(b: android.graphics.Bitmap): Boolean {
+        var clear = 0; var n = 0; val step = maxOf(1, b.width / 12)
+        for (y in 0 until b.height step step) for (x in 0 until b.width step step) { n++; if ((b.getPixel(x, y) ushr 24) < 0x40) clear++ }
+        return clear * 2 > n
+    }
+
     private fun ago(t: Long): String {
         val d = (System.currentTimeMillis() - t) / 60000
         return when { d < 1 -> "Now"; d < 60 -> "$d min"; d < 1440 -> "${d / 60} h"; else -> android.text.format.DateFormat.format("d MMM", t).toString() }
@@ -398,7 +425,8 @@ class NoteRow(ctx: Context, private val l: Layout, val note: com.eppletv.launche
         val pw = if (f && picture != null) l.pxf(300f) else l.pxf(64f); val ph = if (f && picture != null) l.pxf(169f) else l.pxf(64f)
         val py = if (f && picture != null) l.pxf(18f) else l.pxf(16f)
         r.set(x, py, x + pw, py + ph)
-        if (pic != null) {
+        if (picture == null && note.icon != null) appIcon(c, note.icon, f)
+        else if (pic != null) {
             clip.reset(); clip.addRoundRect(r, l.pxf(14f), l.pxf(14f), Path.Direction.CW)
             c.save(); c.clipPath(clip)
             val s = maxOf(pw / pic.width, ph / pic.height); m.setScale(s, s); m.postTranslate(x + (pw - pic.width * s) / 2f, py + (ph - pic.height * s) / 2f)
