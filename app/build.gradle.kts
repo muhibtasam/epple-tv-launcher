@@ -12,6 +12,12 @@ val local = Properties().apply { rootProject.file("local.properties").takeIf { i
 val releaseSigning = listOf("EPPLE_RELEASE_STORE_FILE", "EPPLE_RELEASE_STORE_PASSWORD", "EPPLE_RELEASE_KEY_ALIAS", "EPPLE_RELEASE_KEY_PASSWORD")
     .associateWith { (System.getenv(it) ?: providers.gradleProperty(it).orNull)?.takeIf { v -> v.isNotBlank() } }
 val missingSigning = releaseSigning.filterValues { it == null }.keys.toList()
+// Debug signing: a separate development-only key (never the release key, never ~/.android/debug.keystore, which holds
+// the release identity). Same sources; scripts/build.sh --debug reads the password from the Keychain item
+// "epple-tv-debug-keystore". A debug build without all four stops rather than falling back to another key.
+val debugSigning = listOf("EPPLE_DEBUG_STORE_FILE", "EPPLE_DEBUG_STORE_PASSWORD", "EPPLE_DEBUG_KEY_ALIAS", "EPPLE_DEBUG_KEY_PASSWORD")
+    .associateWith { (System.getenv(it) ?: providers.gradleProperty(it).orNull)?.takeIf { v -> v.isNotBlank() } }
+val missingDebugSigning = debugSigning.filterValues { it == null }.keys.toList()
 
 android {
     // JVM unit tests: android.util.Log and other framework stubs return defaults instead of throwing.
@@ -54,6 +60,14 @@ android {
                 keyPassword = releaseSigning.getValue("EPPLE_RELEASE_KEY_PASSWORD")
             }
         }
+        create("eppleDebug") {
+            if (missingDebugSigning.isEmpty()) {
+                storeFile = file(debugSigning.getValue("EPPLE_DEBUG_STORE_FILE")!!)
+                storePassword = debugSigning.getValue("EPPLE_DEBUG_STORE_PASSWORD")
+                keyAlias = debugSigning.getValue("EPPLE_DEBUG_KEY_ALIAS")
+                keyPassword = debugSigning.getValue("EPPLE_DEBUG_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -63,10 +77,11 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")
         }
-        // Debug builds: their own app (com.eppletv.launcher.debug, "Epple TV (Debug)"), signed with the standard debug
-        // config, so they install beside the public app and can never replace it.
+        // Debug builds: their own app (com.eppletv.launcher.debug, "Epple TV (Debug)"), signed with the separate debug
+        // key, so they install beside the public app and can never replace it.
         debug {
             applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("eppleDebug")
         }
     }
     compileOptions {
@@ -81,6 +96,10 @@ tasks.configureEach {
     if ((name.startsWith("package") || name.startsWith("validateSigning")) && name.endsWith("Release")) {
         val missing = missingSigning
         doFirst { if (missing.isNotEmpty()) throw GradleException("Release signing is not configured: set ${missing.joinToString()} (scripts/build.sh reads them from the Keychain).") }
+    }
+    if ((name.startsWith("package") || name.startsWith("validateSigning")) && (name.endsWith("Debug") || name.endsWith("DebugAndroidTest"))) {
+        val missing = missingDebugSigning
+        doFirst { if (missing.isNotEmpty()) throw GradleException("Debug signing is not configured: set ${missing.joinToString()} (scripts/build.sh --debug reads them from the Keychain).") }
     }
 }
 
