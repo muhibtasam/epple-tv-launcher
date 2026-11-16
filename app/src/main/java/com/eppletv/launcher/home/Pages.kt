@@ -490,6 +490,7 @@ internal class Dots(ctx: Context, private val l: Layout, private val clock: Fram
     private val t = Spring(1f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
     /** The active pill fills with white over the time until the next title (0 = no timer: it is simply white). */
     private var since = 0L; private var span = 0L
+    private val refill = Runnable { invalidate() }
     fun set(count: Int, index: Int) {
         if (count == n && index == i) return
         from = if (count == n) i else index
@@ -511,6 +512,7 @@ internal class Dots(ctx: Context, private val l: Layout, private val clock: Fram
         val cy = height / 2f
         val k = t.value.coerceIn(0f, 1f)
         val progress = if (span > 0) ((android.os.SystemClock.uptimeMillis() - since).toFloat() / span).coerceIn(0f, 1f) else 1f
+        var activeW = 0f
         for (j in first until first + shown) {
             val grow = when (j) { i -> k; from -> 1f - k; else -> 0f }
             // Dots at an edge with more titles beyond it get smaller, as on tvOS.
@@ -522,13 +524,18 @@ internal class Dots(ctx: Context, private val l: Layout, private val clock: Fram
             r.set(x, cy - dd / 2f, x + w, cy + dd / 2f)
             c.drawRoundRect(r, dd / 2f, dd / 2f, p)
             if (j == i) {                                            // the white part of the active pill
+                activeW = w
                 val fw = w * (if (grow >= 0.99f) progress else 1f).coerceAtLeast(dd / w)
                 c.save(); clip.reset(); clip.addRoundRect(r, dd / 2f, dd / 2f, android.graphics.Path.Direction.CW); c.clipPath(clip)
                 c.drawRect(x, cy - dd / 2f, x + fw, cy + dd / 2f, fill); c.restore()
             }
             x += w + gap
         }
-        if (span > 0 && progress < 1f) postInvalidateDelayed(50)     // the fill moves at 20 fps: cheap, and smooth at this size
+        // Redraw when the fill has grown by half a pixel (a few times a second), not at a fixed rate: each redraw
+        // recomposites the whole screen, and on this GPU an idle Home otherwise renders ~47 frames a second.
+        // One pending redraw at most: posting a new one from every onDraw stacked up chains until the screen ran at 60 fps.
+        removeCallbacks(refill)
+        if (span > 0 && progress < 1f) postDelayed(refill, (span * 0.5f / activeW.coerceAtLeast(1f)).toLong().coerceIn(50L, 500L))
     }
     private companion object { const val MAX = 9 }
 }
