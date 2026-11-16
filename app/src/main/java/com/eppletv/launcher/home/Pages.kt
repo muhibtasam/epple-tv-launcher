@@ -227,19 +227,32 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
     private var drifting = false
     private var driftPaused = false
     private var driftT = 0f
-    private var driftFrame = 0
+
+    private var lastInput = android.os.SystemClock.uptimeMillis()
+    private var sinceApply = 0f
+
+    /** A remote button was pressed: the drift holds where it is, and continues after a short quiet spell. */
+    fun interacted() {
+        lastInput = android.os.SystemClock.uptimeMillis()
+        if (drifting && !driftPaused) clock.add(drifter)          // it may have stopped after the long idle
+    }
 
     /**
      * Ken Burns drift on Home's wallpaper: the front layer zooms smoothly between 100 % and 108 % and back, one full
-     * cycle every [DRIFT_PERIOD_S] seconds. Only the layer's transform changes (no redraw of the picture), and it is
-     * applied every second frame: the whole screen recomposites when the backdrop moves, so the drift runs at 30 fps,
-     * half the idle cost of 60 (the motion is under a pixel per frame either way).
+     * cycle every [DRIFT_PERIOD_S] seconds. Only the layer's transform changes (no redraw of the picture), but the
+     * whole screen recomposites when it moves, so it is applied at ~20 fps (the motion is far under a pixel per step).
+     * It holds still while the remote is in use (the GPU goes to focus motion) and stops after [DRIFT_STOP_MS] without
+     * input. Holding and stopping keep the current zoom and time, so it always continues from where it was: no jump.
      */
     private val drifter = object : FrameClock.Tick {
         override fun tick(dt: Float): Boolean {
             if (!drifting || driftPaused) return false
-            driftT += dt
-            if (driftFrame++ % 2 == 0) {
+            val quiet = android.os.SystemClock.uptimeMillis() - lastInput
+            if (quiet > DRIFT_STOP_MS) return false
+            if (quiet < DRIFT_HOLD_MS) return true
+            driftT += dt; sinceApply += dt
+            if (sinceApply >= DRIFT_STEP_S) {
+                sinceApply = 0f
                 val s = 1f + (DRIFT_SCALE - 1f) * 0.5f * (1f - kotlin.math.cos(2.0 * Math.PI * driftT / DRIFT_PERIOD_S).toFloat())
                 front.scaleX = s; front.scaleY = s
             }
@@ -261,7 +274,12 @@ class Backdrop(ctx: Context, private val clock: FrameClock) : FrameClock.Tick {
         if (!paused && drifting) clock.add(drifter)
     }
 
-    private companion object { const val DRIFT_PERIOD_S = 44f; const val DRIFT_SCALE = 1.08f }
+    private companion object {
+        const val DRIFT_PERIOD_S = 44f; const val DRIFT_SCALE = 1.08f
+        const val DRIFT_STEP_S = 0.048f            // ~20 fps (three 60 Hz frames, with a little slack for timing jitter)
+        const val DRIFT_HOLD_MS = 1500L            // quiet time after a button press before the drift continues
+        const val DRIFT_STOP_MS = 3 * 60_000L      // no input for 3 minutes: the drift stops until the next press
+    }
 
     override fun tick(dt: Float): Boolean {
         fade.step(dt); top.alpha = fade.value; listeners.forEach { it() }

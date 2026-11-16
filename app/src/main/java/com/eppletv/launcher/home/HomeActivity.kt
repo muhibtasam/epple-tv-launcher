@@ -1030,7 +1030,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val k = event.keyCode
         val down = event.action == KeyEvent.ACTION_DOWN
-        if (down) { restartIdle() }
+        if (down) { restartIdle(); hero.backdrop.interacted() }
         // Any button wakes the screensaver and does nothing else.
         if (saver.showing) { if (down) { saver.stop(); swallowUp = true }; return true }
         // A notification popup: OK opens it, Back dismisses it; every other button works as usual.
