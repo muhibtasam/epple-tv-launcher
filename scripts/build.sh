@@ -57,5 +57,12 @@ if [ $PUBLIC = 1 ]; then
   NAME="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -1)"
   CODE="$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts | head -1)"
   for f in base google; do scripts/verify-release.sh "out/epple-tv-$f-release.apk" "$NAME" "$CODE"; done
+  # The files to attach to the GitHub release: the base APK (the release's only .apk, which older Epple TV builds look
+  # for) and version.json, which Epple TV 1.0.1+ needs before it offers the update (see home/Watchers.kt).
+  rm -rf out/release; mkdir -p out/release
+  cp out/epple-tv-base-release.apk "out/release/epple-tv-$NAME.apk"
+  printf '{\n  "versionName": "%s",\n  "versionCode": %s,\n  "apk": "epple-tv-%s.apk"\n}\n' "$NAME" "$CODE" "$NAME" > out/release/version.json
+  ( cd out/release && shasum -a 256 "epple-tv-$NAME.apk" > "epple-tv-$NAME.apk.sha256" )
+  echo "release files: $(ls out/release | tr '\n' ' ')"
 fi
 ls -l out/*.apk; grep -E "BUILD SUCCESSFUL" out/build.log
