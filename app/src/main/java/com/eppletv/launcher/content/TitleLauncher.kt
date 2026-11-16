@@ -14,7 +14,7 @@ import java.util.concurrent.Executors
 /**
  * Every rule for opening a title inside a streaming app lives here (the UI only calls [open]).
  *
- * Link forms, each tested on the TCL C6K against the app's own declared intent filters
+ * Link forms, each tested on the test TV against the app's own declared intent filters
  * (link rules for Netflix and Prime Video carried over from the earlier VYRO launcher, where they were proven on this TV):
  *  - Netflix      https://www.netflix.com/title/<id>, extra source=30, fresh task (a running Netflix otherwise stays on its home)
  *  - Prime Video  https://app.primevideo.com/detail?gti=<gti>, fresh task (Watchmode's amazon.com/watch.amazon.* links are rewritten)

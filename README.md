@@ -25,7 +25,7 @@ Epple is **not a streaming service**. It does not host, sell or play movies and 
 it in the streaming app that has it, and playback, subscriptions and sign-ins stay with that app.
 
 > Epple is an independent open-source project. It is not affiliated with, endorsed by or connected to Apple, Google,
-> TCL, TMDB, JustWatch or any streaming service. Epple does not run on Apple TV, tvOS or other Apple hardware. App names
+> TMDB, JustWatch or any streaming service. Epple does not run on Apple TV, tvOS or other Apple hardware. App names
 > and logos shown belong to their owners.
 
 ## Contents
@@ -148,7 +148,7 @@ plus shortcuts to the Screensaver, Bluetooth & Accessories, Epple's settings and
 | ![Control Center with Wi-Fi, standby, inputs, volume and sleep timer](assets/screenshots/control-center.png) | ![Screensaver showing a picture with the time and date](assets/screenshots/screensaver.png) |
 | **Control Center:** Wi-Fi, standby, inputs, volume, sleep timer and shortcuts. | **Screensaver:** your pictures with the time and date. |
 
-*Screenshots were taken from the running app on a TCL C6K. The Wi-Fi name and profile picture are blurred for privacy.
+*Screenshots were taken from the running app on an Android TV device. The Wi-Fi name and profile picture are blurred for privacy.
 The wallpapers are the owner's own pictures; Epple ships without wallpapers.*
 
 ## Installation
@@ -166,8 +166,8 @@ The wallpapers are the owner's own pictures; Epple ships without wallpapers.*
 ## Supported devices and requirements
 
 - **Android TV or Google TV** device running **Android 8.0 (API 26) or later**.
-- Developed and tested on a **TCL C6K (Google TV, Android 14)** with a 16:9 screen. Other Android TV and Google TV
-  devices should work but have not been tested yet. Reports from other devices are welcome in
+- Tested on **Android 14** (Google TV) on a **16:9 display**.
+- Device compatibility may vary depending on Android TV version and manufacturer. Compatibility reports are welcome in
   [Issues](https://github.com/muhibtasam/epple-tv-launcher/issues).
 - Internet access for artwork, recommendations and availability.
 - The APK is universal (no native code), so it runs on any CPU type.
@@ -272,7 +272,7 @@ Your streaming apps are separate apps with their own terms, ads policies and dat
 ## Limitations and roadmap
 
 **Current limitations**
-- Tested on one device (TCL C6K, Android 14), on 16:9 screens.
+- Tested on Android 14 on a 16:9 display; compatibility may vary by Android TV version and manufacturer.
 - Recommendations, showcases, search and availability need your own TMDB API key.
 - Continue Watching depends on what each app publishes to Android TV (see above).
 - Direct links to a title work only in apps that support them; otherwise the app opens at its home.
@@ -282,7 +282,7 @@ Your streaming apps are separate apps with their own terms, ads policies and dat
 
 **Roadmap**
 - Bring back the Movies and TV Shows sections.
-- Test on more Android TV and Google TV devices.
+- Broaden testing across Android TV versions and devices.
 - Keep refining recommendations and Continue Watching.
 
 ## License

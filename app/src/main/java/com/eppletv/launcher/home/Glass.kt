@@ -125,7 +125,7 @@ class GlassPlatter(ctx: Context, private val l: Layout, private val backdrop: Ba
         glintPaint.shader = android.graphics.ComposeShader(BitmapShader(mask, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP), glintGrad, android.graphics.PorterDuff.Mode.DST_IN)
     }
 
-    private companion object { const val FROST = 0f } // Frost off: on the C6K any frost under the rim/glint costs ~15 ms a frame, whatever its strength.
+    private companion object { const val FROST = 0f } // Frost off: on the test TV any frost under the rim/glint costs ~15 ms a frame, whatever its strength.
 
     private val tint = Paint(Paint.ANTI_ALIAS_FLAG)
 

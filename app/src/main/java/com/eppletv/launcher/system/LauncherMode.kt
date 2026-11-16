@@ -36,7 +36,7 @@ class LauncherMode(ctx: Context) {
         val holder = homeHolder(adb)
         val original = when {
             holder.isEmpty() || holder == PKG -> prefs.getString("original", null) ?: GOOGLE_HOME
-            holder == GOOGLE_SETUP -> GOOGLE_HOME                    // TCL leaves the role with the setup app's recovery screen
+            holder == GOOGLE_SETUP -> GOOGLE_HOME                    // Some TVs leave the role with the setup app's recovery screen
             else -> homeActivity(adb, holder) ?: GOOGLE_HOME
         }
         // Google TV's setup app only where it has a Home screen of its own (its recovery screen); never on older Android TV.

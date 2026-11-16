@@ -892,7 +892,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     /**
      * Bluetooth & Accessories: the platform's Bluetooth settings where they exist; on Google TV (which has none) the TV
-     * settings' accessories list (a maker's own screen first, e.g. TCL's), then Google TV's "Pair accessory"; else the
+     * settings' accessories list (a maker's own screen first), then Google TV's "Pair accessory"; else the
      * settings home.
      */
     private fun openBluetooth() {
