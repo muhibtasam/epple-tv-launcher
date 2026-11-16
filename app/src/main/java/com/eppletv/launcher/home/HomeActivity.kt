@@ -161,8 +161,9 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     private val rotate = object : Runnable {
         override fun run() {
-            if (resumed && !panel.open && section == 0 && (zone == Zone.HERO || zone == Zone.CONTENT && page.atTop())) hero.step(1, wrap = true)
-            if (prefs.rotateMs > 0) { main.postDelayed(this, prefs.rotateMs); hero.rotationTimer(prefs.rotateMs) }
+            // Not under the screensaver: it covers Home, and each new title is a full-screen crossfade nobody sees.
+            if (resumed && !panel.open && !saver.showing && section == 0 && (zone == Zone.HERO || zone == Zone.CONTENT && page.atTop())) hero.step(1, wrap = true)
+            if (prefs.rotateMs > 0) { main.postDelayed(this, prefs.rotateMs); hero.rotationTimer(if (saver.showing) 0 else prefs.rotateMs) }
         }
     }
     private fun restartRotation() {
@@ -268,7 +269,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         root.addView(panel.panel, panel.params())
 
         saver = Screensaver(this).apply {
-            onShowing = { on -> hero.backdrop.pauseDrift(on) }     // nothing of Home shows under the screensaver
+            // Nothing of Home shows under the screensaver: its drift and the title timer stop; rotation restarts on waking.
+            onShowing = { on -> hero.backdrop.pauseDrift(on); if (on) hero.rotationTimer(0) else restartRotation() }
             clockText = { timeText }
             // The network's name, looked up by the screensaver itself (Control Center may not have been opened yet);
             // "Wi-Fi" only until the name arrives (the saver refreshes this line every 15 seconds).
