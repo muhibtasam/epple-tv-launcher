@@ -80,7 +80,7 @@ object Watchers {
 
     /** At most once a day: the latest GitHub release, if newer than this build, as one note per version. */
     fun checkUpdate(c: Context, content: ContentRepository, prefs: Prefs, current: String) {
-        clearInstalled(current)
+        clearInstalled(c, current)
         if (prefs.get(Prefs.NOTIFY_UPDATES) != 0 || !due(c, "update")) return
         content.run({ JSONObject(content.net.text("https://api.github.com/repos/$REPO/releases/latest", mapOf("Accept" to "application/vnd.github+json"))) }) { o ->
             if (o == null) { Log.i(TAG, "update check: no release readable at $REPO"); return@run }
@@ -97,9 +97,18 @@ object Watchers {
     }
 
     /** An update note whose version is now installed (or older) has been acted on: installing it restarted Epple TV. */
-    fun clearInstalled(current: String) {
+    fun clearInstalled(c: Context, current: String) {
         NotificationHub.notes.filter { it.own && it.key.startsWith("update:") && !newer(it.key.removePrefix("update:"), current) }
             .forEach { NotificationHub.dismiss(it.key) }
+        // No update pending (installed, or none) and no download running: the downloaded APKs are no longer needed.
+        // Epple TV is in front here, so no installer is reading one.
+        if (downloading == 0L && NotificationHub.notes.none { it.own && it.key.startsWith("update:") }) purgeDownloads(c)
+    }
+
+    /** Deletes Epple TV's own downloaded update APKs (the download manager names repeats epple-update-1.apk, -2 …). */
+    private fun purgeDownloads(c: Context) {
+        c.getExternalFilesDir(null)?.listFiles { f -> f.isFile && f.name.startsWith("epple-update") && f.name.endsWith(".apk") }
+            ?.forEach { if (!it.delete()) Log.w(TAG, "could not delete ${it.name}") }
     }
 
     fun newer(a: String, b: String): Boolean {
@@ -113,6 +122,7 @@ object Watchers {
     fun install(c: Context, key: String, url: String) {
         if (downloading != 0L) return
         val dm = c.getSystemService(DownloadManager::class.java) ?: return
+        purgeDownloads(c)              // copies from earlier attempts: the user is back in Epple TV, no installer has them open
         downloading = dm.enqueue(DownloadManager.Request(Uri.parse(url)).setMimeType("application/vnd.android.package-archive")
             .setTitle("Epple TV update").setDestinationInExternalFilesDir(c, null, "epple-update.apk"))
         NotificationHub.update(key, "Downloading the update…")
