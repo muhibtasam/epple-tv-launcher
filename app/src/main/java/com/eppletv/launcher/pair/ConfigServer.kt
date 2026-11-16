@@ -283,7 +283,7 @@ class ConfigServer(
         private const val JPEG = "image/jpeg"
 
         private val GONE_PAGE = """<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
-            |<title>Epple TV</title><h1>This code has ended</h1>
+            |<title>Epple</title><h1>This code has ended</h1>
             |<p>Choose <b>New code</b> on your TV and scan again.</p>""".trimMargin()
 
         /** Strict application/x-www-form-urlencoded parser; null on duplicates or malformed input. */

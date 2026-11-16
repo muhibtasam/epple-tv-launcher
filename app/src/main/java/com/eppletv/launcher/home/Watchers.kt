@@ -91,7 +91,7 @@ object Watchers {
             Log.i(TAG, "update check: latest $tag, this $current")
             if (!newer(tag, current) || apk.isEmpty()) return@run
             val notes = o.optString("body").lineSequence().map { it.trim().trimStart('-', '*', '#', ' ') }.firstOrNull { it.isNotEmpty() } ?: "A new version is ready."
-            NotificationHub.post(Note("update:$tag", "", "Epple TV", "Epple TV $tag is available", notes, System.currentTimeMillis(), null, null,
+            NotificationHub.post(Note("update:$tag", "", "Epple", "Epple $tag is available", notes, System.currentTimeMillis(), null, null,
                 NotificationHub.UPDATE, action = "update:$apk", own = true), once = true)
         }
     }
@@ -114,7 +114,7 @@ object Watchers {
         if (downloading != 0L) return
         val dm = c.getSystemService(DownloadManager::class.java) ?: return
         downloading = dm.enqueue(DownloadManager.Request(Uri.parse(url)).setMimeType("application/vnd.android.package-archive")
-            .setTitle("Epple TV update").setDestinationInExternalFilesDir(c, null, "epple-update.apk"))
+            .setTitle("Epple update").setDestinationInExternalFilesDir(c, null, "epple-update.apk"))
         NotificationHub.update(key, "Downloading the update…")
         val r = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, i: Intent) {

@@ -50,8 +50,8 @@ class LauncherMode(ctx: Context) {
                 "would erase it. In Settings > Network, forget the network and connect again, then try once more."
         }
         prefs.edit().putString("original", original).apply()
-        status("Setting Epple TV as the Home screen…")
-        if (!adb.shell("cmd package set-home-activity $HOME").contains("Success")) return@run "Android didn't accept Epple TV as the Home screen."
+        status("Setting Epple as the Home screen…")
+        if (!adb.shell("cmd package set-home-activity $HOME").contains("Success")) return@run "Android didn't accept Epple as the Home screen."
         val disabled = LinkedHashSet(recorded())
         for (p in targets) {
             status("Turning off ${label(p)}…")
