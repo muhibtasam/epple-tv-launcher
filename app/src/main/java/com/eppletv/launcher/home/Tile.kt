@@ -63,6 +63,8 @@ class Tile(
     // Gloss and rim in one pre-rendered bitmap shared by every tile: one cheap layer instead of a gradient pass plus a bitmap.
     // The resting surface (gloss + rim at 45%) is baked into each tile's art; focus adds the rest of the rim live.
     private val rim = ImageView(ctx).apply { setImageBitmap(surfaceFor(l)); scaleType = ImageView.ScaleType.FIT_XY; alpha = 0f; visibility = View.INVISIBLE }
+    // Focus ring around the dark tile (pre-rendered, shared): the one light edge in the row, readable from the sofa.
+    private val ring = ImageView(ctx).apply { setImageBitmap(focusRing(l, l.tileW, l.tileH)); scaleType = ImageView.ScaleType.FIT_XY; alpha = 0f; visibility = View.INVISIBLE }
 
     init {
         isFocusable = true
@@ -76,6 +78,8 @@ class Tile(
         addView(banner, LayoutParams(l.tileW, l.tileH))
         addView(highlight, LayoutParams(l.tileW, l.tileH))
         addView(rim, LayoutParams(l.tileW, l.tileH))
+        val rp = ringPad(l)
+        addView(ring, LayoutParams(l.tileW + 2 * rp, l.tileH + 2 * rp).apply { leftMargin = -rp; topMargin = -rp })
     }
 
     override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
@@ -131,6 +135,7 @@ class Tile(
         highlight.alpha = 0.75f * v
         rim.alpha = 0.55f * v
         rim.visibility = if (v > 0.002f) View.VISIBLE else View.INVISIBLE   // unfocused tiles: baked surface only
+        ring.alpha = v * v; ring.visibility = rim.visibility                // fades in with focus, a little behind the lift
         label?.alpha = v
         label?.translationY = l.tileH * (s - 1f) / 2f - (1f - v) * l.pxf(10f)
         return !(focus.atRest() && press.atRest() && tiltX.atRest() && tiltY.atRest())
@@ -152,6 +157,24 @@ private fun surfaceFor(l: Layout): Bitmap {
     b.prepareToDraw()
     rimCache = l.tileW to b
     return b
+}
+
+/** Space between a tile or app card and its focus ring, plus the ring's stroke. */
+internal fun ringPad(l: Layout) = l.px(4) + l.px(3)
+
+private val ringCache = HashMap<Long, Bitmap>()
+/**
+ * The focus ring around a dark app tile or app card of [w] x [h]: pre-rendered once per size and shared, drawn only
+ * on the focused item and faded with its focus spring (no live stroke, no extra frames).
+ */
+internal fun focusRing(l: Layout, w: Int, h: Int): Bitmap = ringCache.getOrPut(w.toLong() shl 32 or h.toLong()) {
+    val pad = ringPad(l); val sw = l.pxf(3f).coerceAtLeast(2f)
+    val b = Bitmap.createBitmap(w + 2 * pad, h + 2 * pad, Bitmap.Config.ARGB_8888)
+    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = sw; color = 0xD9E9E9EC.toInt() }
+    val r = l.corner + pad - sw / 2
+    Canvas(b).drawRoundRect(android.graphics.RectF(sw / 2, sw / 2, b.width - sw / 2, b.height - sw / 2), r, r, p)
+    b.prepareToDraw()
+    b
 }
 
 /** Light rim: brighter along the top edge, where the light falls. */

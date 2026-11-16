@@ -335,7 +335,7 @@ class SearchScreen(nav: Nav) : Screen(nav) {
             .sortedBy { if (it.label.lowercase().startsWith(t)) 0 else 1 }.take(20)
         appsRow.set(hits.map { ContentItem("app:${it.packageName}", it.label, "", "", null, null) }) { c, it ->
             val e = hits.first { a -> "app:${a.packageName}" == it.id }
-            c.tag2 = e; c.bind(e.label); c.setBitmap(e.banner); c.setOnClickListener { nav.launch(e) }
+            c.tag2 = e; c.bind(e.label); c.setBitmap(e.banner); c.useAppRing(); c.setOnClickListener { nav.launch(e) }
         }
         stack.relayout()
     }

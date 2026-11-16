@@ -294,6 +294,15 @@ open class Card(ctx: Context, private val l: Layout, private val clock: FrameClo
     private val rim = ImageView(ctx).apply { setImageBitmap(rimFor(l, w, h)); scaleType = ImageView.ScaleType.FIT_XY; alpha = 0f; visibility = INVISIBLE }
     private val title = TextView(ctx).apply { style(Txt.LABEL, l.u, Colors.TEXT_DIM) }
     private val sub = TextView(ctx).apply { style(Txt.FOOT, l.u, 0x80FFFFFF.toInt()); maxLines = 1; isSingleLine = true }
+    private var ring: ImageView? = null
+
+    /** App cards: the same focus ring as the app tiles (shared pre-rendered bitmap; content cards don't use it). */
+    fun useAppRing() {
+        if (ring != null) return
+        val rp = ringPad(l)
+        ring = ImageView(context).apply { setImageBitmap(focusRing(l, w, h)); scaleType = ImageView.ScaleType.FIT_XY; alpha = 0f; visibility = INVISIBLE }
+            .also { addView(it, indexOfChild(rim) + 1, LayoutParams(w + 2 * rp, h + 2 * rp).apply { leftMargin = -rp; topMargin = -rp }) }
+    }
 
     init {
         isFocusable = true; isClickable = true; isLongClickable = true; clipChildren = false; clipToPadding = false
@@ -331,6 +340,7 @@ open class Card(ctx: Context, private val l: Layout, private val clock: FrameClo
         translationZ = v * l.pxf(8f)
         shadow.alpha = v; shadow.visibility = if (v > 0.002f) VISIBLE else INVISIBLE
         rim.alpha = v; rim.visibility = shadow.visibility
+        ring?.let { it.alpha = v * v; it.visibility = shadow.visibility }
         title.setTextColor(Colors.lerp(Colors.TEXT_DIM, Colors.WHITE, v))
         // Titles stay put on screen while the card grows (the card scales around its centre).
         val down = h * (s - 1f) / 2f / s

@@ -140,7 +140,7 @@ class AppRepository(
         }
         cache.keys.retainAll(seen)
         // Drop art for uninstalled apps and superseded versions.
-        artDir.listFiles()?.forEach { f -> val pkg = f.name.substringBefore("@"); if (pkg !in seen || cache[pkg]?.first?.let { f.name != "$pkg@$it.png" } == true) f.delete() }
+        artDir.listFiles()?.forEach { f -> val pkg = f.name.substringBefore("@"); if (pkg !in seen || cache[pkg]?.first?.let { f.name != "$pkg@$it.png" && f.name != "$pkg@$it.src.png" } == true) f.delete() }
         val collator = Collator.getInstance()
         out.sortWith { a, b -> collator.compare(a.label, b.label) }
         return if (debugRepeat > 1) List(out.size * debugRepeat) { out[it % out.size] } else out
@@ -149,13 +149,25 @@ class AppRepository(
     private fun build(pm: PackageManager, ai: ActivityInfo, cat: String, key: String): AppEntry? = try {
         val label = ai.loadLabel(pm).toString().trim().ifEmpty { ai.packageName }
         val file = File(artDir, "${ai.packageName}@$key.png")
-        val art = file.takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path)?.also { b -> b.prepareToDraw() } }
-            ?: render(pm, ai).also { b -> decorate?.invoke(Canvas(b), b.width, b.height); b.prepareToDraw() }.also { b -> try { file.outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) } } catch (e: java.io.IOException) { Log.w(TAG, "art cache write failed", e) } }
+        val srcFile = File(artDir, "${ai.packageName}@$key.src.png")   // backdrop colours, taken from the original artwork
+        var art = if (file.exists() && srcFile.exists()) BitmapFactory.decodeFile(file.path) else null
+        var src = if (art != null) BitmapFactory.decodeFile(srcFile.path) else null
+        if (art == null || src == null) {
+            val r = render(pm, ai)
+            src = Bitmap.createScaledBitmap(r.original, 8, 5, true)   // from the original: Home's backdrop colours don't change
+            val b = r.dark ?: r.original                              // dark tile art, or the original where it can't be adapted cleanly
+            if (r.dark != null) r.original.recycle()
+            Log.i(TAG, "art ${ai.packageName}: ${DarkArt.result}")
+            decorate?.invoke(Canvas(b), b.width, b.height)
+            art = b
+            save(b, file); save(src, srcFile)
+        }
+        art.prepareToDraw()
         val intent = Intent(Intent.ACTION_MAIN).addCategory(cat).setClassName(ai.packageName, ai.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         val info = ai.applicationInfo
         // Two-step resample: a 12x7 average of the artwork, smoothed up to 96x54, becomes a soft colour field at full screen.
-        val soft = backdropOf(art)
+        val soft = backdropOf(src)
         AppEntry(ai.packageName, label, intent, art, soft, info.category)
     } catch (e: RuntimeException) {
         Log.w(TAG, "skipping ${ai.packageName}", e); null
@@ -165,8 +177,7 @@ class AppRepository(
      * Backdrop source: the artwork averaged down to 8x5 and smoothed back up, so only its colours survive,
      * then saturated and darkened so white text stays readable over any app (including white banners).
      */
-    private fun backdropOf(art: Bitmap): Bitmap {
-        val tiny = Bitmap.createScaledBitmap(art, 8, 5, true)
+    private fun backdropOf(tiny: Bitmap): Bitmap {   // tiny: the original artwork averaged down to 8x5
         val mid = Bitmap.createScaledBitmap(tiny, 32, 18, true)
         val out = Bitmap.createBitmap(96, 54, Bitmap.Config.ARGB_8888)
         val cm = ColorMatrix().apply { setSaturation(1.5f); postConcat(ColorMatrix().apply { setScale(0.52f, 0.52f, 0.52f, 1f) }) }
@@ -175,6 +186,10 @@ class AppRepository(
         backdropFilter?.invoke(out)
         tiny.recycle(); mid.recycle()
         return out
+    }
+
+    private fun save(b: Bitmap, f: File) {
+        try { f.outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) } } catch (e: java.io.IOException) { Log.w(TAG, "art cache write failed", e) }
     }
 
     /**
@@ -186,7 +201,10 @@ class AppRepository(
      *  - legacy launcher icon: centred on its own edge colour.
      * Nothing is shared between apps.
      */
-    private fun render(pm: PackageManager, ai: ActivityInfo): Bitmap {
+    /** The original tile art, and its dark version when one could be made cleanly (both at tile size). */
+    private class Art(val original: Bitmap, val dark: Bitmap?)
+
+    private fun render(pm: PackageManager, ai: ActivityInfo): Art {
         val res = try { pm.getResourcesForApplication(ai.applicationInfo) } catch (_: PackageManager.NameNotFoundException) { null }
         fun hd(id: Int, density: Int): Drawable? = if (id == 0 || res == null) null else
             try { res.getDrawableForDensity(id, density, null) } catch (_: RuntimeException) { null }
@@ -197,52 +215,82 @@ class AppRepository(
         return if (icon is AdaptiveIconDrawable && icon.background != null) renderAdaptive(icon) else renderIcon(icon)
     }
 
-    private fun canvasFor(): Pair<Bitmap, Canvas> = Bitmap.createBitmap(tileW, tileH, Bitmap.Config.ARGB_8888).let { it to Canvas(it) }
+    private fun canvasFor(w: Int = tileW, h: Int = tileH): Pair<Bitmap, Canvas> = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).let { it to Canvas(it) }
 
-    private fun renderBanner(d: Drawable): Bitmap {
+    /** Dark art is drawn and processed at [DarkArt.SS] times the tile size, then filtered down: smooth edges. */
+    private fun big(): Pair<Bitmap, Canvas> = canvasFor(tileW * DarkArt.SS, tileH * DarkArt.SS)
+
+    private fun finish(original: Bitmap, big: Bitmap, dark: Bitmap?): Art {
+        big.recycle()
+        if (dark == null) return Art(original, null)
+        val (b, c) = canvasFor()
+        c.drawBitmap(dark, null, Rect(0, 0, tileW, tileH), Paint(Paint.FILTER_BITMAP_FLAG))
+        dark.recycle()
+        return Art(original, b)
+    }
+
+    private fun renderBanner(d: Drawable): Art {
         val iw = d.intrinsicWidth; val ih = d.intrinsicHeight
         val shapeOk = iw <= 0 || ih <= 0 || kotlin.math.abs(iw.toFloat() / ih - tileW.toFloat() / tileH) <= 0.06f
         val probe = probe(d)
-        if (shapeOk && probe.opaqueEdges) {
-            val (b, c) = canvasFor()
-            d.setBounds(0, 0, tileW, tileH); d.draw(c)
-            b.prepareToDraw(); return b
-        }
-        // Fitted whole (never stretched) with a little padding, on the artwork's own edge colour.
-        val (b, c) = canvasFor()
-        c.drawColor(probe.field)
-        val pad = if (probe.opaqueEdges) 0f else 0.08f
-        val aw = if (iw > 0) iw.toFloat() else tileW.toFloat(); val ah = if (ih > 0) ih.toFloat() else tileH.toFloat()
-        val s = minOf(tileW * (1 - 2 * pad) / aw, tileH * (1 - 2 * pad) / ah)
-        val w = (aw * s).toInt(); val h = (ah * s).toInt()
-        d.setBounds((tileW - w) / 2, (tileH - h) / 2, (tileW + w) / 2, (tileH + h) / 2); d.draw(c)
-        b.prepareToDraw(); return b
+        val (b, c) = canvasFor(); drawBanner(c, b.width, b.height, d, probe, shapeOk, field = true)
+        val (bb, bc) = big()
+        // Opaque banner: its background is keyed out. Transparent banner: its own transparency is the logo's.
+        val dark = if (probe.opaqueEdges) { drawBanner(bc, bb.width, bb.height, d, probe, shapeOk, field = true); DarkArt.banner(bb) }
+                   else { drawBanner(bc, bb.width, bb.height, d, probe, shapeOk, field = false); DarkArt.layer(bb, null) }
+        return finish(b, bb, dark)
     }
 
-    /** Adaptive icon: background layer full-bleed (cover), foreground centred with its safe zone ~70% of the tile height. */
-    private fun renderAdaptive(d: AdaptiveIconDrawable): Bitmap {
-        val (b, c) = canvasFor()
-        // A layer is 108dp with a 72dp visible area; cover the tile with the background's visible area.
-        val bgSide = tileW * 108f / 72f
-        val bl = (tileW - bgSide) / 2f; val bt = (tileH - bgSide) / 2f
-        d.background?.let { it.setBounds(bl.toInt(), bt.toInt(), (bl + bgSide).toInt(), (bt + bgSide).toInt()); it.draw(c) }
+    /** Opaque 16:9 banner full-bleed; otherwise fitted whole (never stretched), with padding, on its edge colour. */
+    private fun drawBanner(c: Canvas, cw: Int, ch: Int, d: Drawable, probe: Probe, shapeOk: Boolean, field: Boolean) {
+        if (shapeOk && probe.opaqueEdges) { d.setBounds(0, 0, cw, ch); d.draw(c); return }
+        if (field) c.drawColor(probe.field)
+        val iw = d.intrinsicWidth; val ih = d.intrinsicHeight
+        val pad = if (probe.opaqueEdges) 0f else 0.08f
+        val aw = if (iw > 0) iw.toFloat() else cw.toFloat(); val ah = if (ih > 0) ih.toFloat() else ch.toFloat()
+        val s = minOf(cw * (1 - 2 * pad) / aw, ch * (1 - 2 * pad) / ah)
+        val w = (aw * s).toInt(); val h = (ah * s).toInt()
+        d.setBounds((cw - w) / 2, (ch - h) / 2, (cw + w) / 2, (ch + h) / 2); d.draw(c)
+    }
+
+    /** Adaptive icon: the dark version uses the foreground layer alone, with the background layer's colour as brand. */
+    private fun renderAdaptive(d: AdaptiveIconDrawable): Art {
+        val (b, c) = canvasFor(); drawAdaptive(c, b.width, b.height, d, background = true)
+        val brand = d.background?.let { probe(it) }?.field
+        val (bb, bc) = big(); drawAdaptive(bc, bb.width, bb.height, d, background = false)
+        return finish(b, bb, DarkArt.layer(bb, brand))
+    }
+
+    /** Background layer full-bleed (cover), foreground centred with its safe zone ~70% of the tile height. */
+    private fun drawAdaptive(c: Canvas, cw: Int, ch: Int, d: AdaptiveIconDrawable, background: Boolean) {
+        if (background) {
+            // A layer is 108dp with a 72dp visible area; cover the tile with the background's visible area.
+            val bgSide = cw * 108f / 72f
+            val bl = (cw - bgSide) / 2f; val bt = (ch - bgSide) / 2f
+            d.background?.let { it.setBounds(bl.toInt(), bt.toInt(), (bl + bgSide).toInt(), (bt + bgSide).toInt()); it.draw(c) }
+        }
         d.foreground?.let {
-            val fgSide = tileH * 0.70f * 108f / 66f        // the 66dp safe zone spans 70% of the tile height
-            val l = (tileW - fgSide) / 2f; val t = (tileH - fgSide) / 2f
+            val fgSide = ch * 0.70f * 108f / 66f        // the 66dp safe zone spans 70% of the tile height
+            val l = (cw - fgSide) / 2f; val t = (ch - fgSide) / 2f
             it.setBounds(l.toInt(), t.toInt(), (l + fgSide).toInt(), (t + fgSide).toInt()); it.draw(c)
         }
-        b.prepareToDraw(); return b
     }
 
     /** Legacy icon: centred at 62% of the tile height on its own edge colour, so the mark reads as the tile. */
-    private fun renderIcon(d: Drawable): Bitmap {
-        val (b, c) = canvasFor()
+    private fun renderIcon(d: Drawable): Art {
         val probe = probe(d)
-        c.drawColor(probe.field)
-        val s = (tileH * 0.62f).toInt()
-        val l = (tileW - s) / 2; val t = (tileH - s) / 2
+        val (b, c) = canvasFor(); drawIcon(c, b.width, b.height, d, probe.field)
+        val (bb, bc) = big()
+        val dark = if (probe.opaqueEdges) { drawIcon(bc, bb.width, bb.height, d, probe.field); DarkArt.banner(bb) }
+                   else { drawIcon(bc, bb.width, bb.height, d, null); DarkArt.layer(bb, null) }
+        return finish(b, bb, dark)
+    }
+
+    private fun drawIcon(c: Canvas, cw: Int, ch: Int, d: Drawable, field: Int?) {
+        field?.let { c.drawColor(it) }
+        val s = (ch * 0.62f).toInt()
+        val l = (cw - s) / 2; val t = (ch - s) / 2
         d.setBounds(l, t, l + s, t + s); d.draw(c)
-        b.prepareToDraw(); return b
     }
 
     private class Probe(val field: Int, val opaqueEdges: Boolean)
@@ -282,7 +330,7 @@ class AppRepository(
 
     private companion object {
         const val TAG = "EppleApps"
-        const val RENDER = 3   // bump when the artwork layout changes, so cached art is re-rendered
+        const val RENDER = 14   // bump when the artwork layout changes, so cached art is re-rendered
         const val BG = 0xFF262A33.toInt()
     }
 }
