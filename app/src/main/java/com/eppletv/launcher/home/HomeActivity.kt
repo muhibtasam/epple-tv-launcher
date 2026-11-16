@@ -920,13 +920,24 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
                 // of a followed franchise, or a show no longer followed): the details page loads everything from the id.
                 a.startsWith("details:") -> { val id = a.removePrefix("details:")
                     details((user.items(UserLibrary.Kind.WATCHLIST) + user.items(UserLibrary.Kind.FAVOURITES)).firstOrNull { it.id == id }
-                        ?: com.eppletv.launcher.content.ContentItem(id, n.title.substringAfter(" · ").takeIf { id.startsWith("movie:") } ?: n.title.substringBefore(" · "), "", "", null, null)) }
+                        ?: com.eppletv.launcher.content.ContentItem(id, n.title.substringAfter(" · ").takeIf { id.startsWith("movie:") } ?: n.title.substringBefore(" · "), "", "", null, null))
+                    NotificationHub.dismiss(n.key) }                // acted on: its title is open
             }
             return
         }
-        NotificationHub.dismiss(n.key)
-        val ok = try { n.intent?.send(); n.intent != null } catch (_: Exception) { false }
-        if (!ok) apps.firstOrNull { it.packageName == n.pkg }?.let { launch(it) } ?: toast(n.app)
+        // Another app's: cleared once it has actually opened (its own action, else the app); a failed launch keeps it.
+        val sent = try {
+            val pi = n.intent
+            when {
+                pi == null -> false
+                // Android 14: the app's own action may start an activity only if the sender (Epple TV) allows it.
+                android.os.Build.VERSION.SDK_INT >= 34 -> { pi.send(this, 0, null, null, null, null, ActivityOptions.makeBasic()
+                    .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED).toBundle()); true }
+                else -> { pi.send(); true }
+            }
+        } catch (_: Exception) { false }
+        val opened = sent || (apps.firstOrNull { it.packageName == n.pkg }?.let { open(it.launchIntent, it.label) } ?: false.also { toast(n.app) })
+        if (opened) NotificationHub.dismiss(n.key)
     }
 
     /** Control Center > Notifications: newest first; OK opens one, Clear All empties Epple TV's list. */

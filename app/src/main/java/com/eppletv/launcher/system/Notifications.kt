@@ -18,11 +18,12 @@ import android.service.notification.StatusBarNotification
  */
 class EppleNotifications : NotificationListenerService() {
     override fun onListenerConnected() {
+        NotificationHub.service = this
         NotificationHub.connected(this, activeNotifications.orEmpty().toList())
         // The same access lets Epple TV read the apps' media sessions: verified viewing time for Continue Watching.
         com.eppletv.launcher.content.Playback.start(this, NotificationHub.component(this))
     }
-    override fun onListenerDisconnected() { NotificationHub.disconnected(); com.eppletv.launcher.content.Playback.stop() }
+    override fun onListenerDisconnected() { NotificationHub.service = null; NotificationHub.disconnected(); com.eppletv.launcher.content.Playback.stop() }
     override fun onNotificationPosted(sbn: StatusBarNotification) { NotificationHub.posted(this, sbn) }
     override fun onNotificationRemoved(sbn: StatusBarNotification) { NotificationHub.removed(sbn.key) }
 }
@@ -98,10 +99,15 @@ object NotificationHub {
     /** Removes a note from Epple TV's list only; another app's own notification stays where it is. */
     fun dismiss(key: String) {
         if (mine.any { it.key == key }) { mine = mine.filter { it.key != key }; save() }
-        else { dismissed += key; appNotes = appNotes.filter { it.key != key } }
+        else { dismissed += key; appNotes = appNotes.filter { it.key != key }; cancel(key) }
         onChange?.invoke(null)
     }
-    fun clearAll() { dismissed += appNotes.map { it.key }; appNotes = emptyList(); mine = emptyList(); save(); onChange?.invoke(null) }
+    fun clearAll() { appNotes.forEach { cancel(it.key) }; dismissed += appNotes.map { it.key }; appNotes = emptyList(); mine = emptyList(); save(); onChange?.invoke(null) }
+
+    /** The connected listener (null while disconnected): dismissing another app's note in Epple TV dismisses it on the TV
+     *  too, so it can't come back when the listener reconnects (Epple TV restarted or updated). */
+    @Volatile var service: android.service.notification.NotificationListenerService? = null
+    private fun cancel(key: String) { try { service?.cancelNotification(key) } catch (_: Exception) {} }
 
     internal fun connected(ctx: Context, all: List<StatusBarNotification>) {
         val list = all.mapNotNull { note(ctx, it) }

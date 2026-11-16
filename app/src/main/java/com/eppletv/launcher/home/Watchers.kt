@@ -117,7 +117,8 @@ object Watchers {
                 if (uri == null) { NotificationHub.update(key, "The download failed. Open this again to retry."); return }
                 NotificationHub.update(key, "Downloaded. Follow the installer to finish.")
                 try { ctx.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+                    NotificationHub.dismiss(key) }                  // acted on: the installer is open, the note has done its job
                 catch (e: Exception) { NotificationHub.update(key, "Downloaded, but the installer couldn't open.") }
             }
         }
