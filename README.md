@@ -148,7 +148,7 @@ plus shortcuts to the Screensaver, Bluetooth & Accessories, Epple's settings and
 | ![Control Center with Wi-Fi, standby, inputs, volume and sleep timer](assets/screenshots/control-center.png) | ![Screensaver showing a picture with the time and date](assets/screenshots/screensaver.png) |
 | **Control Center:** Wi-Fi, standby, inputs, volume, sleep timer and shortcuts. | **Screensaver:** your pictures with the time and date. |
 
-*Screenshots were taken from the running app on an Android TV device. The Wi-Fi name and profile picture are blurred for privacy.
+*Screenshots were taken from the running app on an Android TV device. The Wi-Fi name is blurred for privacy.
 The wallpapers are the owner's own pictures; Epple ships without wallpapers.*
 
 ## Installation
