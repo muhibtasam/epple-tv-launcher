@@ -728,7 +728,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         if (com.eppletv.launcher.content.Recency.returned(this) != null && ::feed.isInitialized) feed.refreshContinue()
         if (::setup.isInitialized) setup.refresh()
         // Epple TV's own notes: a new release, new episodes of followed shows (each at most once a day).
-        Watchers.checkUpdate(this, content, prefs, BuildConfig.VERSION_NAME)
+        Watchers.checkUpdate(this, content, prefs, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE.toLong())
         Watchers.checkFollowed(this, content, catalog, user, prefs)
         if (::setup.isInitialized && setup.done && !askedListings()) askListings()
         refreshChannels()
