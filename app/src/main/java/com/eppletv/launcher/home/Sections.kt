@@ -439,21 +439,21 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         list.addView(p, FrameLayout.LayoutParams(MATCH_PARENT, l.px(80)).apply { topMargin = y })
         rowY[r] = y; y += l.px(92); rows.add(r)
     }
-    private fun choice(c: Prefs.Choice, help: String) = row(c.label, help + if (c.restart) "\n\nEpple restarts its screens to apply this." else "",
+    private fun choice(c: Prefs.Choice, help: String) = row(c.label, help + if (c.restart) "\n\nEpple TV restarts its screens to apply this." else "",
         { c.options[nav.prefs.get(c)] }) { nav.prefs.put(c, (nav.prefs.get(c) + 1) % c.options.size); onChanged(c) }
 
     private fun mb(b: Long) = if (b < 1024 * 1024) "${b / 1024} KB" else "%.1f MB".format(b / 1048576.0)
 
     private fun build() {
         header("Launcher")
-        row("Home screen", "Which launcher the Home button opens. Epple turns off the Google TV home screen (it stays installed) " +
+        row("Home screen", "Which launcher the Home button opens. Epple TV turns off the Google TV home screen (it stays installed) " +
             "and asks this TV to allow debugging once; choosing the TV's default turns it back on.", {
-            if (isHome()) "Epple" else "TV's default" }) {
+            if (isHome()) "Epple TV" else "TV's default" }) {
             // Only the change is offered, after "Keep" (first, so a stray OK changes nothing).
             val home = isHome()
             nav.menu("Launcher", listOf(
-                (if (home) "Keep Epple" else "Keep the TV's Launcher") to {},
-                if (home) "Use the TV's Default Launcher" to { nav.switchLauncher(false) } else "Use Epple as Launcher" to { nav.switchLauncher(true) }))
+                (if (home) "Keep Epple TV" else "Keep the TV's Launcher") to {},
+                if (home) "Use the TV's Default Launcher" to { nav.switchLauncher(false) } else "Use Epple TV as Launcher" to { nav.switchLauncher(true) }))
         }
         header("Appearance")
         choice(Prefs.CLOCK, "How the time is shown in the corner and in Control Center.")
@@ -483,16 +483,16 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         }
         row("Content providers", "API keys for TMDB, Watchmode, Trakt and YouTube: enter, test, replace or remove them. Keys are encrypted on this TV and shown only masked.", {
             "${com.eppletv.launcher.content.Credentials.connected()} of 4 connected" }) { nav.openSetup(1, one = true) }
-        row("Notifications", "Shows other apps' notifications in Epple: a short popup at the top right (OK opens it, Back dismisses it), " +
+        row("Notifications", "Shows other apps' notifications in Epple TV: a short popup at the top right (OK opens it, Back dismisses it), " +
             "a dot on the clock and the list in Control Center. They stay on this TV, in memory only.", {
             if (com.eppletv.launcher.system.NotificationHub.allowed(nav.ctx)) "Allowed" else "Not allowed" }) { nav.allowNotifications() }
         choice(Prefs.NOTIFY_WIFI, "A note in Control Center when the TV loses its network for more than 20 seconds, and when it is back.")
-        choice(Prefs.NOTIFY_UPDATES, "Checks once a day for a new Epple release (GitHub Releases) and offers to install it.")
+        choice(Prefs.NOTIFY_UPDATES, "Checks once a day for a new Epple TV release (GitHub Releases) and offers to install it.")
         choice(Prefs.NOTIFY_FOLLOWED, "Checks once a day the shows and movies in your Watchlist and Favourites for new seasons, episodes and franchise movies (TMDB, so alerts can trail a release by a few hours).")
         choice(Prefs.NOTIFY_SEASONS, "Followed shows: a note when a new season starts.")
         choice(Prefs.NOTIFY_EPISODES, "Followed shows: a note for each new episode.")
         choice(Prefs.NOTIFY_MOVIES, "Followed movies: a note when a new movie of the same franchise (TMDB collection) is released.")
-        row("TV listings", "Lets Epple read what your apps publish to Android TV: Prime Video's own rows and Continue Watching, as Google TV shows them. Nothing leaves the TV.", {
+        row("TV listings", "Lets Epple TV read what your apps publish to Android TV: Prime Video's own rows and Continue Watching, as Google TV shows them. Nothing leaves the TV.", {
             if (com.eppletv.launcher.content.TvListings.allowed(nav.ctx)) "Allowed" else "Not allowed" }) { nav.askListings() }
         row("Indian languages", "The Indian languages included in Movies, TV Shows and the top row's showcases. Select to choose.", {
             nav.prefs.langs.size.let { if (it == 0) "None" else "$it selected" } }) { nav.openSetup(2, one = true) }
@@ -507,16 +507,16 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         row("Refresh content", "Fetches every row, showcase and details page again instead of using saved copies.", { mb(nav.content.listCacheBytes()) }) {
             nav.content.clearLists(); nav.toast("Content will refresh") }
         header("Screensaver")
-        choice(Prefs.SAVER, "Shows full-screen artwork after Epple has been idle. Any button returns where you were.")
+        choice(Prefs.SAVER, "Shows full-screen artwork after Epple TV has been idle. Any button returns where you were.")
         choice(Prefs.SAVER_SOURCE, "The pictures the screensaver shows: the same ones as Home's wallpapers, or its own (Screensaver pictures, below).")
         row("Screensaver pictures", "The screensaver's own pictures, used when Screensaver shows is set to Its own pictures. Add them from your phone (choose Screensaver there).", {
             nav.saverPictures.count().let { if (it == 0) "None yet" else if (it == 1) "1 picture" else "$it pictures" } }) { saverMenu() }
         choice(Prefs.SAVER_STYLE, "Slow pan moves gently across each picture; Still shows it unmoving.")
         row("Preview screensaver", "Starts the screensaver now.", { "" }) { nav.startSaver() }
         header("About")
-        row("Epple", "A private, tvOS-inspired launcher for this TV. Settings > Home screen chooses whether it or Google TV opens on Home.", { "Version ${BuildConfig.VERSION_NAME}" }) {}
-        row("Device", "This TV, its Android version and the screen size Epple draws at.", { "${Build.MODEL} · Android ${Build.VERSION.RELEASE} · ${nav.ctx.resources.displayMetrics.widthPixels}×${nav.ctx.resources.displayMetrics.heightPixels}" }) {}
-        row("Diagnostics", "Network requests made since Epple opened, and memory in use.", {
+        row("Epple TV", "A private, tvOS-inspired launcher for this TV. Settings > Home screen chooses whether it or Google TV opens on Home.", { "Version ${BuildConfig.VERSION_NAME}" }) {}
+        row("Device", "This TV, its Android version and the screen size Epple TV draws at.", { "${Build.MODEL} · Android ${Build.VERSION.RELEASE} · ${nav.ctx.resources.displayMetrics.widthPixels}×${nav.ctx.resources.displayMetrics.heightPixels}" }) {}
+        row("Diagnostics", "Network requests made since Epple TV opened, and memory in use.", {
             "${nav.content.net.calls.get()} requests · ${(Debug.getPss() / 1024)} MB" }) {}
         row("Run setup again", "Walks through the first-launch setup: providers, what you watch and the Home screen.", { "" }) { nav.openSetup(0, one = false) }
         row("Data attribution", "This product uses the TMDB API but is not endorsed or certified by TMDB.", { "TMDB" }) {}

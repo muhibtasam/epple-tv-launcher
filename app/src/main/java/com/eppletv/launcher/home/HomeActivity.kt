@@ -399,14 +399,14 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     override fun switchLauncher(epple: Boolean, done: (() -> Unit)?) {
         if (switching) return
         switching = true
-        val title = TextView(this).apply { text = if (epple) "Setting Epple as Launcher" else "Restoring the TV's Launcher"; style(Txt.TITLE, l.u) }
+        val title = TextView(this).apply { text = if (epple) "Setting Epple TV as Launcher" else "Restoring the TV's Launcher"; style(Txt.TITLE, l.u) }
         val line = TextView(this).apply { style(Txt.META, l.u, Colors.TEXT_DIM); isSingleLine = false; maxLines = 5; setPadding(0, l.px(14), 0, 0); text = "Starting…" }
         panel.show(listOf(title, line), emptyList(), atCorner = false)
         line.isFocusable = true; line.requestFocus()                 // OK while it runs must not reach the row behind
         content.run({ (if (epple) launcher.useEpple { m -> main.post { line.text = m } } else launcher.useDefault { m -> main.post { line.text = m } }) ?: "" }) { err ->
             switching = false
             val ok = err.isNullOrEmpty()
-            val msg = if (ok) (if (epple) "Epple is now your launcher. The Home button brings you here."
+            val msg = if (ok) (if (epple) "Epple TV is now your launcher. The Home button brings you here."
                 else "The TV's own launcher is back on the Home button.") else err!!
             if (ok) launcher.clearCrashes()
             panel.show(listOf(TextView(this).apply { text = if (ok) "Done" else "Not Changed"; style(Txt.TITLE, l.u) },
@@ -763,7 +763,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         if (com.eppletv.launcher.content.TvListings.allowed(this)) return
         getSharedPreferences("perm", MODE_PRIVATE).edit().putBoolean("listings", true).apply()
         if (askedListingsBefore && !shouldShowRequestPermissionRationale(com.eppletv.launcher.content.TvListings.PERMISSION)) {
-            toast("Allow it in TV Settings > Apps > Epple > Permissions")
+            toast("Allow it in TV Settings > Apps > Epple TV > Permissions")
             try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))) } catch (_: Exception) {}
             return
         }
@@ -873,12 +873,12 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             ControlCenter.Item(EppleIcons.MOON, "Sleep Timer") { cycleSleep() },
             ControlCenter.Item(EppleIcons.PICTURE, "Screensaver", round = true, action = act { startSaver() }),
             ControlCenter.Item(EppleIcons.BLUETOOTH, "Bluetooth & Accessories", round = true, action = act { openBluetooth() }),
-            ControlCenter.Item(EppleIcons.SETTINGS, "Epple Settings", round = true, action = act { goTab(SETTINGS) }),
+            ControlCenter.Item(EppleIcons.SETTINGS, "Epple TV Settings", round = true, action = act { goTab(SETTINGS) }),
             ControlCenter.Item(EppleIcons.SLIDERS, "TV Settings", round = true, action = act { open(Intent(Settings.ACTION_SETTINGS), "Settings") }),
         ))
         ccWifi = cc.tiles[0]; ccInputs = cc.tiles[2]; ccVolume = cc.tiles[3]; ccSleep = cc.tiles[4]
         ccVolume.adjust = { d -> changeVolume(d) }
-        cc.tiles.firstOrNull { it.title == "Epple Settings" }?.art = getDrawable(R.drawable.logo_mark)?.mutate()
+        cc.tiles.firstOrNull { it.title == "Epple TV Settings" }?.art = getDrawable(R.drawable.logo_mark)?.mutate()
     }
 
     /** One step of the TV's volume (2 % of its range), with the system's own volume bar; raising unmutes. */

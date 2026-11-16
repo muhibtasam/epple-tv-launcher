@@ -213,14 +213,14 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
         countdown = null
         if (phoneMode) { first = renderPhone() } else if (editing != null) { first = renderEditor(editing!!) } else when (step) {
             0 -> {
-                title.text = "Welcome to Epple"
+                title.text = "Welcome to Epple TV"
                 body.text = "A cinematic home for this TV: your apps, what's new on your services and everything you're watching, in one place.\n\n" +
-                    "Setup takes about a minute. Connect your content providers, choose what you like to watch, and decide whether Epple should be your Home screen."
+                    "Setup takes about a minute. Connect your content providers, choose what you like to watch, and decide whether Epple TV should be your Home screen."
                 first = button("Get Started", primary = true) { go(1) }
             }
             1 -> {
                 title.text = "Content Providers"
-                body.text = "Epple uses these services for artwork, new releases and trends. Keys are encrypted on this TV and only the last four characters are ever shown. Skip any you don't have."
+                body.text = "Epple TV uses these services for artwork, new releases and trends. Keys are encrypted on this TV and only the last four characters are ever shown. Skip any you don't have."
                 first = row("Use your phone instead", "Scan a code") { typeOnTv = false; enter() }
                 Credentials.Key.values().forEach { k ->
                     val r = row(k.label, status(k)) { editing = k; render() }
@@ -232,7 +232,7 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             }
             2 -> {
                 title.text = "What You Watch"
-                body.text = "Epple balances Bollywood and regional Indian cinema with Hollywood. Choose the mix and the Indian languages you want to see."
+                body.text = "Epple TV balances Bollywood and regional Indian cinema with Hollywood. Choose the mix and the Indian languages you want to see."
                 val mix = row(Prefs.INDIAN.label, Prefs.INDIAN.options[nav.prefs.get(Prefs.INDIAN)]) {}
                 mix.setOnClickListener { changedKeys = true; nav.prefs.put(Prefs.INDIAN, (nav.prefs.get(Prefs.INDIAN) + 1) % Prefs.INDIAN.options.size); mix.value = Prefs.INDIAN.options[nav.prefs.get(Prefs.INDIAN)] }
                 first = mix
@@ -249,11 +249,11 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
             3 -> {
                 title.text = "Home Screen"
                 val isHome = host.isDefaultHome()
-                body.text = if (isHome) "Epple is your launcher. The Home button on your remote brings you here."
-                    else "Epple can be the TV's launcher, so the Home button opens it. To do that it turns off the Google TV home screen " +
-                        "(it stays installed) and asks the TV to allow debugging once. You can switch back any time in Epple's settings."
-                note(if (isHome) "✓  Epple is the launcher" else "Current launcher: the TV's own", if (isHome) Mono.OK else Colors.TEXT_DIM)
-                if (!isHome) first = button("Use Epple as Launcher", primary = true) {
+                body.text = if (isHome) "Epple TV is your launcher. The Home button on your remote brings you here."
+                    else "Epple TV can be the TV's launcher, so the Home button opens it. To do that it turns off the Google TV home screen " +
+                        "(it stays installed) and asks the TV to allow debugging once. You can switch back any time in Epple TV's settings."
+                note(if (isHome) "✓  Epple TV is the launcher" else "Current launcher: the TV's own", if (isHome) Mono.OK else Colors.TEXT_DIM)
+                if (!isHome) first = button("Use Epple TV as Launcher", primary = true) {
                     val line = note("Starting…", Mono.WARN)
                     nav.content.run({ nav.launcher.useEpple { m -> view.post { line.text = m } } ?: "" }) { err ->
                         if (err.isNullOrEmpty()) render() else { line.setTextColor(Mono.ERROR); line.text = err }
@@ -268,9 +268,9 @@ class SetupFlow(private val nav: Nav, private val host: Host) {
                 body.text = "Your choices are saved. You can change everything later in Settings, including your provider keys, or run this setup again."
                 note("Providers connected: ${Credentials.connected()} of 4")
                 note("Indian languages: " + nav.prefs.langs.let { l -> if (l.isEmpty()) "none (Hollywood only)" else l.joinToString(", ") { Catalog.languageName(it) } })
-                note("Launcher: " + if (host.isDefaultHome()) "Epple" else "the TV's own")
+                note("Launcher: " + if (host.isDefaultHome()) "Epple TV" else "the TV's own")
                 button("Back") { go(3) }
-                first = button("Start Epple", primary = true) { finish() }
+                first = button("Start Epple TV", primary = true) { finish() }
             }
         }
         view.post { (first ?: buttons.getChildAt(buttons.childCount - 1))?.requestFocus() }

@@ -18,7 +18,7 @@ object PhonePage {
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="dark">
-<title>Epple setup</title>
+<title>Epple TV setup</title>
 <style nonce="NONCE">
 *{box-sizing:border-box}
 body{margin:0;background:#0b0c10;color:#f2f3f5;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
@@ -56,7 +56,7 @@ ul{padding-left:20px;margin:8px 0;color:#aeb3bd;word-break:break-word}
 """
 
     private val BODY = """<body><main>
-<h1>Epple</h1>
+<h1>Epple TV</h1>
 <p id="lead">Connecting to your TV…</p>
 
 <section id="pairing" class="card hide">
