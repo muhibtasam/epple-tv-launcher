@@ -646,7 +646,7 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
         val own = nav.prefs.get(Prefs.SAVER_SOURCE) == 1 && nav.saverPictures.count() > 0
         store = if (own) nav.saverPictures else nav.wallpapers
         files = store.files().shuffled()
-        showing = true; n = 0
+        showing = true; n = 0; onShowing?.invoke(true)
         view.visibility = View.VISIBLE; show.target = 1f
         stamp(); h.post(minute)
         advance(); h.postDelayed(next, 20_000)
@@ -656,6 +656,7 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
     fun stop() {
         if (!showing) return
         showing = false; h.removeCallbacks(next); h.removeCallbacks(minute); show.target = 0f; nav.clock.add(this)
+        onShowing?.invoke(false)
     }
 
     private fun advance() {
@@ -670,6 +671,9 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
         }
     }
 
+    private var panSince = 0f
+    /** Showing or not: Home pauses its own background motion while the screensaver covers it. */
+    var onShowing: ((Boolean) -> Unit)? = null
     override fun tick(dt: Float): Boolean {
         show.step(dt); fade.step(dt)
         view.alpha = show.value
@@ -677,7 +681,15 @@ class Screensaver(private val nav: Nav) : FrameClock.Tick {
         val other = if (front === a) b else a
         if (fade.atRest() && other.drawable != null) other.setImageDrawable(null)        // release the previous picture
         val pan = showing && nav.prefs.get(Prefs.SAVER_STYLE) == 0
-        if (pan) { t += dt; val k = (t / 20f).coerceAtMost(1f); val s = 1f + 0.07f * k; front.scaleX = s; front.scaleY = s; front.translationX = -l.pxf(36f) * k }
+        // The pan moves ~0.1 px a frame; each step recomposites the whole screen, so between crossfades it is applied at
+        // ~20 fps (under half a pixel a step), as Home's wallpaper drift is. Crossfades still run every frame.
+        if (pan) {
+            t += dt; panSince += dt
+            if (panSince >= 0.048f || !fade.atRest()) {
+                panSince = 0f
+                val k = (t / 20f).coerceAtMost(1f); val s = 1f + 0.07f * k; front.scaleX = s; front.scaleY = s; front.translationX = -l.pxf(36f) * k
+            }
+        }
         if (!showing && show.atRest()) { view.visibility = View.GONE; a.setImageDrawable(null); b.setImageDrawable(null); return false }
         return pan || !show.atRest() || !fade.atRest()       // a still screensaver requests no frames between pictures
     }

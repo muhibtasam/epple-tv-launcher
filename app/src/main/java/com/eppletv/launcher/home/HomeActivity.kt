@@ -268,6 +268,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         root.addView(panel.panel, panel.params())
 
         saver = Screensaver(this).apply {
+            onShowing = { on -> hero.backdrop.pauseDrift(on) }     // nothing of Home shows under the screensaver
             clockText = { timeText }
             // The network's name, looked up by the screensaver itself (Control Center may not have been opened yet);
             // "Wi-Fi" only until the name arrives (the saver refreshes this line every 15 seconds).
