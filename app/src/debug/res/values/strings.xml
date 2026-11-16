@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Debug builds are a separate app (com.eppletv.launcher.debug) with their own name. -->
+    <string name="app_name">Epple TV (Debug)</string>
+</resources>

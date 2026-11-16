@@ -149,9 +149,11 @@ class LauncherMode(ctx: Context) {
     private fun label(p: String) = when (p) { GOOGLE_SETUP -> "Google TV setup"; pkgOf(GOOGLE_HOME) -> "the Google TV home screen"; else -> p }
 
     companion object {
-        const val PKG = "com.eppletv.launcher"
-        const val LISTENER = "com.eppletv.launcher/com.eppletv.launcher.system.EppleNotifications"
-        const val HOME = "$PKG/.HomeEntry"
+        // This build's own package: com.eppletv.launcher, or com.eppletv.launcher.debug for debug builds. Class names
+        // stay in com.eppletv.launcher, so components are written in full (".HomeEntry" would resolve against .debug).
+        val PKG: String = com.eppletv.launcher.BuildConfig.APPLICATION_ID
+        val LISTENER = "$PKG/com.eppletv.launcher.system.EppleNotifications"
+        val HOME = "$PKG/com.eppletv.launcher.HomeEntry"
         const val GOOGLE_HOME = "com.google.android.apps.tv.launcherx/.home.HomeActivity"
         const val GOOGLE_SETUP = "com.google.android.tungsten.setupwraith"
         private const val SETTING = "epple_disabled_apps"
