@@ -323,7 +323,8 @@ class SearchScreen(nav: Nav) : Screen(nav) {
     private fun type(k: String) {
         q = when (k) { Keyboard.DEL -> q.dropLast(1); Keyboard.CLEAR -> ""; Keyboard.SPACE -> if (q.isEmpty() || q.endsWith(" ")) q else "$q "; else -> if (q.length < 40) q + k else q }
         query.text = q
-        hint.text = if (q.isEmpty()) "Search apps, movies and TV shows" else ""
+        // The whole hint goes while there is a query: clearing only its text left the magnifier alone under the query.
+        if (q.isEmpty()) { hint.text = "Search apps, movies and TV shows"; hint.visibility = View.VISIBLE } else hint.visibility = View.INVISIBLE
         searchApps()
         h.removeCallbacks(run); h.postDelayed(run, 550)       // one request after the user pauses typing
     }
@@ -348,7 +349,7 @@ class SearchScreen(nav: Nav) : Screen(nav) {
             moviesRow.set(movies, if (res == null) "Search is unavailable right now" else null) { c, x -> c.bind(x.title, x.meta.split("  ·  ").take(1).joinToString()); c.setOnClickListener { nav.details(x) } }
             tvRow.set(tv) { c, x -> c.bind(x.title, x.meta.split("  ·  ").take(1).joinToString()); c.setOnClickListener { nav.details(x) } }
             stack.relayout()
-            if (movies.isEmpty() && tv.isEmpty() && appsRow.cards.isEmpty()) hint.text = "No results for “$t”"
+            if (res != null && movies.isEmpty() && tv.isEmpty() && appsRow.cards.isEmpty()) { hint.text = "No results for “$t”"; hint.visibility = View.VISIBLE }
         }
     }
 
