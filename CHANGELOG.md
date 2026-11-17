@@ -4,7 +4,7 @@ All notable changes to Epple TV are listed here. Versions follow [Semantic Versi
 
 ## [1.0.2] - 2026-11-18
 
-A visual update: app tiles in a premium dark style, plus three Home fixes. Install it over 1.0.1; your settings and
+A visual update: app tiles in a premium dark style, plus Home fixes. Install it over 1.0.1; your settings and
 data are kept.
 
 ### New
