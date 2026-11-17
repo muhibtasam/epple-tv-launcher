@@ -204,20 +204,44 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     private fun dockShift(d: Float, peak: Float, k: Float) =
         peak * l.tileW * Motion.DOCK_SPREAD * grown(d) - k * Motion.DOCK_SQUEEZE * l.pitchX * (d - grown(d))
 
-    /** Poses every dock tile from the pointer and lens. If either end of the visible row would leave the glass, the
-     *  whole row slides back by that much (the squeeze leaves room for it at the far end). No allocation. */
-    private fun poseDock() {
+    /** Row slide (px) and glass growth at each end (px), eased only while the row scrolls (its visible window then
+     *  changes in one step), exact otherwise. */
+    private var fitNow = 0f; private var growLNow = 0f; private var growRNow = 0f; private var easing = false
+
+    /**
+     * Poses every dock tile from the pointer and lens, and stretches the glass with them, as the macOS Dock's bar
+     * widens around its magnified icons: the glass keeps its usual padding around the outermost visible tiles, out to
+     * a margin from the screen edge; only past that margin does the row slide back. Magnified tiles grow up from the
+     * baseline and rise above the glass. Tiles scrolled out of view never move inward. GPU properties only (the glass
+     * is stretched, not re-rendered); no allocation.
+     */
+    private fun poseDock(dt: Float) {
         val n = dock.size; if (n == 0) return
         val p = ptr.value; val k = lens.value; val peak = Motion.DOCK_PEAK * k
         val lo = first; val hi = minOf(n, first + Layout.COLS) - 1
-        val ring = ringPad(l).toFloat(); val half = l.tileW / 2f + ring
-        val edgeL = (l.left - l.platterPad + first * l.pitchX).toFloat()
-        val edgeR = edgeL + (l.px(1920) - 2 * (l.left - l.platterPad))
-        fun centre(i: Int) = l.left + i * l.pitchX + l.tileW / 2f + dockShift(i - p, peak, k)
-        val under = edgeL - (centre(lo) - half * dockScale(lo - p, peak))
-        val over = centre(hi) + half * dockScale(hi - p, peak) - edgeR
+        val w = l.tileW.toFloat(); val pitch = l.pitchX.toFloat(); val pad = l.platterPad.toFloat()
+        val screen = l.px(1920).toFloat(); val margin = l.pxf(Motion.DOCK_BAR_MARGIN)
+        val baseL = (l.left - l.platterPad).toFloat(); val baseR = screen - baseL
+        val win = first * pitch                                  // the row's scroll once it settles
+        val leftEdge = l.left + lo * pitch + dockShift(lo - p, peak, k) - win + w / 2f * (1f - dockScale(lo - p, peak))
+        val rightEdge = l.left + hi * pitch + dockShift(hi - p, peak, k) - win + w / 2f * (1f + dockScale(hi - p, peak))
+        val under = margin + pad - leftEdge; val over = rightEdge - (screen - margin - pad)
         val fit = if (under > 0f) under else if (over > 0f) -over else 0f
-        for (i in 0 until n) { val d = i - p; dock[i].dockPose(dockScale(d, peak), dockShift(d, peak, k) + fit) }
+        val growL = maxOf(0f, baseL - (leftEdge + fit - pad)); val growR = maxOf(0f, rightEdge + fit + pad - baseR)
+        val e = if (dt <= 0f || sx.atRest()) 1f else 1f - kotlin.math.exp(-dt / FIT_EASE)
+        fitNow += (fit - fitNow) * e; growLNow += (growL - growLNow) * e; growRNow += (growR - growRNow) * e
+        easing = kotlin.math.abs(fit - fitNow) + kotlin.math.abs(growL - growLNow) + kotlin.math.abs(growR - growRNow) > 0.5f
+        val glassW = screen - 2f * baseL
+        platter.pivotX = 0f; platter.translationX = -growLNow; platter.scaleX = (glassW + growLNow + growRNow) / glassW
+        val tx = strip.translationX; val end = (Layout.COLS - 1).toFloat()
+        for (i in 0 until n) {
+            val d = i - p
+            var dx = dockShift(d, peak, k) + fitNow
+            val u = (i * pitch + tx) / pitch                     // slot in the visible window (animated): 0..COLS-1
+            if (u > end) dx -= minOf(dx, 0f) * minOf(u - end, 1f)     // beyond the right end: never pulled in
+            else if (u < 0f) dx -= maxOf(dx, 0f) * minOf(-u, 1f)      // beyond the left end: likewise
+            dock[i].dockPose(dockScale(d, peak), dx, l.pxf(Motion.DOCK_RISE) * k * falloff(d))
+        }
     }
 
     fun atTop() = r == 0 || dock.isEmpty() && r == 1
@@ -232,12 +256,12 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
         val vertical = !(sy.atRest() && shelf.atRest())
         sx.step(dt); sy.step(dt); shelf.step(dt)
         strip.translationX = sx.value
-        if (posePending || !(ptr.atRest() && lens.atRest())) { posePending = false; ptr.step(dt); lens.step(dt); poseDock() }
+        if (posePending || !(ptr.atRest() && lens.atRest() && sx.atRest())) { ptr.step(dt); lens.step(dt); poseDock(if (posePending) 0f else dt); posePending = false }
         val s = shelf.value.coerceIn(0f, 1f)
         view.translationY = sy.value + s * l.pxf(300f)
         view.alpha = 1f - s
         if (vertical) platter.moved()          // the glass re-samples only when it moves over the artwork
-        return !(sx.atRest() && sy.atRest() && shelf.atRest() && ptr.atRest() && lens.atRest())
+        return !(sx.atRest() && sy.atRest() && shelf.atRest() && ptr.atRest() && lens.atRest() && !easing)
     }
 }
 
@@ -708,3 +732,5 @@ object Brand {
 }
 
 private const val PI_F = Math.PI.toFloat()
+/** Time constant (s) of the dock row's end-of-glass slide. */
+private const val FIT_EASE = 0.07f

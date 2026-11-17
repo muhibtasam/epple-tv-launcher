@@ -19,7 +19,9 @@ object Motion {
     const val DOCK_PEAK = 0.24f      // tile under the pointer: 1.24x
     const val DOCK_RADIUS = 2.8f     // falloff reaches zero this many tiles from the pointer
     const val DOCK_SPREAD = 0.6f     // how much of the growth pushes neighbours aside (the rest closes the gaps)
-    const val DOCK_SQUEEZE = 0.07f   // tiles beyond the lens draw in slightly, so both ends stay on the glass
+    const val DOCK_SQUEEZE = 0.07f   // tiles beyond the lens draw in slightly, so the row stays compact
+    const val DOCK_BAR_MARGIN = 26f  // the glass widens with the row up to this far from the screen edge (1080p px)
+    const val DOCK_RISE = 10f        // magnified tiles grow up from the dock's baseline and lift this much (1080p px)
     const val DOCK_DAMPING = 0.92f; const val DOCK_STIFFNESS = 240f   // the pointer gliding to the next tile
     const val TILT_DEG = 5f          // tilt kick in the direction of travel, springs back to 0
 

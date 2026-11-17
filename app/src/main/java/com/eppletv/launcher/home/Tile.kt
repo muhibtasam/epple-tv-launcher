@@ -48,10 +48,12 @@ class Tile(
     var inDock = false
     /** Dock tiles: told when this tile gains or loses focus, so the row can move its magnification here. */
     var onDockFocus: ((Tile, Boolean) -> Unit)? = null
-    /** Dock tiles: size and sideways offset set every frame by the row's magnification (not by this tile's focus). */
+    /** Dock tiles: size, sideways offset and lift set every frame by the row's magnification (not by this tile's focus). */
     private var dockScale = 1f
-    fun dockPose(scale: Float, dx: Float) {
-        dockScale = scale; translationX = dx
+    fun dockPose(scale: Float, dx: Float, rise: Float) {
+        // Grows up from the dock's baseline (bottom edge), as on the macOS Dock, and lifts a little above the glass.
+        if (pivotY != l.tileH.toFloat()) { pivotX = l.tileW / 2f; pivotY = l.tileH.toFloat() }
+        dockScale = scale; translationX = dx; translationY = -rise
         val s = scale * (1f - Motion.PRESS_SCALE * press.value); scaleX = s; scaleY = s
     }
     private var longPressed = false
