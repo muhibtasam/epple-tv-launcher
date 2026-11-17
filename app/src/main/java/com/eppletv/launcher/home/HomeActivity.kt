@@ -325,7 +325,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     private fun onApps(list: List<AppEntry>) {
         if (!appsShown) { appsShown = true; main.post { startLog("app row shown (${list.size} apps)") } }
-        apps = list
+        apps = list; appsLoaded = true
         content.run({ Brand.learn(list); true }) {}             // brand colours for the hero's "New on …" names
         refresh(null)
         empty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
@@ -333,7 +333,9 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     /** Rebuilds the top row from the library; optionally moves focus to [focusPkg]. */
+    private var appsLoaded = false
     private fun refresh(focusPkg: String?) {
+        if (!appsLoaded) return              // content arriving before the app list must not replace the top row with nothing
         val pinned = library.pinned(apps)
         page.setApps(pinned, emptyList())             // every app lives in the Apps section; Home keeps the top row
         content.warm(pinned.map { it.packageName })

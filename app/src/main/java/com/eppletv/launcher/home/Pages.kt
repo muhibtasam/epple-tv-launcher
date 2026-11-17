@@ -108,7 +108,8 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
         }
         view.layoutParams?.let { it.height = l.height(rowCount); view.layoutParams = it }
         if (keep == null || !locate(keep)) {
-            r = r.coerceIn(if (dock.isEmpty()) 1 else 0, rowCount - 1)
+            val lo = if (dock.isEmpty()) 1 else 0
+            r = if (rowCount <= lo) 0 else r.coerceIn(lo, rowCount - 1)   // no rows at all: nothing to clamp to
             c = c.coerceIn(0, maxOf(0, rowSize(r) - 1))
         }
         place()
