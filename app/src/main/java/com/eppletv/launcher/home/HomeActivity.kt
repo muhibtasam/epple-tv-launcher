@@ -514,6 +514,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
     private fun leaveFeed() {
         homeP.target = 1f; dimP.target = 0f; hero.quiet(false); feed.view.visibility = View.GONE; feed.hide()
+        feed.reset()                                    // coming back starts at the first row and its first title
         artGen++; main.removeCallbacks(artRun)
         homeArt()                                       // the top row's artwork comes back
         animateShell()
@@ -1076,7 +1077,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             return if (dpad) cc.key(event) else super.dispatchKeyEvent(event)
         }
         if (panel.open) {
-            if (select) return super.dispatchKeyEvent(event)
+            // The OK press that opened the menu (a long press) is still held: its repeats and release must not choose a row.
+            if (select) return if (event.downTime < panel.openedAt) true else super.dispatchKeyEvent(event)
             if (k == KeyEvent.KEYCODE_BACK && down) backHandled = true
             return if (dpad || k == KeyEvent.KEYCODE_BACK || k == KeyEvent.KEYCODE_MENU) panel.key(event) else super.dispatchKeyEvent(event)
         }

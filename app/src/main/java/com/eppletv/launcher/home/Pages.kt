@@ -378,7 +378,9 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
         val n = if (wrap) (index + d + items.size) % items.size else index + d
         if (n !in items.indices) return false
         index = n; show(fresh = false)
-        if (chipOn) { layers.forEach { it.box.findViewWithTag<View>(CHIP)?.alpha = 0f }; chip(true) }
+        // The Play chip stays on: each title's chip crossfades with its own text, so it moves to the new title's layout
+        // without disappearing in between.
+        if (chipOn) { textBox.removeCallbacks(showChip); layers.forEach { it.box.findViewWithTag<View>(CHIP)?.let { v -> v.animate().cancel(); v.alpha = 1f } } }
         return true
     }
 

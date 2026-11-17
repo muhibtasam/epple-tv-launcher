@@ -55,11 +55,14 @@ class MenuPanel(ctx: Context, private val l: Layout, private val clock: FrameClo
             rightMargin = if (atCorner) l.left else 0
         }
         panel.requestLayout()
-        open = true; idx = 0
+        open = true; idx = 0; openedAt = android.os.SystemClock.uptimeMillis()
         panel.visibility = View.VISIBLE
         rows.firstOrNull()?.requestFocus()
         p.target = 1f; clock.add(this)
     }
+
+    /** When the menu last opened (uptime ms): key presses that began earlier belong to whatever opened it. */
+    var openedAt = 0L; private set
 
     fun hide() {
         if (!open) return
