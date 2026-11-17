@@ -415,7 +415,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             wifi != null && System.currentTimeMillis() - wifi.time < 120_000L -> "Wi-Fi restored"
             unread.size == 1 -> unread[0].let { if (it.own) it.title else "${it.app} · ${it.title}" }
             unread.size > 1 -> "${unread.size} new notifications"
-            else -> DateFormat.format(DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "EEEEMMMMd"), System.currentTimeMillis()).toString()
+            else -> DateFormat.format(DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "EEEMMMMd"), System.currentTimeMillis()).toString()
         }
         glance.text = msg
         glance.visibility = if (msg.isEmpty() || (::cc.isInitialized && cc.open) || (::banner.isInitialized && banner.showing)) View.GONE else View.VISIBLE
