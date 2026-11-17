@@ -59,7 +59,7 @@ internal object GlassPaint {
 
 /**
  * The side menu (design "Top bar 1 · Glass sidebar"). Closed it is a glass hint pill in the top-left corner: the open
- * section's icon on a round chip, its name and "Press Back for menu". When focus comes in, the pill grows into a glass
+ * section's icon on a round chip, its name and "Home + OK for menu". When focus comes in, the pill grows into a glass
  * panel listing every section, each on a round chip; the focused one is a white pill.
  */
 @SuppressLint("ViewConstructor")
@@ -81,7 +81,7 @@ class SideBar(ctx: Context, private val l: Layout, private val clock: FrameClock
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND; color = Colors.WHITE }
     private val title = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(28f) * Type.scale; typeface = Type.of(600); color = Colors.WHITE }
     private val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = l.pxf(23f) * Type.scale; typeface = Type.of(500); color = Colors.WHITE }
-    private val hintText = "Press OK for menu"
+    private val hintText = "Home + OK for menu"
 
     var open = false
         set(v) { if (field != v) { field = v; o.target = if (v) 1f else 0f; clock.add(this) } }

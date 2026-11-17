@@ -496,7 +496,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         when { tabIdx >= TAB_NAMES.size -> pill.requestFocus(); menuOpen -> tabs.tabs[tabIdx].requestFocus(); else -> tabs.requestFocus() }
     }
 
-    /** Home's resting place: the hint pill ("Home · Press Back for menu") focused, the menu closed, the wallpaper behind. */
+    /** Home's resting place: the hint pill ("Home · Home + OK for menu") focused, the menu closed, the wallpaper behind. */
     private fun enterHint() { menuOpen = false; enterTabs(section) }
     private fun toNav() { if (section == SETTINGS) openMenu() else enterHint() }
 

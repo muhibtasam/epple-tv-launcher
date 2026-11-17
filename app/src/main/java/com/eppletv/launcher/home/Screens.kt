@@ -134,9 +134,12 @@ class InfoBlock(ctx: Context, private val l: Layout, private val clock: FrameClo
         visibility = VISIBLE
         avail.text = service?.let { "On $it  ·  ${com.eppletv.launcher.content.Availability.ATTRIBUTION}" }.orEmpty()
         avail.visibility = if (service == null) GONE else VISIBLE
+        // Chips already up stay up while stepping to the next title (as on Home's hero): they change with the text
+        // instead of disappearing and fading back in.
+        val keep = play != null && chipsOn && hints.visibility == VISIBLE && hints.alpha > 0f
         playLabel = play
         play?.let { hints.set(it) }
-        reveal()
+        if (keep) { removeCallbacks(showChip); hints.animate().cancel(); hints.alpha = 1f } else reveal()
         // With the Play chip the block keeps to the same height: a slightly smaller logo (smaller still in a budget).
         logo.maxHeight = l.px(if (budget > 0) (if (play != null) 96 else 140) else (if (play != null) 110 else 180))
         val fresh = item.id != shownId

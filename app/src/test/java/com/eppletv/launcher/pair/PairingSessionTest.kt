@@ -46,7 +46,7 @@ class PairingSessionTest {
     }
 
     @Test fun wrongTokenIsUnknown() {
-        assertEquals(Pairing.Unknown, s.pair("x" + s.token.drop(1), phone))
+        assertEquals(Pairing.Unknown, s.pair((if (s.token[0] == 'x') "y" else "x") + s.token.drop(1), phone))
         assertEquals(State.WAITING, s.state)
     }
 
