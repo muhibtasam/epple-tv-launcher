@@ -117,7 +117,18 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     private val listDir = File(ctx.filesDir, "content").apply { mkdirs() }
     val net = Net(listDir)
     private val main = Handler(Looper.getMainLooper())
-    private val io = Executors.newFixedThreadPool(2) { r -> Thread(r, "epple-content").apply { priority = Thread.NORM_PRIORITY - 1 } }
+    // One bounded pool (2 threads) with a priority queue: row lists and data first, then the hero's picture, then card
+    // pictures, then prefetches and housekeeping; in order of request within each. Same threads as before; only the
+    // order changes. (Newest-first card pictures were tried: rows further down then overtook the visible first row.)
+    private val ioPool = java.util.concurrent.ThreadPoolExecutor(2, 2, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+        java.util.concurrent.PriorityBlockingQueue<Runnable>()) { r -> Thread(r, "epple-content").apply { priority = Thread.NORM_PRIORITY - 1 } }
+    private val seq = java.util.concurrent.atomic.AtomicLong()
+    private class Job(val prio: Int, val n: Long, val r: () -> Unit) : Runnable, Comparable<Job> {
+        override fun run() = r()
+        override fun compareTo(other: Job): Int =
+            if (prio != other.prio) prio.compareTo(other.prio) else n.compareTo(other.n)
+    }
+    private fun io(prio: Int, r: () -> Unit) = ioPool.execute(Job(prio, seq.incrementAndGet(), r))
     /** Title logos have their own two threads: they never wait behind row lists, artwork or the TV's listings. */
     private val logoIo = Executors.newFixedThreadPool(2) { r -> Thread(r, "epple-logos").apply { priority = Thread.NORM_PRIORITY } }
 
@@ -125,7 +136,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     fun prefetchLogos(list: List<ContentItem>, n: Int = 6) = list.take(n).forEach { logo(it) {} }
     private val imgDir = File(ctx.cacheDir, "img").apply { mkdirs() }
     private val launchedAt = System.currentTimeMillis()
-    init { io.execute { trimImages() } }   // once per launch, off the main thread
+    init { io(P_LATER) { trimImages() } }   // once per launch, off the main thread
     private val lists = HashMap<String, List<ContentItem>>()                       // source key -> items (main thread)
     private val listWaiters = HashMap<String, ArrayList<(List<ContentItem>) -> Unit>>()
     private val failedAt = HashMap<String, Long>()
@@ -161,7 +172,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
         listWaiters[key]?.let { it.add(cb); return }
         listWaiters[key] = arrayListOf(cb)
         val epoch = epochs[src.key] ?: 0
-        io.execute {
+        io(P_DATA) {
             val file = File(listDir, "$key.json")
             var out = readList(file, fresh = true)
             if (out == null) {
@@ -226,30 +237,38 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     } catch (e: Exception) { null }
 
     /** Main thread. Calls back at once when the bitmap is in memory. */
-    fun image(url: String, cb: (Bitmap?) -> Unit) {
+    fun image(url: String, cb: (Bitmap?) -> Unit) = image(url, P_HERO, cb)
+    private val imagePrio = HashMap<String, Int>()                                 // queued image -> its most urgent priority
+    private val imgStarted = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** [image] at [prio]: a request more urgent than the one already queued (a prefetch now on screen) moves it up. */
+    fun image(url: String, prio: Int, cb: (Bitmap?) -> Unit) {
         images.get(url)?.let { return cb(it) }
-        imageWaiters[url]?.let { it.add(cb); return }
-        imageWaiters[url] = arrayListOf(cb)
-        io.execute {
-            val bmp = try {
-                val f = File(imgDir, sha1(url))
-                if (!f.exists()) { val tmp = File(imgDir, f.name + ".tmp"); tmp.writeBytes(net.bytes(url)); tmp.renameTo(f) }
-                else f.setLastModified(System.currentTimeMillis())          // recency for trimImages
-                decode(f)
-            } catch (e: Exception) { Log.w(TAG, "image failed: $e"); null }
-            main.post {
-                if (bmp != null) images.put(url, bmp)
-                imageWaiters.remove(url)?.forEach { it(bmp) }
-            }
+        imageWaiters[url]?.let { it.add(cb); if (prio < (imagePrio[url] ?: P_LATER)) { imagePrio[url] = prio; queueImage(url, prio) }; return }
+        imageWaiters[url] = arrayListOf(cb); imagePrio[url] = prio
+        queueImage(url, prio)
+    }
+    private fun queueImage(url: String, prio: Int) = io(prio) {
+        if (images.get(url) != null || !imgStarted.add(url)) return@io      // done, or already loading from the other queue entry
+        val bmp = try {
+            val f = File(imgDir, sha1(url))
+            if (!f.exists()) { val tmp = File(imgDir, f.name + ".tmp"); tmp.writeBytes(net.bytes(url)); tmp.renameTo(f) }
+            else f.setLastModified(System.currentTimeMillis())          // recency for trimImages
+            decode(f)
+        } catch (e: Exception) { Log.w(TAG, "image failed: $e"); null }
+        main.post {
+            if (bmp != null) images.put(url, bmp)
+            imgStarted.remove(url); imagePrio.remove(url)
+            imageWaiters.remove(url)?.forEach { it(bmp) }
         }
     }
 
-    fun prefetch(url: String) = image(url) {}
+    /** The next title's picture: loaded only when nothing more urgent is waiting. */
+    fun prefetch(url: String) = image(url, P_LATER) {}
 
     /** Main thread. A backdrop made from a card picture already in memory (scrim painted in), or null at once if none. */
     fun cardBackdrop(cardUrl: String, cb: (Bitmap?) -> Unit) {
         val t = thumbs.get("$cardUrl#$WIDE_THUMB") ?: thumbs.get(cardUrl) ?: return cb(null)
-        io.execute {
+        io(P_HERO) {
             val b = try { Bitmap.createScaledBitmap(t, 960, 540, true).copy(Bitmap.Config.RGB_565, true)?.also { backdropFilter?.invoke(it); it.prepareToDraw() } } catch (_: Throwable) { null }
             main.post { cb(b) }
         }
@@ -267,7 +286,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
         thumbs.get(key)?.let { return cb(it) }
         thumbWaiters[key]?.let { it.add(cb); return }
         thumbWaiters[key] = arrayListOf(cb)
-        io.execute {
+        io(P_THUMB) {
             // w780 artwork decodes at 390 px: card size, a quarter of the pixels.
             val bmp = try { decodeScaled(fetch(url), width) } catch (e: Exception) { Log.w(TAG, "thumb failed: ${e.javaClass.simpleName}"); null }
             main.post { if (bmp != null) thumbs.put(key, bmp); thumbWaiters.remove(key)?.forEach { it(bmp) } }
@@ -276,7 +295,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
 
     /** Main thread. A full-screen image without the hero scrim, not kept in memory caches (the screensaver holds two). */
     fun wide(url: String, cb: (Bitmap?) -> Unit) {
-        io.execute {
+        io(P_LATER) {
             val bmp = try { decodeScaled(fetch(url), 1920) } catch (e: Exception) { null }
             main.post { cb(bmp) }
         }
@@ -291,7 +310,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
         results.get(key)?.let { return cb(it as T) }
         workWaiters[key]?.let { it.add { v -> cb(v as T?) }; return }
         workWaiters[key] = arrayListOf({ v -> cb(v as T?) })
-        io.execute {
+        io(P_DATA) {
             val v: Any? = try { job() } catch (e: Exception) { Log.w(TAG, "$key failed: ${e.javaClass.simpleName} ${e.message}"); null }
             main.post { if (v != null) results.put(key, v); workWaiters.remove(key)?.forEach { it(v) } }
         }
@@ -300,7 +319,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
 
     /** Main thread. Runs [job] once on the worker (no memo: e.g. testing a credential) and calls back on the main thread. */
     fun <T : Any> run(job: () -> T, cb: (T?) -> Unit) {
-        io.execute { val v: T? = try { job() } catch (e: Exception) { null }; main.post { cb(v) } }
+        io(P_DATA) { val v: T? = try { job() } catch (e: Exception) { null }; main.post { cb(v) } }
     }
 
     /** Main thread. The decoded full-screen image for [url] if it is in memory, else null (no loading). */
@@ -315,7 +334,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     /** Main thread. Empties the image caches (memory and disk). */
     fun clearImages() {
         images.evictAll(); thumbs.evictAll(); logos.evictAll(); logoUrls.clear()
-        io.execute { imgDir.listFiles()?.forEach { it.delete() } }
+        io(P_DATA) { imgDir.listFiles()?.forEach { it.delete() } }
     }
 
     /** Main thread. The launcher went to the background: memory caches are emptied (disk copies stay). */
@@ -339,7 +358,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
             lists.keys.removeAll { it.startsWith(prefix) }
             failedAt.keys.removeAll { it.startsWith(prefix) }
             listWaiters.keys.filter { it.startsWith(prefix) }.forEach { w -> listWaiters.remove(w)?.forEach { it(emptyList()) } }
-            io.execute { listDir.listFiles()?.filter { it.name.startsWith(prefix) && it.name.endsWith(".json") }?.forEach { it.delete() } }
+            io(P_DATA) { listDir.listFiles()?.filter { it.name.startsWith(prefix) && it.name.endsWith(".json") }?.forEach { it.delete() } }
         }
         if (all || Credentials.Key.TMDB in changed) { results.evictAll(); logoUrls.clear() }    // catalogue answers and logo lookups use TMDB
         return hit
@@ -348,7 +367,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
     /** Main thread. Drops cached lists and API responses so everything is fetched fresh. */
     fun clearLists() {
         lists.clear(); failedAt.clear(); results.evictAll()
-        io.execute { listDir.listFiles()?.forEach { it.delete() } }
+        io(P_DATA) { listDir.listFiles()?.forEach { it.delete() } }
     }
 
     private fun fetch(url: String): File {
@@ -443,7 +462,7 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
         Log.i(TAG, "image cache trimmed ${before / 1024} KB -> ${total / 1024} KB")
     }
 
-    fun stop() { io.shutdownNow() }
+    fun stop() { ioPool.shutdownNow() }
 
     private companion object {
         const val TAG = "EppleContent"
@@ -454,3 +473,9 @@ class ContentRepository(ctx: Context, private val sources: List<ContentSource>, 
         const val IMG_KEEP = 30L * 1024 * 1024
     }
 }
+
+/** Content queue priorities (lower first). */
+const val P_DATA = 0
+const val P_HERO = 1
+const val P_THUMB = 2
+const val P_LATER = 3

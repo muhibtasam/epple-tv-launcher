@@ -109,9 +109,31 @@ class AppRepository(
         if (yieldToInput) schedule()
     }
 
+    /**
+     * Home's top row, on screen with placeholders: its apps are rendered two at a time on a short-lived pool at normal
+     * priority (bounded: two threads, gone afterwards), then installed here on the worker in order.
+     */
+    private fun prepareTopRow() {
+        val jobs = pending.entries.take(TOP_ROW).map { it.key to it.value }
+        jobs.forEach { pending.remove(it.first) }
+        val pool = Executors.newFixedThreadPool(2) { r -> Thread(r, "epple-toprow") }
+        val done = jobs.map { (pkg, j) -> Triple(pkg, j, pool.submit(java.util.concurrent.Callable { renderFiles(app.packageManager, j.ai, j.key) })) }
+        pool.shutdown()
+        for ((pkg, j, f) in done) {
+            val files = try { f.get() } catch (_: Exception) { null } ?: continue
+            val (key, e) = cache[pkg] ?: continue
+            if (key.startsWith(j.key)) install(e, key.endsWith("true"), files)
+            else { files.first.recycle(); files.second.recycle() }
+        }
+    }
+
     /** Renders, caches and installs one app's art (both looks), then tells the views. */
     private fun prepare(j: Job, e: AppEntry, dark: Boolean) {
         val files = renderFiles(app.packageManager, j.ai, j.key) ?: return
+        install(e, dark, files)
+    }
+
+    private fun install(e: AppEntry, dark: Boolean, files: Triple<Bitmap, Bitmap, Bitmap>) {
         val art = if (dark) files.first else files.second
         (if (dark) files.second else files.first).recycle()
         art.prepareToDraw()
@@ -164,11 +186,7 @@ class AppRepository(
             if (apps != null) main.post { if (started) onApps(apps) }
             // Home's top row is on screen with placeholders: its art comes first, before any other background work.
             // (at normal priority: they are on screen; everything after runs at background priority)
-            if (pending.isNotEmpty()) {
-                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT)
-                repeat(minOf(TOP_ROW, pending.size)) { drainStep(yieldToInput = false) }
-                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-            }
+            if (pending.isNotEmpty()) prepareTopRow()
             // Only after the list is handed over: preparing all of this first held the app row back by about 2 s.
             if (apps != null && warmOne != null) for (e in warm?.invoke(apps) ?: apps) { if (worker.isShutdown) break; warmOne.invoke(e) }
         }
@@ -435,7 +453,7 @@ class AppRepository(
     private companion object {
         const val TAG = "EppleApps"
         const val TOP_ROW = 6   // Home's top row: prepared first, straight after the list is handed over
-        const val RENDER = 24   // bump when the artwork layout changes, so cached art is re-rendered
+        const val RENDER = 28   // bump when the artwork layout changes, so cached art is re-rendered
         const val BG = 0xFF262A33.toInt()
     }
 }

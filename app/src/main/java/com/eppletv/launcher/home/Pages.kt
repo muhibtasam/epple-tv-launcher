@@ -423,7 +423,7 @@ class Hero(ctx: Context, private val l: Layout, private val clock: FrameClock, p
             text(it.kind.ifEmpty { e.label }, it.title, it.meta, it.summary, logo)
             val url = it.imageUrl; want = url
             var ready = false
-            repo.image(url) { bmp -> ready = true; if (want == url && bmp != null) backdrop.show(bmp) }
+            repo.image(url) { bmp -> ready = true; if (want == url && bmp != null) { backdrop.show(bmp); Marks.once("hero image shown") } }
             if (!ready && fresh) backdrop.show(e.backdrop)       // new app: its colours until the artwork arrives
             items.getOrNull((index + 1) % items.size)?.let { n -> repo.prefetch(n.imageUrl); repo.logo(n) {} }
         }

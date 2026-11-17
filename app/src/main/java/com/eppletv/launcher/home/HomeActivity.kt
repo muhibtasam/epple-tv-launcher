@@ -511,6 +511,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     /** Home's rows: the top row and its artwork text slide away, the rows take the screen. */
     private fun enterFeed() {
+        Marks.once("rows entered")
         zone = Zone.FEED; homeP.target = 0f; dimP.target = 0.25f; hero.quiet(true)
         if (feed.view.parent == null) sectionLayer.addView(feed.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         feed.view.visibility = View.VISIBLE

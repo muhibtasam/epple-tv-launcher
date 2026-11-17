@@ -297,11 +297,11 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
         val it = c.item ?: return
         if (c is ContinueCard) {
             // Decoded at the focused card's size (no upscaling), from the same disk cache; the logo from the shared cache.
-            nav.content.thumb(Catalog.cardUrl(it.imageUrl), nav.content.WIDE_THUMB) { b -> if (b != null && c.item?.id == it.id) c.setBitmap(b) }
+            nav.content.thumb(Catalog.cardUrl(it.imageUrl), nav.content.WIDE_THUMB) { b -> if (b != null && c.item?.id == it.id) { c.setBitmap(b); Marks.once("first Continue Watching art") } }
             nav.content.logo(it) { b -> if (c.item?.id == it.id) c.setLogo(b) }
             return
         }
-        nav.content.thumb(Catalog.cardUrl(it.imageUrl)) { b -> if (b != null) c.setBitmap(b) }
+        nav.content.thumb(Catalog.cardUrl(it.imageUrl)) { b -> if (b != null) { c.setBitmap(b); Marks.once("first row card art") } }
         if (c is PosterCard && it.posterUrl.isNotEmpty()) nav.content.thumb(it.posterUrl) { b -> if (b != null) c.setPoster(b) }
     }
 
@@ -322,6 +322,7 @@ open class BrowseScreen(nav: Nav, private val sources: List<RowSource>, private 
             for (j in 0 until i) stack.shelves[j].cards.forEach { c -> c.item?.id?.let { seen.add(it) } }
             val items = list.filter { it.id !in seen }.let { if (it.size < src.min) emptyList() else it }
             src.label?.invoke()?.let { shelf.retitle(it) }
+            if (items.isNotEmpty()) Marks.once("row listed: ${src.title}")
             val hadFocus = shelf.hasFocus()                    // a row rebuilt under the focus keeps it
             nav.content.prefetchLogos(items, 4)               // the first titles' logos are ready when the row is reached
             shelf.set(items, src.emptyText) { c, it -> c.bind(it.title, it.meta.split("  ·  ").take(2).joinToString(" · ")); wire(c) }

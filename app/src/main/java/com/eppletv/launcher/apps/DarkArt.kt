@@ -22,8 +22,9 @@ internal object DarkArt {
     private const val R = 3         // matting search radius at SS scale
 
     /** Why the last artwork was or wasn't adapted (worker thread only; for the log). */
-    var result = ""; private set
-    private fun no(why: String): Bitmap? { result = "original ($why)"; return null }
+    private val res = ThreadLocal<String>()
+    val result: String get() = res.get() ?: ""          // per thread: the top row is prepared on two threads
+    private fun no(why: String): Bitmap? { res.set("original ($why)"); return null }
 
     /** An opaque banner: a logo on a flat or gradient background. Null: keep the original. */
     fun banner(b: Bitmap): Bitmap? = try { keyed(b) } catch (e: RuntimeException) { no(e.toString()) }
@@ -164,8 +165,8 @@ internal object DarkArt {
             }
         }
         if (wSum <= 0f || vSum / wSum < 0.45f) return no("$kind: unreadable")
-        result = "dark ($kind, ${arrayOf("kept colours", "dark parts lifted", if (logoC == brandC) "brand colour" else "white logo", "dark parts lifted apart from white")[mode]}" +
-            (if (brand != null) ", brand lum ${"%.2f".format(lum(brandC))})" else ")")
+        res.set("dark ($kind, ${arrayOf("kept colours", "dark parts lifted", if (logoC == brandC) "brand colour" else "white logo", "dark parts lifted apart from white")[mode]}" +
+            (if (brand != null) ", brand lum ${"%.2f".format(lum(brandC))})" else ")"))
         return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
     }
 
