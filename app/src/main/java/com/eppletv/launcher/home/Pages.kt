@@ -212,7 +212,7 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
      * Poses every dock tile from the pointer and lens, and stretches the glass with them, as the macOS Dock's bar
      * widens around its magnified icons: the glass keeps its usual padding around the outermost visible tiles, out to
      * a margin from the screen edge; only past that margin does the row slide back. Magnified tiles grow up from the
-     * baseline and rise above the glass. Tiles scrolled out of view never move inward. GPU properties only (the glass
+     * baseline and rise above the glass. Tiles scrolled out of view never move inward and move out with the glass. GPU properties only (the glass
      * is stretched, not re-rendered); no allocation.
      */
     private fun poseDock(dt: Float) {
@@ -238,8 +238,10 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
             val d = i - p
             var dx = dockShift(d, peak, k) + fitNow
             val u = (i * pitch + tx) / pitch                     // slot in the visible window (animated): 0..COLS-1
-            if (u > end) dx -= minOf(dx, 0f) * minOf(u - end, 1f)     // beyond the right end: never pulled in
-            else if (u < 0f) dx -= maxOf(dx, 0f) * minOf(-u, 1f)      // beyond the left end: likewise
+            // Beyond either end of the glass: never pulled in, and carried out with the glass as it grows, so the next
+            // app keeps peeking past its edge instead of under it (both terms are continuous in the animated scroll).
+            if (u > end) { val o = minOf(u - end, 1f); dx += (growRNow - minOf(dx, 0f)) * o }
+            else if (u < 0f) { val o = minOf(-u, 1f); dx -= (growLNow + maxOf(dx, 0f)) * o }
             dock[i].dockPose(dockScale(d, peak), dx, l.pxf(Motion.DOCK_RISE) * k * falloff(d))
         }
     }
