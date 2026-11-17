@@ -14,6 +14,7 @@ data are kept.
 - **Settings > App icons.** Choose Dark or Light (each app's original artwork). Switching is instant.
 
 ### Bug fixes
+- **Top row:** after Back or Home, moving down again starts at the first app.
 - **Home rows:** returning to the rows under the top row starts again at the first row and title.
 - **Hold OK:** holding OK on a title opens its menu once, without also choosing the menu's first option.
 - **Top row:** the Play button stays visible while moving between titles.
