@@ -96,6 +96,7 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
             strip.addView(t, FrameLayout.LayoutParams(l.tileW, l.tileH).apply { leftMargin = l.left + i * l.pitchX })
             dock.add(t)
         }
+        posePending = true
         val extra = l.px(22)
         rest.forEachIndexed { i, app ->
             val x = l.left + (i % Layout.COLS) * l.pitchX; val y = l.rowY(1 + i / Layout.COLS)
@@ -170,28 +171,53 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     }
 
     /**
-     * Dock magnification, after the macOS Dock: the focused tile grows to [Motion.DOCK_SCALE] (its own focus spring),
-     * the tile on each side to [Motion.DOCK_NEAR], and nearby tiles move aside so none overlap. Only spring targets
-     * change, so fast Left/Right just redirects motion in flight. [i] = -1: every tile settles back.
+     * Dock magnification, after the macOS Dock. A virtual pointer ([ptr], in tiles) glides to the focused tile; every
+     * tile's size is a cosine falloff of its distance to the pointer, and its position is pushed aside by the growth
+     * lying between it and the pointer, so one connected bulge travels across the row. [lens] fades the whole effect
+     * in and out as focus enters or leaves the row. Only these two springs move; each frame poses the tiles from them.
      */
-    private fun magnify(i: Int) {
-        val last = minOf(dock.size, first + Layout.COLS) - 1
-        dock.forEachIndexed { k, t ->
-            val d = k - i
-            val dx = when {
-                i < 0 -> 0f
-                d == 0 -> if (k == first && k < last) Motion.DOCK_EDGE else if (k == last && k > first) -Motion.DOCK_EDGE else 0f
-                kotlin.math.abs(d) == 1 -> Math.signum(d.toFloat()) * Motion.DOCK_SHIFT_1
-                kotlin.math.abs(d) == 2 -> Math.signum(d.toFloat()) * Motion.DOCK_SHIFT_2
-                else -> 0f
-            }
-            t.magnify(if (i >= 0 && kotlin.math.abs(d) == 1) Motion.DOCK_NEAR else 0f, l.pxf(dx))
-        }
+    private val ptr = Spring(0f, Motion.DOCK_DAMPING, Motion.DOCK_STIFFNESS)
+    private val lens = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
+    /** New dock tiles (the app list changed): pose them on the next frame even if the springs are at rest. */
+    private var posePending = false
+
+    /** A dock tile gained or lost focus: the pointer glides there, or (focus left the row) the lens lets go. */
+    private fun dockFocus(t: Tile, on: Boolean) {
+        if (on) {
+            val i = dock.indexOf(t).toFloat()
+            if (lens.value < 0.05f) { ptr.value = i; ptr.velocity = 0f }      // entering the row: the bulge grows in place
+            ptr.target = i; lens.target = 1f; clock.add(this)
+        } else view.post { if (dock.none { it.isFocused }) { lens.target = 0f; clock.add(this) } }
     }
 
-    /** A dock tile gained or lost focus: magnify around it, or (focus left the row) let the row settle. */
-    private fun dockFocus(t: Tile, on: Boolean) {
-        if (on) magnify(dock.indexOf(t)) else view.post { if (dock.none { it.isFocused }) magnify(-1) }
+    private fun falloff(d: Float): Float {
+        val r = Motion.DOCK_RADIUS
+        return if (d <= -r || d >= r) 0f else 0.5f * (1f + kotlin.math.cos(PI_F * d / r))
+    }
+    /** Integral of [falloff] from 0 to [d] (odd): the growth lying between the pointer and a tile. */
+    private fun grown(d: Float): Float {
+        val r = Motion.DOCK_RADIUS; val a = kotlin.math.abs(d).coerceAtMost(r)
+        val v = 0.5f * (a + r / PI_F * kotlin.math.sin(PI_F * a / r))
+        return if (d < 0f) -v else v
+    }
+    private fun dockScale(d: Float, peak: Float) = 1f + peak * falloff(d)
+    private fun dockShift(d: Float, peak: Float, k: Float) =
+        peak * l.tileW * Motion.DOCK_SPREAD * grown(d) - k * Motion.DOCK_SQUEEZE * l.pitchX * (d - grown(d))
+
+    /** Poses every dock tile from the pointer and lens. If either end of the visible row would leave the glass, the
+     *  whole row slides back by that much (the squeeze leaves room for it at the far end). No allocation. */
+    private fun poseDock() {
+        val n = dock.size; if (n == 0) return
+        val p = ptr.value; val k = lens.value; val peak = Motion.DOCK_PEAK * k
+        val lo = first; val hi = minOf(n, first + Layout.COLS) - 1
+        val ring = ringPad(l).toFloat(); val half = l.tileW / 2f + ring
+        val edgeL = (l.left - l.platterPad + first * l.pitchX).toFloat()
+        val edgeR = edgeL + (l.px(1920) - 2 * (l.left - l.platterPad))
+        fun centre(i: Int) = l.left + i * l.pitchX + l.tileW / 2f + dockShift(i - p, peak, k)
+        val under = edgeL - (centre(lo) - half * dockScale(lo - p, peak))
+        val over = centre(hi) + half * dockScale(hi - p, peak) - edgeR
+        val fit = if (under > 0f) under else if (over > 0f) -over else 0f
+        for (i in 0 until n) { val d = i - p; dock[i].dockPose(dockScale(d, peak), dockShift(d, peak, k) + fit) }
     }
 
     fun atTop() = r == 0 || dock.isEmpty() && r == 1
@@ -206,11 +232,12 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
         val vertical = !(sy.atRest() && shelf.atRest())
         sx.step(dt); sy.step(dt); shelf.step(dt)
         strip.translationX = sx.value
+        if (posePending || !(ptr.atRest() && lens.atRest())) { posePending = false; ptr.step(dt); lens.step(dt); poseDock() }
         val s = shelf.value.coerceIn(0f, 1f)
         view.translationY = sy.value + s * l.pxf(300f)
         view.alpha = 1f - s
         if (vertical) platter.moved()          // the glass re-samples only when it moves over the artwork
-        return !(sx.atRest() && sy.atRest() && shelf.atRest())
+        return !(sx.atRest() && sy.atRest() && shelf.atRest() && ptr.atRest() && lens.atRest())
     }
 }
 
@@ -679,3 +706,5 @@ object Brand {
         return out
     }
 }
+
+private const val PI_F = Math.PI.toFloat()
