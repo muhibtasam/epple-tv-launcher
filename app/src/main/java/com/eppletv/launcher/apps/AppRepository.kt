@@ -32,8 +32,8 @@ class AppEntry(
     val packageName: String,
     val label: String,
     val launchIntent: Intent,
-    val banner: Bitmap,     // tile artwork at final on-screen size
-    val backdrop: Bitmap,   // tiny copy, scaled up with filtering into a soft full-screen backdrop
+    @Volatile var banner: Bitmap,     // tile artwork at final on-screen size (a shared placeholder until prepared)
+    @Volatile var backdrop: Bitmap,   // tiny copy, scaled up with filtering into a soft full-screen backdrop
     val category: Int,      // ApplicationInfo.CATEGORY_*, or CATEGORY_UNDEFINED
 )
 
@@ -62,13 +62,63 @@ class AppRepository(
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val worker: ExecutorService = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "epple-apps").apply { priority = Thread.NORM_PRIORITY - 1 }
+        // Background priority: the UI thread always wins the CPU while art is prepared.
+        Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "epple-apps")
     }
     private val cache = HashMap<String, Pair<String, AppEntry>>()   // package -> (version key, entry); worker thread only
     private val artDir = File(app.cacheDir, "art").apply { mkdirs() }   // rendered tile art, one PNG per package + version
     private var started = false
     /** Dark tile art (Settings > App icons). Set before [start]; change it later with [setDark]. */
     @Volatile var darkArt = true
+
+    /** Main thread: an app's tile art was prepared and replaced its placeholder (update the views showing it). */
+    var onArt: ((AppEntry) -> Unit)? = null
+
+    // Art still to prepare, in priority order (Home's top row first, then what the Apps screen shows, then the rest).
+    // Worker thread only. One app is prepared per worker task, so reloads and mode switches run in between.
+    private class Job(val ai: ActivityInfo, val key: String)
+    private val pending = LinkedHashMap<String, Job>()
+    private var draining = false
+    @Volatile private var lastInput = 0L
+
+    /** The remote was used: background preparation waits until it has been quiet for a moment. */
+    fun userActive() { lastInput = android.os.SystemClock.uptimeMillis() }
+
+    /** These apps are on screen (or about to be): their art is prepared next. */
+    fun prioritize(pkgs: List<String>) {
+        if (worker.isShutdown) return
+        worker.execute {
+            val front = pkgs.mapNotNull { p -> pending.remove(p)?.let { p to it } }
+            if (front.isEmpty()) return@execute
+            val rest = LinkedHashMap(pending); pending.clear()
+            front.forEach { (p, j) -> pending[p] = j }; pending.putAll(rest)
+        }
+    }
+
+    private fun schedule() { if (!draining && pending.isNotEmpty() && !worker.isShutdown) { draining = true; worker.execute { drainStep() } } }
+
+    private fun drainStep(yieldToInput: Boolean = true) {
+        if (yieldToInput) draining = false
+        // Yield to the remote: while keys are being pressed, preparation waits (navigation stays smooth).
+        val quiet = lastInput + 400 - android.os.SystemClock.uptimeMillis()
+        if (yieldToInput && quiet > 0) try { Thread.sleep(quiet) } catch (_: InterruptedException) { return }
+        val it = pending.entries.firstOrNull() ?: return
+        pending.remove(it.key)
+        val (key, e) = cache[it.key] ?: return schedule()
+        if (key.startsWith(it.value.key)) prepare(it.value, e, key.endsWith("true"))
+        if (yieldToInput) schedule()
+    }
+
+    /** Renders, caches and installs one app's art (both looks), then tells the views. */
+    private fun prepare(j: Job, e: AppEntry, dark: Boolean) {
+        val files = renderFiles(app.packageManager, j.ai, j.key) ?: return
+        val art = if (dark) files.first else files.second
+        (if (dark) files.second else files.first).recycle()
+        art.prepareToDraw()
+        e.banner = art; e.backdrop = backdropOf(files.third)
+        main.post { if (started) onArt?.invoke(e) }
+        warmOne?.invoke(e)
+    }
 
     /** Switches between dark and original art: both are cached on disk, so this only decodes, never re-renders. */
     fun setDark(on: Boolean) {
@@ -110,8 +160,15 @@ class AppRepository(
         worker.execute {
             val t0 = android.os.SystemClock.uptimeMillis()
             val apps = try { query() } catch (e: RuntimeException) { Log.w(TAG, "app query failed", e); null }
-            Log.i("EppleStart", "app query ${android.os.SystemClock.uptimeMillis() - t0} ms (${apps?.size} apps, ${cache.size} cached)")
+            Log.i("EppleStart", "app query ${android.os.SystemClock.uptimeMillis() - t0} ms (${apps?.size} apps, ${cache.size} cached; art cache hits ${hits[0]}, misses ${hits[1]}, queued ${pending.size})")
             if (apps != null) main.post { if (started) onApps(apps) }
+            // Home's top row is on screen with placeholders: its art comes first, before any other background work.
+            // (at normal priority: they are on screen; everything after runs at background priority)
+            if (pending.isNotEmpty()) {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT)
+                repeat(minOf(TOP_ROW, pending.size)) { drainStep(yieldToInput = false) }
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            }
             // Only after the list is handed over: preparing all of this first held the app row back by about 2 s.
             if (apps != null && warmOne != null) for (e in warm?.invoke(apps) ?: apps) { if (worker.isShutdown) break; warmOne.invoke(e) }
         }
@@ -149,6 +206,8 @@ class AppRepository(
             out.add(entry)
         }
         cache.keys.retainAll(seen)
+        pending.keys.retainAll(seen)
+        schedule()
         // Drop art for uninstalled apps and superseded versions.
         artDir.listFiles()?.forEach { f -> val pkg = f.name.substringBefore("@"); if (pkg !in seen || cache[pkg]?.first?.removeSuffix("true")?.removeSuffix("false")?.let { f.name != "$pkg@$it.png" && f.name != "$pkg@$it.orig.png" && f.name != "$pkg@$it.src.png" } == true) f.delete() }
         val collator = Collator.getInstance()
@@ -162,28 +221,21 @@ class AppRepository(
         val origFile = File(artDir, "${ai.packageName}@$key.orig.png")  // original artwork (Settings > App icons: Light)
         val srcFile = File(artDir, "${ai.packageName}@$key.src.png")   // backdrop colours, taken from the original artwork
         // Both looks are cached; only the one in use is decoded and kept in memory.
-        val want = if (dark) file else origFile
-        var art = if (want.exists() && srcFile.exists()) BitmapFactory.decodeFile(want.path) else null
-        var src = if (art != null) BitmapFactory.decodeFile(srcFile.path) else null
+        // A cache hit needs all three files (they are written atomically, so none is ever half-written).
+        val hit = file.exists() && origFile.exists() && srcFile.exists()
+        var art = if (hit) BitmapFactory.decodeFile((if (dark) file else origFile).path) else null
+        val src = if (art != null) BitmapFactory.decodeFile(srcFile.path) else null
         if (art == null || src == null) {
-            val t0 = android.os.SystemClock.uptimeMillis()
-            val r = render(pm, ai)
-            val t1 = android.os.SystemClock.uptimeMillis()
-            src = Bitmap.createScaledBitmap(r.original, 8, 5, true)   // from the original: Home's backdrop colours don't change
-            decorate?.invoke(Canvas(r.original), r.original.width, r.original.height)
-            r.dark?.let { decorate?.invoke(Canvas(it), it.width, it.height) }
-            val d = r.dark ?: r.original                              // dark tile art, or the original where it can't be adapted cleanly
-            save(d, file); save(r.original, origFile); save(src, srcFile)
-            Log.i(TAG, "art ${ai.packageName}: ${DarkArt.result}; render ${t1 - t0} ms, save ${android.os.SystemClock.uptimeMillis() - t1} ms")
-            art = if (dark) d else r.original
-            if (art !== d) d.recycle() else if (art !== r.original) r.original.recycle()
-        }
-        art.prepareToDraw()
+            // Not prepared yet: a placeholder now, the real art from the background queue (never blocks the list).
+            pending[ai.packageName] = Job(ai, key)
+            art = placeholder()
+            hits[1]++
+        } else { art.prepareToDraw(); hits[0]++ }
         val intent = Intent(Intent.ACTION_MAIN).addCategory(cat).setClassName(ai.packageName, ai.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         val info = ai.applicationInfo
         // Two-step resample: a 12x7 average of the artwork, smoothed up to 96x54, becomes a soft colour field at full screen.
-        val soft = backdropOf(src)
+        val soft = if (src != null) backdropOf(src) else placeholderBackdrop()
         AppEntry(ai.packageName, label, intent, art, soft, info.category)
     } catch (e: RuntimeException) {
         Log.w(TAG, "skipping ${ai.packageName}", e); null
@@ -204,9 +256,45 @@ class AppRepository(
         return out
     }
 
+    /**
+     * Prepares one app's art on disk: dark (or the original where it can't be adapted) and original, decorated, plus
+     * the backdrop colour source. Returns (dark, original, source) or null.
+     */
+    private fun renderFiles(pm: PackageManager, ai: ActivityInfo, key: String): Triple<Bitmap, Bitmap, Bitmap>? = try {
+        val t0 = android.os.SystemClock.uptimeMillis()
+        val r = render(pm, ai)
+        val t1 = android.os.SystemClock.uptimeMillis()
+        val src = Bitmap.createScaledBitmap(r.original, 8, 5, true)   // from the original: Home's backdrop colours don't change
+        decorate?.invoke(Canvas(r.original), r.original.width, r.original.height)
+        r.dark?.let { decorate?.invoke(Canvas(it), it.width, it.height) }
+        val d = r.dark ?: r.original.copy(Bitmap.Config.ARGB_8888, false)   // dark art, or the original where it can't be adapted
+        val p = "${ai.packageName}@$key"
+        save(d, File(artDir, "$p.png")); save(r.original, File(artDir, "$p.orig.png")); save(src, File(artDir, "$p.src.png"))
+        Log.i(TAG, "art ${ai.packageName}: ${DarkArt.result}; render ${t1 - t0} ms, save ${android.os.SystemClock.uptimeMillis() - t1} ms")
+        Triple(d, r.original, src)
+    } catch (e: RuntimeException) { Log.w(TAG, "art failed ${ai.packageName}", e); null }
+
+    /** Written to a temporary file and renamed: an interrupted write never leaves a broken cache file behind. */
     private fun save(b: Bitmap, f: File) {
-        try { f.outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) } } catch (e: java.io.IOException) { Log.w(TAG, "art cache write failed", e) }
+        val tmp = File(f.path + ".tmp")
+        try {
+            tmp.outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            if (!tmp.renameTo(f)) tmp.delete()
+        } catch (e: java.io.IOException) { tmp.delete(); Log.w(TAG, "art cache write failed", e) }
     }
+
+    /** Cache hits and misses since start (for the log). */
+    private val hits = IntArray(2)
+    private var placeholderArt: Bitmap? = null
+    private var placeholderSoft: Bitmap? = null
+    /** Shared until an app's art is ready: the dark tile surface on its own. */
+    private fun placeholder(): Bitmap = placeholderArt ?: canvasFor().let { (b, c) ->
+        val g = android.graphics.LinearGradient(0f, 0f, 0f, b.height.toFloat(), 0xFF2E2F33.toInt(), 0xFF111113.toInt(), android.graphics.Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, b.width.toFloat(), b.height.toFloat(), Paint().apply { shader = g })
+        decorate?.invoke(c, b.width, b.height)
+        b.prepareToDraw(); placeholderArt = b; b
+    }
+    private fun placeholderBackdrop(): Bitmap = placeholderSoft ?: backdropOf(Bitmap.createBitmap(8, 5, Bitmap.Config.ARGB_8888).apply { eraseColor(BG) }).also { placeholderSoft = it }
 
     /**
      * The app's own artwork, loaded from its resources at high density so the tile stays sharp when focused,
@@ -346,7 +434,8 @@ class AppRepository(
 
     private companion object {
         const val TAG = "EppleApps"
-        const val RENDER = 17   // bump when the artwork layout changes, so cached art is re-rendered
+        const val TOP_ROW = 6   // Home's top row: prepared first, straight after the list is handed over
+        const val RENDER = 24   // bump when the artwork layout changes, so cached art is re-rendered
         const val BG = 0xFF262A33.toInt()
     }
 }

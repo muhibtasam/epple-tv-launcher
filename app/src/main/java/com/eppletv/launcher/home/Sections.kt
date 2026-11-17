@@ -226,6 +226,7 @@ class AppsScreen(nav: Nav) : Screen(nav), TileHost, FrameClock.Tick {
     fun rebuild(force: Boolean = false) {
         val list = nav.apps.distinctBy { it.packageName }
         if (!force && built == list) return
+        nav.prioritizeArt(list.take(4 * Layout.COLS).map { it.packageName })   // the first rows on screen
         val keep = tiles.getOrNull(r * Layout.COLS + c)?.entry?.packageName
         built = list
         grid.removeAllViews(); tiles.clear()
@@ -283,7 +284,14 @@ class AppsScreen(nav: Nav) : Screen(nav), TileHost, FrameClock.Tick {
         tiles.forEach { t -> if (t.height > 0) t.alpha = ((y0 + t.top - from) / band).coerceIn(0f, 1f) }
     }
 
-    override fun onTileFocused(tile: Tile) { nav.artBitmap(tile.entry.backdrop) }
+    override fun onTileFocused(tile: Tile) { nav.artBitmap(tile.entry.backdrop); wantArt(tiles.indexOf(tile)) }
+    /** The rows on screen around [i] and the next row get their art first. */
+    private fun wantArt(i: Int) {
+        if (i < 0) return
+        val from = (i / Layout.COLS - 1).coerceAtLeast(0) * Layout.COLS
+        nav.prioritizeArt(tiles.subList(from, minOf(tiles.size, from + 4 * Layout.COLS)).map { it.entry.packageName })
+    }
+    fun updateArt(e: AppEntry) { tiles.forEach { if (it.entry === e) it.updateArt() } }
     override fun onTileClicked(tile: Tile) { nav.launch(tile.entry) }
     override fun onTileLongPressed(tile: Tile) { nav.appMenu(tile.entry) }
     override val wantsArt = false
@@ -328,6 +336,8 @@ class SearchScreen(nav: Nav) : Screen(nav) {
         searchApps()
         h.removeCallbacks(run); h.postDelayed(run, 550)       // one request after the user pauses typing
     }
+
+    fun updateArt(e: AppEntry) { appsRow.cards.forEach { c -> if (c.tag2 === e) c.setBitmap(e.banner) } }
 
     private fun searchApps() {
         val t = q.trim().lowercase()

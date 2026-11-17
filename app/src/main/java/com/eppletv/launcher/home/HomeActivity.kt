@@ -307,6 +307,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             warm = { list -> library.pinned(list) + library.rest(list) }, warmOne = { e -> Frost.prepare(e.backdrop) },
             first = { library.wanted() }, onFirst = { part -> onFirstApps(part) })
         repo.darkArt = prefs.get(Prefs.ICONS) == 0
+        repo.onArt = { e -> page.updateArt(e); (screens[APPS] as? AppsScreen)?.updateArt(e); (screens[SEARCH] as? SearchScreen)?.updateArt(e) }
         // The top row's frame and tile shapes right away (no waiting for the apps); the real tiles replace them.
         page.skeleton(library.wanted().size)
         repo.start()
@@ -1047,7 +1048,10 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
 
     // ---- keys ----
 
+    override fun prioritizeArt(pkgs: List<String>) { if (::repo.isInitialized) repo.prioritize(pkgs) }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (::repo.isInitialized) repo.userActive()        // background art preparation yields to the remote
         val k = event.keyCode
         val down = event.action == KeyEvent.ACTION_DOWN
         if (down) { restartIdle(); hero.backdrop.interacted() }

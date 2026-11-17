@@ -141,6 +141,9 @@ class Tile(
         return !(focus.atRest() && press.atRest() && tiltX.atRest() && tiltY.atRest())
     }
 
+    /** The app's art was prepared after this tile was built: show it. */
+    fun updateArt() = banner.set(entry.banner)
+
     private fun isSelect(k: Int) = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER ||
         k == KeyEvent.KEYCODE_NUMPAD_ENTER || k == KeyEvent.KEYCODE_BUTTON_A
 }
@@ -199,7 +202,7 @@ fun paintTileSurface(c: Canvas, w: Int, h: Int, corner: Float, stroke: Float) {
 
 /** Banner with rounded corners, drawn through a bitmap shader. Parallax moves the artwork inside its rounded frame. */
 @SuppressLint("ViewConstructor")
-private class BannerView(ctx: Context, private val bmp: Bitmap, private val corner: Float) : View(ctx) {
+private class BannerView(ctx: Context, private var bmp: Bitmap, private val corner: Float) : View(ctx) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
         shader = android.graphics.BitmapShader(bmp, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP)
     }
@@ -218,4 +221,10 @@ private class BannerView(ctx: Context, private val bmp: Bitmap, private val corn
         paint.shader.setLocalMatrix(m)
     }
     override fun onDraw(canvas: Canvas) { canvas.drawRoundRect(rect, corner, corner, paint) }
+    /** New artwork (the app's prepared art replacing its placeholder). */
+    fun set(b: Bitmap) {
+        if (b === bmp) return
+        bmp = b; paint.shader = android.graphics.BitmapShader(b, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP)
+        update(); invalidate()
+    }
 }

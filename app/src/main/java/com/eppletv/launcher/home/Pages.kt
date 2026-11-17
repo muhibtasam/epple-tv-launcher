@@ -55,6 +55,8 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     private val strip = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
     private val dock = ArrayList<Tile>()
     private val grid = ArrayList<Tile>()
+    /** [e]'s art was prepared: its tile shows it. */
+    fun updateArt(e: AppEntry) { dock.forEach { if (it.entry === e) it.updateArt() }; grid.forEach { if (it.entry === e) it.updateArt() } }
     private var r = 0; private var c = 0; private var first = 0
     private val sy = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)
     private val sx = Spring(0f, Motion.SCROLL_DAMPING, Motion.SCROLL_STIFFNESS, Motion.REST_PX)

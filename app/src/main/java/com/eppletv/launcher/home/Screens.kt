@@ -38,6 +38,8 @@ interface Nav {
     val prefs: Prefs
     val library: Library
     val apps: List<AppEntry>
+    /** These apps are on screen or next: their tile art is prepared first. */
+    fun prioritizeArt(pkgs: List<String>) {}
     fun art(item: ContentItem?, immediate: Boolean = false)   // backdrop follows the focused title
     fun artBitmap(b: Bitmap)
     fun details(item: ContentItem)
