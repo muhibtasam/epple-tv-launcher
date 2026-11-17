@@ -484,6 +484,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     }
 
     private fun enterTabs(i: Int) {
+        if (zone == Zone.CONTENT && section == 0) page.startOver()   // Back or Home from the top row: it starts again at its first tile
         zone = Zone.TABS; tabIdx = i; tabsP.target = 1f; page.blur(); animateShell(); focusTab()
         if (section == 0 && !hero.resting) { setShelf(false); showWallpaper() }
     }

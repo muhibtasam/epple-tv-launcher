@@ -126,6 +126,9 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
     /** Tiles of the current row focused since the row was entered (columns). */
     private val visited = HashSet<Int>()
 
+    /** Focus left the top row (Up, Back or Home): its next visit starts again at its first tile. */
+    fun startOver() { visited.clear(); if (r == 0) { c = 0; first = 0; place() } }
+
     /** Returns false only when moving up from the top row. */
     fun move(dx: Int, dy: Int): Boolean {
         if (tile() == null) return dy >= 0
@@ -139,7 +142,7 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
             visited.add(c); focusCurrent(); return true
         }
         val nr = r + dy
-        if (nr < 0 || (nr == 0 && dock.isEmpty())) { visited.clear(); if (r == 0) { c = 0; first = 0; place() }; return false }   // left the page: the top row starts again at its first tile
+        if (nr < 0 || (nr == 0 && dock.isEmpty())) { startOver(); return false }   // left the page: the top row starts again at its first tile
         if (nr >= rowCount) return true
         visited.clear()
         val col = if (r == 0) c - first else c            // keep the same on-screen column
