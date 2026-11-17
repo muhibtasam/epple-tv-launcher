@@ -166,13 +166,15 @@ class AppRepository(
         var art = if (want.exists() && srcFile.exists()) BitmapFactory.decodeFile(want.path) else null
         var src = if (art != null) BitmapFactory.decodeFile(srcFile.path) else null
         if (art == null || src == null) {
+            val t0 = android.os.SystemClock.uptimeMillis()
             val r = render(pm, ai)
+            val t1 = android.os.SystemClock.uptimeMillis()
             src = Bitmap.createScaledBitmap(r.original, 8, 5, true)   // from the original: Home's backdrop colours don't change
-            Log.i(TAG, "art ${ai.packageName}: ${DarkArt.result}")
             decorate?.invoke(Canvas(r.original), r.original.width, r.original.height)
             r.dark?.let { decorate?.invoke(Canvas(it), it.width, it.height) }
             val d = r.dark ?: r.original                              // dark tile art, or the original where it can't be adapted cleanly
             save(d, file); save(r.original, origFile); save(src, srcFile)
+            Log.i(TAG, "art ${ai.packageName}: ${DarkArt.result}; render ${t1 - t0} ms, save ${android.os.SystemClock.uptimeMillis() - t1} ms")
             art = if (dark) d else r.original
             if (art !== d) d.recycle() else if (art !== r.original) r.original.recycle()
         }
@@ -344,7 +346,7 @@ class AppRepository(
 
     private companion object {
         const val TAG = "EppleApps"
-        const val RENDER = 15   // bump when the artwork layout changes, so cached art is re-rendered
+        const val RENDER = 17   // bump when the artwork layout changes, so cached art is re-rendered
         const val BG = 0xFF262A33.toInt()
     }
 }

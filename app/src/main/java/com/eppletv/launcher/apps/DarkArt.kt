@@ -2,7 +2,6 @@ package com.eppletv.launcher.apps
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import kotlin.math.sqrt
 
 /**
  * Dark tile art, the way tvOS / iOS dark icons look: the logo on a charcoal surface, at its own size and place.
@@ -19,6 +18,7 @@ internal object DarkArt {
     private const val TOP = 0xFF2E2F33.toInt()
     private const val BOTTOM = 0xFF111113.toInt()
     private const val T1 = 90f      // colour distance within which a pixel can belong to the background
+    private const val T1SQ = T1 * T1
     private const val R = 3         // matting search radius at SS scale
 
     /** Why the last artwork was or wasn't adapted (worker thread only; for the log). */
@@ -52,8 +52,9 @@ internal object DarkArt {
             val dx = i % w - cx; val dy = i / w - cy
             bg[i] = rgb((m[0] + gx[0] * dx + gy[0] * dy).toFloat(), (m[1] + gx[1] * dx + gy[1] * dy).toFloat(), (m[2] + gx[2] * dx + gy[2] * dy).toFloat())
         }
+        val dd = FloatArray(n) { dist2(px[it], bg[it]) }      // each pixel's squared distance to the background, computed once
         var off = 0
-        for (i in 0 until n) if (border(i) && dist(px[i], bg[i]) > 24f) off++
+        for (i in 0 until n) if (border(i) && dd[i] > 24f * 24f) off++
         if (off > cnt * 0.04f) return no("background not plain ${off * 100 / cnt}%")
         val mean = rgb(m[0].toFloat(), m[1].toFloat(), m[2].toFloat())
 
@@ -61,24 +62,24 @@ internal object DarkArt {
         val mask = BooleanArray(n); val stack = IntArray(n); var sp = 0
         val nb = IntArray(4)
         fun neighbours(i: Int) { val x = i % w; nb[0] = if (x > 0) i - 1 else -1; nb[1] = if (x < w - 1) i + 1 else -1; nb[2] = i - w; nb[3] = i + w }
-        for (i in 0 until n) if (border(i) && dist(px[i], bg[i]) < T1) { mask[i] = true; stack[sp++] = i }
+        for (i in 0 until n) if (border(i) && dd[i] < T1SQ) { mask[i] = true; stack[sp++] = i }
         while (sp > 0) {
             val i = stack[--sp]; neighbours(i)
-            for (j in nb) if (j in 0 until n && !mask[j] && dist(px[j], bg[j]) < T1) { mask[j] = true; stack[sp++] = j }
+            for (j in nb) if (j in 0 until n && !mask[j] && dd[j] < T1SQ) { mask[j] = true; stack[sp++] = j }
         }
         // Enclosed background-coloured areas bounded by a neutral wordmark (letter counters, including their white-into-
         // background antialiased rims) are background too;
         // areas bounded by colour are part of the mark and stay.
         val seen = BooleanArray(n)
         for (s in 0 until n) {
-            if (mask[s] || seen[s] || dist(px[s], bg[s]) >= T1) continue
+            if (mask[s] || seen[s] || dd[s] >= T1SQ) continue
             var top = 0; var edge = 0; var neutral = 0; var k = 0
             seen[s] = true; stack[top++] = s
             while (k < top) {
                 neighbours(stack[k++])
                 for (j in nb) {
                     if (j !in 0 until n || seen[j] || mask[j]) continue
-                    if (dist(px[j], bg[j]) < T1) { seen[j] = true; stack[top++] = j } else { edge++; if (sat(px[j]) < 0.2f || towardWhite(px[j], bg[j]) >= 0f) neutral++ }
+                    if (dd[j] < T1SQ) { seen[j] = true; stack[top++] = j } else { edge++; if (sat(px[j]) < 0.2f || towardWhite(px[j], bg[j]) >= 0f) neutral++ }
                 }
             }
             if (edge > 0 && neutral >= edge * 0.6f) for (q in 0 until top) mask[stack[q]] = true
@@ -97,9 +98,9 @@ internal object DarkArt {
             var f = 0; var fd = -1f
             for (yy in maxOf(0, y - R)..minOf(h - 1, y + R)) for (xx in maxOf(0, x - R)..minOf(w - 1, x + R)) {
                 val j = yy * w + xx; if (mask[j]) continue
-                val d = dist(px[j], bg[j]); if (d > fd) { fd = d; f = px[j] }
+                val d = dd[j]; if (d > fd) { fd = d; f = px[j] }
             }
-            if (fd < T1) { alpha[i] = if (mask[i]) 0f else 1f; fg[i] = px[i]; continue }
+            if (fd < T1SQ) { alpha[i] = if (mask[i]) 0f else 1f; fg[i] = px[i]; continue }
             val vr = (r(f) - r(b0)).toFloat(); val vg = (g(f) - g(b0)).toFloat(); val vb = (bl(f) - bl(b0)).toFloat()
             val p = px[i]
             val a = (((r(p) - r(b0)) * vr + (g(p) - g(b0)) * vg + (bl(p) - bl(b0)) * vb) / (vr * vr + vg * vg + vb * vb)).coerceIn(0f, 1f)
@@ -155,7 +156,7 @@ internal object DarkArt {
                 when (mode) {
                     1 -> c = lift(c, hsv)
                     3 -> if (!nearWhite!![i]) c = lift(c, hsv)
-                    2 -> if (bg != null) { val t = towardWhite(c, bg[i]); if (t >= 0f) { c = logoC; a *= t } else if (dist(c, bg[i]) < T1) a = 0f }
+                    2 -> if (bg != null) { val t = towardWhite(c, bg[i]); if (t >= 0f) { c = logoC; a *= t } else if (dist2(c, bg[i]) < T1SQ) a = 0f }
                          else if (sat(c) < 0.2f) { a *= (lum(c) / 0.95f).coerceAtMost(1f); c = logoC }
                 }
                 vSum += maxOf(r(c), g(c), bl(c)) / 255f * a; wSum += a
@@ -189,9 +190,10 @@ internal object DarkArt {
     private fun r(c: Int) = (c shr 16) and 255
     private fun g(c: Int) = (c shr 8) and 255
     private fun bl(c: Int) = c and 255
-    private fun dist(a: Int, b: Int): Float {
+    /** Squared colour distance (compared with squared thresholds: no square root per pixel). */
+    private fun dist2(a: Int, b: Int): Float {
         val dr = (r(a) - r(b)).toFloat(); val dg = (g(a) - g(b)).toFloat(); val db = (bl(a) - bl(b)).toFloat()
-        return sqrt(dr * dr + dg * dg + db * db)
+        return dr * dr + dg * dg + db * db
     }
     private fun lum(c: Int) = (0.299f * r(c) + 0.587f * g(c) + 0.114f * bl(c)) / 255f
     private fun sat(c: Int): Float { val mx = maxOf(r(c), g(c), bl(c)); val mn = minOf(r(c), g(c), bl(c)); return if (mx == 0) 0f else (mx - mn) / mx.toFloat() }
@@ -206,8 +208,9 @@ internal object DarkArt {
      */
     private fun towardWhite(c: Int, bg: Int): Float {
         var lo = 2f; var hi = -2f; var sum = 0f; var k = 0
-        for (sh in intArrayOf(16, 8, 0)) {
-            val cv = (c shr sh) and 255; val bv = (bg shr sh) and 255
+        var sh = 16
+        while (sh >= 0) {                                       // channels R, G, B (no array allocated per pixel)
+            val cv = (c shr sh) and 255; val bv = (bg shr sh) and 255; sh -= 8
             if (255 - bv <= 25) { if (cv < bv - 20) return -1f; continue }
             val t = (cv - bv) / (255f - bv); lo = minOf(lo, t); hi = maxOf(hi, t); sum += t; k++
         }
