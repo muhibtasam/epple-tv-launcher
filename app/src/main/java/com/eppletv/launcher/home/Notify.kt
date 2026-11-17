@@ -67,7 +67,9 @@ class NotifBanner(ctx: Context, private val l: Layout, private val clock: FrameC
         removeCallbacks(autoHide); postDelayed(autoHide, 6000)
     }
 
-    fun hide() { if (note == null) return; note = null; removeCallbacks(autoHide); p.target = 0f; clock.add(this) }
+    /** Called once the banner is dismissed (by itself or the remote). */
+    var onHide: (() -> Unit)? = null
+    fun hide() { if (note == null) return; note = null; removeCallbacks(autoHide); p.target = 0f; clock.add(this); onHide?.invoke() }
 
     override fun tick(dt: Float): Boolean {
         p.step(dt); val v = p.value.coerceIn(0f, 1f)

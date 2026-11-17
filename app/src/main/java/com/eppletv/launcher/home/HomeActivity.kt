@@ -123,6 +123,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             tabs.visibility = if (rail > 0.01f || railP.target > 0f) View.VISIBLE else View.INVISIBLE
             val homeClock = if (section == 0 && zone != Zone.FEED && zone != Zone.DETAIL) (1f - dimP.value * 2f).coerceIn(0f, 1f) else 0f
             pill.alpha = if (::cc.isInitialized && cc.open) 1f else maxOf(tabsP.value, homeClock)
+            if (::glance.isInitialized) glance.alpha = homeClock
             homeLayer.alpha = homeP.value; homeLayer.translationY = -(1f - homeP.value) * l.pxf(260f)
             homeLayer.visibility = if (homeP.value > 0.01f) View.VISIBLE else View.INVISIBLE
             return !(dimP.atRest() && tabsP.atRest() && homeP.atRest() && railP.atRest())
@@ -251,16 +252,24 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         pill.setOnClickListener { if (pill.part == 1) goTab(SETTINGS) else if (cc.open) cc.hide() else openControlCenter() }
         pill.setOnLongClickListener { if (pill.part == 1) { open(Intent(Settings.ACTION_SETTINGS), "TV Settings"); true } else false }
         root.addView(pill, FrameLayout.LayoutParams(WRAP_CONTENT, l.px(70), Gravity.TOP or Gravity.END).apply { topMargin = l.px(49); rightMargin = l.px(64) })
+        glance = TextView(this).apply {
+            style(Txt.META, l.u, 0xB3FFFFFF.toInt()); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            gravity = Gravity.END; maxWidth = l.px(520); visibility = View.GONE; isFocusable = false
+            setShadowLayer(l.pxf(10f), 0f, l.pxf(2f), 0x99000000.toInt())
+        }
+        root.addView(glance, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.TOP or Gravity.END).apply { topMargin = l.px(49 + 70 + 12); rightMargin = l.px(64 + 24) })
 
         empty = TextView(this).apply { setText(R.string.no_apps); style(Txt.ROW, l.u, Colors.TEXT_DIM); visibility = View.GONE }
         root.addView(empty, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
 
         banner = NotifBanner(this, l, clock, hero.backdrop)
         root.addView(banner, FrameLayout.LayoutParams(l.px(600), WRAP_CONTENT, Gravity.TOP or Gravity.END).apply { topMargin = l.px(132); rightMargin = l.px(64) })
+        banner.onHide = { glanceUpdate() }
         NotificationHub.onChange = { n ->
             pill.dot = NotificationHub.unread > 0
+            glanceUpdate()
             if (cc.open) cc.changed()
-            if (n != null && resumed && !setup.active && !saver.showing) banner.show(n)
+            if (n != null && resumed && !setup.active && !saver.showing) { banner.show(n); glanceUpdate() }
             if (n == null) (screens[SETTINGS] as? SettingsScreen)?.show()      // "Allowed" once the TV connects the reader
         }
 
@@ -285,7 +294,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         setup = SetupFlow(this, this)
         root.addView(setup.view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         if (!setup.done) setup.start()                     // first launch, or an interrupted setup resumes
-        setup.behind = listOf(anchor, homeLayer, sectionLayer, tabs, pill)
+        setup.behind = listOf(anchor, homeLayer, sectionLayer, tabs, pill, glance)
 
         setContentView(root)
         startLog("view tree built")
@@ -385,6 +394,31 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             else -> DateFormat.getTimeFormat(this).format(now)
         }
         pill.label = timeText; pill.contentDescription = getString(R.string.cc_label, timeText)
+        if (::glance.isInitialized) glanceUpdate()
+    }
+
+    private lateinit var glance: TextView
+    /**
+     * One quiet line under the clock on Home, most important first: offline, the sleep timer, Wi-Fi just restored,
+     * unread notifications, otherwise today's date. Hidden while Control Center or a notification banner is open. Not
+     * focusable: it never changes Home's navigation. Updated on the minute tick, a notification change or the sleep
+     * timer; nothing polls.
+     */
+    private fun glanceUpdate() {
+        val notes = NotificationHub.notes
+        val wifi = notes.firstOrNull { it.key == "wifi" }
+        val unread = notes.filter { !it.read && it.key != "wifi" }
+        val left = if (sleepAt == 0L) 0L else ((sleepAt - android.os.SystemClock.elapsedRealtime()) / 60_000L + 1).coerceAtLeast(1)
+        val msg = when {
+            wifi != null && wifi.title.contains("disconnected") -> "Offline · Wi-Fi disconnected"
+            sleepAt != 0L -> "Sleep timer · $left min left"
+            wifi != null && System.currentTimeMillis() - wifi.time < 120_000L -> "Wi-Fi restored"
+            unread.size == 1 -> unread[0].let { if (it.own) it.title else "${it.app} · ${it.title}" }
+            unread.size > 1 -> "${unread.size} new notifications"
+            else -> DateFormat.format(DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "EEEEMMMMd"), System.currentTimeMillis()).toString()
+        }
+        glance.text = msg
+        glance.visibility = if (msg.isEmpty() || (::cc.isInitialized && cc.open) || (::banner.isInitialized && banner.showing)) View.GONE else View.VISIBLE
     }
 
     // ---- launcher mode ----
@@ -862,7 +896,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private lateinit var ccWifi: CcTile; private lateinit var ccInputs: CcTile
     private lateinit var ccVolume: CcTile; private lateinit var ccSleep: CcTile
     private var sleepAt = 0L                                  // elapsedRealtime of the sleep timer, 0 = off
-    private val sleepRun = Runnable { sleepAt = 0L; content.run({ tv.standby() ?: "" }) { e -> if (!e.isNullOrEmpty()) toast(e) } }
+    private val sleepRun = Runnable { sleepAt = 0L; glanceUpdate(); content.run({ tv.standby() ?: "" }) { e -> if (!e.isNullOrEmpty()) toast(e) } }
 
     private fun buildControlCenter() {
         fun act(a: () -> Unit) = { cc.hide(); a() }
@@ -974,7 +1008,8 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         if (cc.open) return
         cc.emptyText = if (NotificationHub.allowed(this)) "You're all caught up" else "You're all caught up.\nOther apps' notifications are off: Settings > Notifications."
         ccRefresh()
-        cc.show { restoreFocus() }
+        cc.show { restoreFocus(); glanceUpdate() }
+        glanceUpdate()
     }
 
     /** Status lines: network, inputs, volume, sleep timer. The Wi-Fi name arrives a moment later when the TV allows it. */
@@ -1021,7 +1056,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         main.removeCallbacks(sleepRun)
         sleepAt = if (next == 0L) 0L else android.os.SystemClock.elapsedRealtime() + next * 60_000L
         if (sleepAt != 0L) main.postAtTime(sleepRun, sleepAt)
-        sleepSub()
+        sleepSub(); glanceUpdate()
     }
 
     private fun tvInputs(): List<android.media.tv.TvInputInfo> = try {
