@@ -29,8 +29,8 @@ android {
         applicationId = "com.eppletv.launcher"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
         // Optional content keys; without them those providers fall back gracefully. Never committed (local.properties is ignored).
         fun prop(vararg names: String) = names.firstNotNullOfOrNull { local.getProperty(it)?.trim()?.takeIf { v -> v.isNotEmpty() } } ?: ""
         buildConfigField("String", "TMDB_KEY", "\"${prop("tmdb_key", "tmdb.key")}\"")
