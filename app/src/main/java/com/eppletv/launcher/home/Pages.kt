@@ -92,7 +92,7 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
         platter.visibility = if (pinned.isEmpty()) View.INVISIBLE else View.VISIBLE
         view.addView(strip, FrameLayout.LayoutParams(MATCH_PARENT, l.tileH).apply { topMargin = l.dockY })
         pinned.forEachIndexed { i, app ->
-            val t = Tile(view.context, app, shadow, null, l, clock, host).apply { inDock = true }
+            val t = Tile(view.context, app, shadow, null, l, clock, host).apply { inDock = true; onDockFocus = ::dockFocus }
             strip.addView(t, FrameLayout.LayoutParams(l.tileW, l.tileH).apply { leftMargin = l.left + i * l.pitchX })
             dock.add(t)
         }
@@ -167,6 +167,31 @@ class HomePage(ctx: Context, private val l: Layout, private val clock: FrameCloc
         place(); t.requestFocus(); host.onPageDepth(r > 0)
         platter.focusAt(if (r == 0) (l.platterPad + (c - first) * l.pitchX + l.tileW / 2).toFloat() else null)
         return true
+    }
+
+    /**
+     * Dock magnification, after the macOS Dock: the focused tile grows to [Motion.DOCK_SCALE] (its own focus spring),
+     * the tile on each side to [Motion.DOCK_NEAR], and nearby tiles move aside so none overlap. Only spring targets
+     * change, so fast Left/Right just redirects motion in flight. [i] = -1: every tile settles back.
+     */
+    private fun magnify(i: Int) {
+        val last = minOf(dock.size, first + Layout.COLS) - 1
+        dock.forEachIndexed { k, t ->
+            val d = k - i
+            val dx = when {
+                i < 0 -> 0f
+                d == 0 -> if (k == first && k < last) Motion.DOCK_EDGE else if (k == last && k > first) -Motion.DOCK_EDGE else 0f
+                kotlin.math.abs(d) == 1 -> Math.signum(d.toFloat()) * Motion.DOCK_SHIFT_1
+                kotlin.math.abs(d) == 2 -> Math.signum(d.toFloat()) * Motion.DOCK_SHIFT_2
+                else -> 0f
+            }
+            t.magnify(if (i >= 0 && kotlin.math.abs(d) == 1) Motion.DOCK_NEAR else 0f, l.pxf(dx))
+        }
+    }
+
+    /** A dock tile gained or lost focus: magnify around it, or (focus left the row) let the row settle. */
+    private fun dockFocus(t: Tile, on: Boolean) {
+        if (on) magnify(dock.indexOf(t)) else view.post { if (dock.none { it.isFocused }) magnify(-1) }
     }
 
     fun atTop() = r == 0 || dock.isEmpty() && r == 1

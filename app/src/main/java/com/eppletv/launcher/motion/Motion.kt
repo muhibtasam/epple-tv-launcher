@@ -14,6 +14,13 @@ object Motion {
 
     const val FOCUS_SCALE = 0.16f    // focused tile grows by 16 %
     const val PRESS_SCALE = 0.06f    // pressed tile shrinks by 6 %
+    // Dock magnification (Home's top row), after the macOS Dock: the focused tile grows more than elsewhere, its
+    // neighbours a little, and nearby tiles move aside (1080p px) so nothing overlaps.
+    const val DOCK_SCALE = 0.25f     // focused dock tile: 1.25x
+    const val DOCK_NEAR = 0.08f      // its neighbours: 1.08x
+    const val DOCK_SHIFT_1 = 18f     // neighbours move out by this much
+    const val DOCK_SHIFT_2 = 8f      // and the tiles beyond them by this much
+    const val DOCK_EDGE = 6f         // a focused tile at either end of the row moves in, keeping its ring on the glass
     const val TILT_DEG = 5f          // tilt kick in the direction of travel, springs back to 0
 
     // Rest thresholds: a spring stops (and stops requesting frames) below these.

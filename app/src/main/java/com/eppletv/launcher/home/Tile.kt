@@ -46,6 +46,16 @@ class Tile(
     private val tiltY = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS, Motion.REST_DEG)
     private var pressed = false
     var inDock = false
+    // Dock magnification: extra scale as a neighbour of the focused tile, and a sideways shift. Set by the dock.
+    private val near = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS)
+    private val shift = Spring(0f, Motion.FOCUS_DAMPING, Motion.FOCUS_STIFFNESS, Motion.REST_PX)
+    /** Dock tiles: told when this tile gains or loses focus, so the row can magnify around it. */
+    var onDockFocus: ((Tile, Boolean) -> Unit)? = null
+    /** Dock magnification targets: [grow] on top of the normal size, [dx] sideways (px). Springs carry it there. */
+    fun magnify(grow: Float, dx: Float) {
+        if (near.target == grow && shift.target == dx) return
+        near.target = grow; shift.target = dx; clock.add(this)
+    }
     private var longPressed = false
 
     private val shadow = ImageView(ctx).apply { setImageBitmap(shadowBmp); alpha = 0f; scaleType = ImageView.ScaleType.FIT_XY }
@@ -93,6 +103,7 @@ class Tile(
         } else {
             pressed = false; press.target = 0f
         }
+        onDockFocus?.invoke(this, gainFocus)
         clock.add(this)
     }
 
@@ -120,10 +131,11 @@ class Tile(
     }
 
     override fun tick(dt: Float): Boolean {
-        focus.step(dt); press.step(dt); tiltX.step(dt); tiltY.step(dt)
+        focus.step(dt); press.step(dt); tiltX.step(dt); tiltY.step(dt); near.step(dt); shift.step(dt)
         val v = focus.value
-        val s = (1f + Motion.FOCUS_SCALE * v) * (1f - Motion.PRESS_SCALE * press.value)
+        val s = (1f + (if (inDock) Motion.DOCK_SCALE else Motion.FOCUS_SCALE) * v + near.value) * (1f - Motion.PRESS_SCALE * press.value)
         scaleX = s; scaleY = s
+        translationX = shift.value
         translationZ = v * l.pxf(10f)
         rotationX = tiltX.value; rotationY = tiltY.value
         // Depth: the shadow grows, softens and drops as the tile lifts.
@@ -138,7 +150,7 @@ class Tile(
         ring.alpha = v * v; ring.visibility = rim.visibility                // fades in with focus, a little behind the lift
         label?.alpha = v
         label?.translationY = l.tileH * (s - 1f) / 2f - (1f - v) * l.pxf(10f)
-        return !(focus.atRest() && press.atRest() && tiltX.atRest() && tiltY.atRest())
+        return !(focus.atRest() && press.atRest() && tiltX.atRest() && tiltY.atRest() && near.atRest() && shift.atRest())
     }
 
     /** The app's art was prepared after this tile was built: show it. */
