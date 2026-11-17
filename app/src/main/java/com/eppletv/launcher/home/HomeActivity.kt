@@ -306,6 +306,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
             backdropFilter = { b -> Scrim.paint(b) },
             warm = { list -> library.pinned(list) + library.rest(list) }, warmOne = { e -> Frost.prepare(e.backdrop) },
             first = { library.wanted() }, onFirst = { part -> onFirstApps(part) })
+        repo.darkArt = prefs.get(Prefs.ICONS) == 0
         // The top row's frame and tile shapes right away (no waiting for the apps); the real tiles replace them.
         page.skeleton(library.wanted().size)
         repo.start()
@@ -337,7 +338,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
         page.setApps(pinned, emptyList())             // every app lives in the Apps section; Home keeps the top row
         content.warm(pinned.map { it.packageName })
         if (focusPkg != null && page.locate(focusPkg) && section == 0) zone = Zone.CONTENT
-        restoreFocus()
+        if (section == 0) restoreFocus()             // another section (Settings changing App icons) keeps its own focus
     }
 
     override fun onStart() {
@@ -553,6 +554,7 @@ class HomeActivity : Activity(), PageHost, Nav, SetupFlow.Host {
     private fun onSetting(c: Prefs.Choice) {
         when (c) {
             Prefs.CLOCK -> updateTime()
+            Prefs.ICONS -> repo.setDark(prefs.get(Prefs.ICONS) == 0)
             Prefs.ROTATE -> restartRotation()
             Prefs.SAVER -> restartIdle()
             Prefs.INDIAN -> { content.indianMode = prefs.get(Prefs.INDIAN); content.resetPicks(); content.warm(library.pinned(apps).map { it.packageName }) }

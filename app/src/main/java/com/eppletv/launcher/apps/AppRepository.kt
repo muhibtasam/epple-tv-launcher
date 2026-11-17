@@ -67,6 +67,15 @@ class AppRepository(
     private val cache = HashMap<String, Pair<String, AppEntry>>()   // package -> (version key, entry); worker thread only
     private val artDir = File(app.cacheDir, "art").apply { mkdirs() }   // rendered tile art, one PNG per package + version
     private var started = false
+    /** Dark tile art (Settings > App icons). Set before [start]; change it later with [setDark]. */
+    @Volatile var darkArt = true
+
+    /** Switches between dark and original art: both are cached on disk, so this only decodes, never re-renders. */
+    fun setDark(on: Boolean) {
+        if (on == darkArt) return
+        darkArt = on
+        if (started) load()
+    }
 
     private val reload = Runnable { load() }
     private val receiver = object : BroadcastReceiver() {
@@ -132,35 +141,40 @@ class AppRepository(
             val pi = try { pm.getPackageInfo(pkg, 0) } catch (_: PackageManager.NameNotFoundException) { continue }
             // Artwork is keyed by package, version and install time: an update (even one keeping the version) re-renders it.
             val key = "r${RENDER}_${pi.longVersionCode}_${pi.lastUpdateTime}_${tileW}x$tileH"
+            val dark = darkArt
             val cached = cache[pkg]
-            if (cached != null && cached.first == key) { out.add(cached.second); continue }
-            val entry = build(pm, ai, cat, key) ?: continue
-            cache[pkg] = key to entry
+            if (cached != null && cached.first == key + dark) { out.add(cached.second); continue }
+            val entry = build(pm, ai, cat, key, dark) ?: continue
+            cache[pkg] = key + dark to entry
             out.add(entry)
         }
         cache.keys.retainAll(seen)
         // Drop art for uninstalled apps and superseded versions.
-        artDir.listFiles()?.forEach { f -> val pkg = f.name.substringBefore("@"); if (pkg !in seen || cache[pkg]?.first?.let { f.name != "$pkg@$it.png" && f.name != "$pkg@$it.src.png" } == true) f.delete() }
+        artDir.listFiles()?.forEach { f -> val pkg = f.name.substringBefore("@"); if (pkg !in seen || cache[pkg]?.first?.removeSuffix("true")?.removeSuffix("false")?.let { f.name != "$pkg@$it.png" && f.name != "$pkg@$it.orig.png" && f.name != "$pkg@$it.src.png" } == true) f.delete() }
         val collator = Collator.getInstance()
         out.sortWith { a, b -> collator.compare(a.label, b.label) }
         return if (debugRepeat > 1) List(out.size * debugRepeat) { out[it % out.size] } else out
     }
 
-    private fun build(pm: PackageManager, ai: ActivityInfo, cat: String, key: String): AppEntry? = try {
+    private fun build(pm: PackageManager, ai: ActivityInfo, cat: String, key: String, dark: Boolean): AppEntry? = try {
         val label = ai.loadLabel(pm).toString().trim().ifEmpty { ai.packageName }
         val file = File(artDir, "${ai.packageName}@$key.png")
+        val origFile = File(artDir, "${ai.packageName}@$key.orig.png")  // original artwork (Settings > App icons: Light)
         val srcFile = File(artDir, "${ai.packageName}@$key.src.png")   // backdrop colours, taken from the original artwork
-        var art = if (file.exists() && srcFile.exists()) BitmapFactory.decodeFile(file.path) else null
+        // Both looks are cached; only the one in use is decoded and kept in memory.
+        val want = if (dark) file else origFile
+        var art = if (want.exists() && srcFile.exists()) BitmapFactory.decodeFile(want.path) else null
         var src = if (art != null) BitmapFactory.decodeFile(srcFile.path) else null
         if (art == null || src == null) {
             val r = render(pm, ai)
             src = Bitmap.createScaledBitmap(r.original, 8, 5, true)   // from the original: Home's backdrop colours don't change
-            val b = r.dark ?: r.original                              // dark tile art, or the original where it can't be adapted cleanly
-            if (r.dark != null) r.original.recycle()
             Log.i(TAG, "art ${ai.packageName}: ${DarkArt.result}")
-            decorate?.invoke(Canvas(b), b.width, b.height)
-            art = b
-            save(b, file); save(src, srcFile)
+            decorate?.invoke(Canvas(r.original), r.original.width, r.original.height)
+            r.dark?.let { decorate?.invoke(Canvas(it), it.width, it.height) }
+            val d = r.dark ?: r.original                              // dark tile art, or the original where it can't be adapted cleanly
+            save(d, file); save(r.original, origFile); save(src, srcFile)
+            art = if (dark) d else r.original
+            if (art !== d) d.recycle() else if (art !== r.original) r.original.recycle()
         }
         art.prepareToDraw()
         val intent = Intent(Intent.ACTION_MAIN).addCategory(cat).setClassName(ai.packageName, ai.name)
@@ -330,7 +344,7 @@ class AppRepository(
 
     private companion object {
         const val TAG = "EppleApps"
-        const val RENDER = 14   // bump when the artwork layout changes, so cached art is re-rendered
+        const val RENDER = 15   // bump when the artwork layout changes, so cached art is re-rendered
         const val BG = 0xFF262A33.toInt()
     }
 }

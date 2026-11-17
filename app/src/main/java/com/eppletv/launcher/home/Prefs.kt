@@ -12,6 +12,7 @@ class Prefs(ctx: Context) {
 
     companion object {
         val CLOCK = Choice("clock", "Clock", listOf("System", "12-hour", "24-hour"), 0)
+        val ICONS = Choice("icons", "App icons", listOf("Dark", "Light"), 0)
         val ROTATE = Choice("rotate", "Artwork rotation", listOf("Every 9 seconds", "Every 15 seconds", "Every 30 seconds", "Off"), 0)
         val TEXT = Choice("text", "Text size", listOf("Standard", "Large", "Larger"), 0, restart = true)
         val WEIGHT = Choice("weight", "Text weight", listOf("Regular", "Bold"), 0, restart = true)

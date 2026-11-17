@@ -457,6 +457,8 @@ class SettingsScreen(nav: Nav, private val onChanged: (Prefs.Choice) -> Unit) : 
         }
         header("Appearance")
         choice(Prefs.CLOCK, "How the time is shown in the corner and in Control Center.")
+        choice(Prefs.ICONS, "How app tiles look on Home, in Apps and in Search. Dark: each logo on a charcoal tile, in the style of " +
+            "dark-mode icons; apps whose artwork can't be adapted cleanly keep it. Light: every app's original artwork.")
         choice(Prefs.ROTATE, "How often the artwork behind the top row moves to the next title.")
         slider("Glass", "The material of the tab bar, the top row, the clock and Control Center. Press Left or Right: 0 is clear glass, " +
             "letting what is behind show through with bright edges; 100 is fully frosted.", { nav.prefs.glass }) { v -> nav.prefs.glass = v; GlassStyle.amount = v / 100f }
