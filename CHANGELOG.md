@@ -12,16 +12,21 @@ data are kept.
   icons, with a light focus ring. Apps whose artwork can't be adapted cleanly keep their own. New and updated apps get
   their tile automatically.
 - **Settings > App icons.** Choose Dark or Light (each app's original artwork). Switching is instant.
+- **Faster start.** Home and its top row appear straight away; app tiles are prepared in the background,
+  the ones on screen first, and content images load in order of what's visible.
 
 ### Bug fixes
 - **Top row:** after Back or Home, moving down again starts at the first app.
 - **Home rows:** returning to the rows under the top row starts again at the first row and title.
 - **Hold OK:** holding OK on a title opens its menu once, without also choosing the menu's first option.
 - **Top row:** the Play button stays visible while moving between titles.
+- **Start-up:** fixed a crash when content arrived before the app list.
+- **Continue Watching and recommendations:** Resume and "Hold OK for more" stay visible while moving between titles.
+- **Menu hint:** now reads "Home + OK for menu".
 
 ### Update and compatibility notes
 - Signed with the same Epple TV release identity as 1.0.0 and 1.0.1, so it installs over them without uninstalling.
-- The first start after updating prepares every app tile once in the background (a few seconds).
+- The first start after updating prepares every app tile once in the background; Home is usable straight away.
 - Tested on Android 14 (Google TV) on a 16:9 display. Device compatibility may vary depending on Android TV version and
   manufacturer.
 
