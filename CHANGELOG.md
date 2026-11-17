@@ -2,6 +2,24 @@
 
 All notable changes to Epple TV are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.0.3] - 2026-11-18
+
+A Home update: the dock magnifies as you move along it, and a quiet line under the clock. Install it over 1.0.2; your
+settings and data are kept.
+
+### New
+- **Dock magnification.** Moving along the dock, the focused app and its neighbours grow in a smooth wave that
+  follows you, rising from the dock's baseline like the macOS Dock. The glass widens with the row so every icon stays on
+  it, and with more apps than fit, the next one peeks past the glass instead of slipping under it.
+- **Glance Line.** One short line under the clock: offline, sleep timer, Wi-Fi restored or unread notifications
+  when they matter, otherwise the date (for example "Wed, 18 November"). It hides while Control Center or a
+  notification is open.
+
+### Update and compatibility notes
+- Signed with the same Epple TV release identity as 1.0.0 to 1.0.2, so it installs over them without uninstalling.
+- Tested on Android 14 (Google TV) on a 16:9 display. Device compatibility may vary depending on Android TV version and
+  manufacturer.
+
 ## [1.0.2] - 2026-11-18
 
 A visual update: app tiles in a premium dark style, plus Home fixes. Install it over 1.0.1; your settings and

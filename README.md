@@ -155,11 +155,11 @@ The wallpapers are the owner's own pictures; Epple TV ships without wallpapers.*
 
 ## Installation
 
-1. Download `epple-tv-1.0.1.apk` from the
+1. Download `epple-tv-1.0.3.apk` from the
    [latest release](https://github.com/muhibtasam/epple-tv-launcher/releases/latest).
 2. Copy it to the TV (for example with a USB drive or a file-sharing app such as LocalSend) and open it with a file
    manager, allowing installs from that app when Android asks. Or, from a computer with
-   [adb](https://developer.android.com/tools/adb): `adb install epple-tv-1.0.1.apk`.
+   [adb](https://developer.android.com/tools/adb): `adb install epple-tv-1.0.3.apk`.
 3. Open **Epple TV** from your TV's apps. A short first-launch setup walks you through providers, what you watch and the
    home screen.
 4. Add your TMDB key in **Settings › Content providers** to turn on recommendations, showcases and search.
@@ -167,15 +167,15 @@ The wallpapers are the owner's own pictures; Epple TV ships without wallpapers.*
 
 ## Updating
 
-- **From 1.0.0:** install `epple-tv-1.0.1.apk` over the existing app, with Epple TV's update notification, a file
-  manager or `adb install -r epple-tv-1.0.1.apk`. **Do not uninstall first**: updating in place keeps your settings,
+- **From an earlier version:** install `epple-tv-1.0.3.apk` over the existing app, with Epple TV's update notification, a file
+  manager or `adb install -r epple-tv-1.0.3.apk`. **Do not uninstall first**: updating in place keeps your settings,
   Watchlist, Favourites and recommendations.
 - Updates install only when they are signed with the same key as the installed app. Every public release is signed with
   the permanent Epple TV release identity, so official releases always update one another. An APK you build yourself
   with a different key cannot update an official install (or the other way round) without uninstalling first, which
   removes Epple TV's data.
 - To check an APK before installing, compare its signing certificate (for example with
-  `apksigner verify --print-certs epple-tv-1.0.1.apk`) with the official SHA-256:
+  `apksigner verify --print-certs epple-tv-1.0.3.apk`) with the official SHA-256:
   `2F:8A:18:37:66:E7:5F:D0:D2:42:1A:49:69:FC:56:54:B5:D5:77:85:52:FD:40:62:DA:9D:E0:2A:22:5A:FA:2B`
 
 ## Supported devices and requirements
